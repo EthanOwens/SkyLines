@@ -211,3 +211,5 @@ done unless marked parallel.
   yet beyond "revisit when a Mac is available" — not scheduled.
 
 ## Progress
+
+- Subtask 1 (Repo + Tauri scaffold) — done — commit 82d0a24
