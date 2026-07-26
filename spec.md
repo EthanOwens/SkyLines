@@ -218,3 +218,4 @@ done unless marked parallel.
 - Subtask 1 (Repo + Tauri scaffold) — done — commit 82d0a24
 - Subtask 2 (Env + secrets) — done — commit b700f8d
 - Subtask 3 (M0 spike — static export + client nav inside Tauri) — done — commit ed6b7b7 — result: PASS
+- Subtask 4 (M0 spike — tauri-plugin-sql wiring) — done — commit a737775 — result: PASS
