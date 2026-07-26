@@ -213,3 +213,4 @@ done unless marked parallel.
 ## Progress
 
 - Subtask 1 (Repo + Tauri scaffold) — done — commit 82d0a24
+- Subtask 2 (Env + secrets) — done — commit b700f8d
