@@ -237,3 +237,4 @@ done unless marked parallel.
 - Subtask 6 (M1 — drop PWA) — resolved without an implementor pass: already satisfied, nothing to remove (subtask 1's scaffold never added PWA setup)
 - Subtask 7 (M2 — SQLite schema) — done — commit 779e4fa
 - Subtask 8 (M2 — types) — done — commit a812fdf
+- Subtask 9 (M2 — local data-access layer) — done — commit 760cf17
