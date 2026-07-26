@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 // so Next.js must produce static HTML/JS instead of running a Node server.
 const nextConfig: NextConfig = {
   output: "export",
+  trailingSlash: true,
   images: {
     unoptimized: true,
   },
