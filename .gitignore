@@ -44,3 +44,6 @@ next-env.d.ts
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/schemas
+
+# Claude Code local tooling settings
+.claude/settings.local.json
