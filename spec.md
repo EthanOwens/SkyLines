@@ -197,9 +197,12 @@ done unless marked parallel.
 
 ## Open Questions
 
-- Whether Next's App Router client-side navigation actually stays SPA-smooth
-  inside Tauri's asset serving (subtask 3) — unresolved until that spike
-  runs; a "no" answer changes the framework choice for everything after it.
+- ~~Whether Next's App Router client-side navigation actually stays
+  SPA-smooth inside Tauri's asset serving~~ — **resolved in subtask 3: PASS.**
+  Verified via CDP against the live Tauri/WebView2 window (module-scoped
+  instance-id stayed identical across a real `<Link>` click; network log
+  showed only RSC fetches, no document reload). No fallback to Vite + React
+  Router needed.
 - Whether inline base64 images should move to filesystem-backed attachments
   now that local storage exists — explicitly deferred in `SPEC_iter1.md`,
   still deferred here.
@@ -214,3 +217,4 @@ done unless marked parallel.
 
 - Subtask 1 (Repo + Tauri scaffold) — done — commit 82d0a24
 - Subtask 2 (Env + secrets) — done — commit b700f8d
+- Subtask 3 (M0 spike — static export + client nav inside Tauri) — done — commit ed6b7b7 — result: PASS
