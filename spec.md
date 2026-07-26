@@ -81,13 +81,20 @@ done unless marked parallel.
 4. **M0 spike — tauri-plugin-sql wiring.** Install `tauri-plugin-sql`,
    confirm a trivial table read/write round-trips correctly from frontend TS
    through to a SQLite file on disk.
-5. **M1 — routing fix.** Convert `/note/[id]` and `/canvas/[id]` to
-   query-param routes `/note?id=...` and `/canvas?id=...`. Update every URL
-   construction site (`NoteItem.tsx`, `FolderItem.tsx`, `Sidebar.tsx`, and
-   the page files themselves).
-6. **M1 — drop PWA.** Remove `next-pwa` config from `next.config.ts`, drop
-   `public/manifest.json` and `appleWebApp` metadata from the root layout
-   (superseded by the native shell).
+5. ~~**M1 — routing fix.**~~ **Merged into subtasks 16–18.** As originally
+   scoped this assumed `/note/[id]`, `/canvas/[id]`, `NoteItem.tsx`,
+   `FolderItem.tsx`, and `Sidebar.tsx` already existed in this repo to be
+   converted/updated — they don't exist yet at this point in the sequence
+   (they're ported from `../note_taking_app` in subtasks 16–18). Rather than
+   porting the old `[id]` dynamic-route version first and converting it
+   afterward, subtasks 16–18 port directly to query-param routes
+   (`/note?id=...`, `/canvas?id=...`) from the start. No standalone
+   implementor pass for this subtask.
+6. ~~**M1 — drop PWA.**~~ **Already satisfied — no standalone pass needed.**
+   Subtask 1's scaffold never ported `next-pwa`, `public/manifest.json`, or
+   `appleWebApp` metadata into this repo in the first place (confirmed: no
+   `next-pwa` in `package.json`, no `public/` directory, no PWA metadata in
+   `app/layout.tsx`) — there's nothing here to remove.
 7. **M2 — SQLite schema.** Create the `folders`, `notes`, `sync_meta` tables
    and indexes exactly as specified in `SPEC_iter1.md` Part 2, applied via a
    `tauri-plugin-sql` migration.
@@ -130,12 +137,19 @@ done unless marked parallel.
 16. **M4 — sidebar.** Port `Sidebar`/`FolderTree`/`FolderItem`/`NoteItem`
     against the SQLite-backed hooks: inline rename, create note/canvas/folder,
     per-folder context menu, delete (using the fixed recursive delete from
-    subtask 10).
+    subtask 10). **Routing (from subtask 5):** any link/URL this component
+    builds to open a note or canvas uses the query-param form
+    (`/note?id=...`, `/canvas?id=...`), not `/note/[id]`/`/canvas/[id]`.
 17. **M4 — rich text editor.** Port `RichTextEditor`, `EditorToolbar`, and
     the Tiptap extension set unchanged; autosave debounces to the SQLite
-    layer instead of Firestore directly.
+    layer instead of Firestore directly. **Routing (from subtask 5):** the
+    page hosting this reads the note id from the `?id=` search param
+    (`app/note/page.tsx`), not a `[id]` dynamic segment.
 18. **M4 — canvas editor.** Port `CanvasEditor` (tldraw) unchanged; snapshot
     autosave debounces to the SQLite layer instead of Firestore directly.
+    **Routing (from subtask 5):** the page hosting this reads the canvas's
+    note id from the `?id=` search param (`app/canvas/page.tsx`), not a
+    `[id]` dynamic segment.
 19. **M4 — shared UI + styling.** Port shadcn primitives (`button`, `dialog`,
     `dropdown-menu`, `input`, `scroll-area`, `separator`, `tooltip`),
     `globals.css`, `editor.css`. Can run in parallel with 16–18.
@@ -219,3 +233,5 @@ done unless marked parallel.
 - Subtask 2 (Env + secrets) — done — commit b700f8d
 - Subtask 3 (M0 spike — static export + client nav inside Tauri) — done — commit ed6b7b7 — result: PASS
 - Subtask 4 (M0 spike — tauri-plugin-sql wiring) — done — commit a737775 — result: PASS
+- Subtask 5 (M1 — routing fix) — resolved without an implementor pass: merged into subtasks 16–18 (query-param routing folded into their text) since the files it referenced don't exist yet at this point in the sequence
+- Subtask 6 (M1 — drop PWA) — resolved without an implementor pass: already satisfied, nothing to remove (subtask 1's scaffold never added PWA setup)
