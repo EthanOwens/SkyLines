@@ -9,8 +9,9 @@ import { getDb } from "./client";
 // one-shot async queries - there's no realtime listener model to fake
 // locally (subtask 15's job is wiring re-fetches, not this subtask's).
 //
-// Folder-delete recursion into child subfolders is explicitly deferred to
-// subtask 10 - `deleteFolder` here only soft-deletes the single row.
+// Folder-delete recursion into child subfolders (spec.md subtask 10, fixing
+// the reference app's known bug where delete only cascaded one level) is
+// implemented below via `getDescendantFolderIds` + `deleteFolder`.
 
 const TABLE = "folders";
 
@@ -123,16 +124,62 @@ export async function updateFolder(
 }
 
 /**
- * Soft-deletes a single folder: sets `deletedAt`/`dirty`, does not `DELETE
- * FROM` the row and does not recurse into child folders/notes (that
- * recursive cascade is subtask 10's job, layered on top of this).
+ * Walks the folder tree starting at `folderId` and returns that folder's id
+ * plus the ids of every descendant subfolder, at any depth. Implemented as a
+ * read-only `WITH RECURSIVE` CTE over `folders.parent_id` rather than
+ * fetching one level at a time in a loop - SQLite supports recursive CTEs
+ * natively, so this is a single round-trip instead of one query per tree
+ * level, and it keeps the tree-walk logic isolated from the write side of
+ * `deleteFolder` (easier to reason about / test on its own).
+ */
+async function getDescendantFolderIds(folderId: string): Promise<string[]> {
+  const db = await getDb();
+  const rows = await db.select<{ id: string }[]>(
+    `WITH RECURSIVE descendants(id) AS (
+       SELECT $1
+       UNION
+       SELECT f.id FROM ${TABLE} f JOIN descendants d ON f.parent_id = d.id
+     )
+     SELECT id FROM descendants`,
+    [folderId],
+  );
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Soft-deletes a folder and recursively cascades that soft-delete to every
+ * descendant subfolder (any depth) and every note inside the folder or any
+ * of those descendants. This fixes the reference app's known bug (per
+ * spec.md subtask 10 / SPEC_iter1.md) where folder-delete cascaded to direct
+ * child notes but never recursed into child subfolders at all.
+ *
+ * All affected rows (the folder, its descendant folders, and all notes
+ * under any of them) get the same `deletedAt` timestamp, `dirty = 1`, and
+ * `updatedAt`, matching the soft-delete pattern used elsewhere in this file
+ * and in lib/db/notes.ts. Nothing is ever `DELETE FROM`-ed.
  */
 export async function deleteFolder(folderId: string): Promise<void> {
   const db = await getDb();
   const now = Date.now();
 
-  await db.execute(
-    `UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id = $3`,
-    [now, now, folderId],
-  );
+  const folderIds = await getDescendantFolderIds(folderId);
+  const placeholders = folderIds.map((_, i) => `$${i + 3}`).join(", ");
+
+  await db.execute("BEGIN");
+  try {
+    await db.execute(
+      `UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id IN (${placeholders})`,
+      [now, now, ...folderIds],
+    );
+
+    await db.execute(
+      `UPDATE notes SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE folder_id IN (${placeholders})`,
+      [now, now, ...folderIds],
+    );
+
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
+  }
 }

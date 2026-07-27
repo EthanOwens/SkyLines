@@ -4,10 +4,17 @@ import { useState } from "react";
 import {
   createFolder,
   deleteFolder,
+  getFolderById,
   getFolders,
   updateFolder,
 } from "@/lib/db/folders";
-import { createNote, deleteNote, getNoteById, getNotes, updateNote } from "@/lib/db/notes";
+import {
+  createNote,
+  deleteNote,
+  getNoteById,
+  getNotes,
+  updateNote,
+} from "@/lib/db/notes";
 
 // M2 spike route (spec.md subtask 9). Exercises lib/db/notes.ts and
 // lib/db/folders.ts end-to-end (create -> read -> update -> soft-delete ->
@@ -82,6 +89,65 @@ export default function SpikeDb() {
     }
   }
 
+  async function runFolderDeleteRecursionCheck() {
+    // spec.md subtask 10 verification: build a 3-level-deep folder tree
+    // (A -> B -> C) with a note in each of A/B/C, plus an unrelated sibling
+    // folder+note outside the tree. Delete A and confirm A, B, C, and all
+    // three notes are soft-deleted, while the sibling folder/note are not.
+    const userId = "spike-user-recursion";
+    try {
+      const folderA = await createFolder(userId, "A", null, 1);
+      const folderB = await createFolder(userId, "B", folderA, 1);
+      const folderC = await createFolder(userId, "C", folderB, 1);
+      const sibling = await createFolder(userId, "Sibling", null, 2);
+      append(`created tree: A=${folderA} B=${folderB} C=${folderC} Sibling=${sibling}`);
+
+      const noteA = await createNote(userId, "note", folderA, "Note in A");
+      const noteB = await createNote(userId, "note", folderB, "Note in B");
+      const noteC = await createNote(userId, "note", folderC, "Note in C");
+      const noteSibling = await createNote(userId, "note", sibling, "Note in Sibling");
+      append(
+        `created notes: noteA=${noteA} noteB=${noteB} noteC=${noteC} noteSibling=${noteSibling}`,
+      );
+
+      await deleteFolder(folderA);
+      append(`deleteFolder(A) called`);
+
+      const [gotA, gotB, gotC, gotSibling] = await Promise.all([
+        getFolderById(folderA),
+        getFolderById(folderB),
+        getFolderById(folderC),
+        getFolderById(sibling),
+      ]);
+      const [gotNoteA, gotNoteB, gotNoteC, gotNoteSibling] = await Promise.all([
+        getNoteById(noteA),
+        getNoteById(noteB),
+        getNoteById(noteC),
+        getNoteById(noteSibling),
+      ]);
+
+      append(
+        `folders after delete (all expect null except Sibling): A=${gotA} B=${gotB} C=${gotC} Sibling=${gotSibling ? "PRESENT" : "MISSING"}`,
+      );
+      append(
+        `notes after delete (all expect null except Sibling's): noteA=${gotNoteA} noteB=${gotNoteB} noteC=${gotNoteC} noteSibling=${gotNoteSibling ? "PRESENT" : "MISSING"}`,
+      );
+
+      const cascadeOk =
+        gotA === null &&
+        gotB === null &&
+        gotC === null &&
+        gotSibling !== null &&
+        gotNoteA === null &&
+        gotNoteB === null &&
+        gotNoteC === null &&
+        gotNoteSibling !== null;
+      append(`RECURSION CHECK RESULT: ${cascadeOk ? "PASS" : "FAIL"}`);
+    } catch (err) {
+      append(`FOLDER DELETE RECURSION CHECK FAILED: ${String(err)}`);
+    }
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
       <h1 className="text-2xl font-semibold">Spike DB (lib/db)</h1>
@@ -97,6 +163,12 @@ export default function SpikeDb() {
           className="rounded bg-green-600 px-4 py-2 text-white"
         >
           Run note round-trip
+        </button>
+        <button
+          onClick={() => void runFolderDeleteRecursionCheck()}
+          className="rounded bg-purple-600 px-4 py-2 text-white"
+        >
+          Run folder-delete recursion check
         </button>
       </div>
       <ul data-testid="spike-db-log" className="w-full max-w-2xl text-sm">
