@@ -238,3 +238,4 @@ done unless marked parallel.
 - Subtask 7 (M2 — SQLite schema) — done — commit 779e4fa
 - Subtask 8 (M2 — types) — done — commit a812fdf
 - Subtask 9 (M2 — local data-access layer) — done — commit 760cf17
+- Subtask 10 (M2 — fix folder-delete recursion bug) — done — commit dca4192
