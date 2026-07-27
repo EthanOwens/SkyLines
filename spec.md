@@ -239,3 +239,4 @@ done unless marked parallel.
 - Subtask 8 (M2 — types) — done — commit a812fdf
 - Subtask 9 (M2 — local data-access layer) — done — commit 760cf17
 - Subtask 10 (M2 — fix folder-delete recursion bug) — done — commit dca4192
+- Subtask 11 (M3 — push sync) — done — commit 9808537 (also ported lib/firebase.ts as a prerequisite, not separately listed)
