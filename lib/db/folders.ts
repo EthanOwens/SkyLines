@@ -94,6 +94,89 @@ export async function getFolderById(folderId: string): Promise<Folder | null> {
   return rows.length > 0 ? rowToFolder(rows[0]) : null;
 }
 
+/**
+ * Same as `getFolderById`, but does NOT filter out soft-deleted rows. Pull
+ * sync (lib/sync/pull.ts, spec.md subtask 12) needs to find the local row
+ * for LWW comparison even when it's a tombstone (e.g. a remote update to a
+ * previously-deleted row, or vice versa) - `getFolderById` would silently
+ * report "no local row" and cause an incorrect re-insert.
+ */
+export async function getFolderRowById(folderId: string): Promise<Folder | null> {
+  const db = await getDb();
+  const rows = await db.select<FolderRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [folderId]);
+  return rows.length > 0 ? rowToFolder(rows[0]) : null;
+}
+
+/**
+ * Shape of a `folders` Firestore document as written by
+ * lib/sync/push.ts's `folderToFirestoreDoc`, plus the Firestore doc id
+ * (which is the same as the local `id` - both sides use the same
+ * client-generated uuid as primary key).
+ */
+export type RemoteFolderData = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  userId: string;
+  order: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+};
+
+/**
+ * Inserts a new local folder row from remote (Firestore) data, or
+ * overwrites an existing one, via `INSERT ... ON CONFLICT(id) DO UPDATE`.
+ * This is the write primitive pull sync (lib/sync/pull.ts) uses once it has
+ * already decided - via LWW/conflict comparison - that the remote data
+ * should land locally; this function does not itself make that decision.
+ *
+ * `dirty`/`syncedAt` are supplied by the caller rather than hardcoded,
+ * because the right values differ by outcome:
+ *  - plain "no local row yet" or "remote is newer, not dirty" pulls: the
+ *    row now matches Firestore exactly, so dirty=false, syncedAt=now.
+ *  - the local-row-was-dirty-but-lost-the-conflict case: same thing, the
+ *    row now holds the winning remote data and matches Firestore, so
+ *    dirty=false, syncedAt=now.
+ * (The local-wins-the-conflict case never calls this function at all -
+ * see lib/sync/pull.ts - because the local row's content is already
+ * correct and still needs a future push, so it must be left untouched.)
+ */
+export async function upsertFolderFromRemote(
+  remote: RemoteFolderData,
+  dirty: boolean,
+  syncedAt: number | null,
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `INSERT INTO ${TABLE}
+       (id, name, parent_id, user_id, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       parent_id = excluded.parent_id,
+       user_id = excluded.user_id,
+       order_index = excluded.order_index,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       deleted_at = excluded.deleted_at,
+       dirty = excluded.dirty,
+       synced_at = excluded.synced_at`,
+    [
+      remote.id,
+      remote.name,
+      remote.parentId,
+      remote.userId,
+      remote.order,
+      remote.createdAt,
+      remote.updatedAt,
+      remote.deletedAt,
+      dirty ? 1 : 0,
+      syncedAt,
+    ],
+  );
+}
+
 export async function createFolder(
   userId: string,
   name: string,

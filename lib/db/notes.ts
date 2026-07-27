@@ -95,6 +95,86 @@ export async function getNoteById(noteId: string): Promise<Note | null> {
   return rows.length > 0 ? rowToNote(rows[0]) : null;
 }
 
+/**
+ * Same as `getNoteById`, but does NOT filter out soft-deleted rows. Pull
+ * sync (lib/sync/pull.ts, spec.md subtask 12) needs to find the local row
+ * for LWW comparison even when it's a tombstone - `getNoteById` would
+ * silently report "no local row" and cause an incorrect re-insert.
+ */
+export async function getNoteRowById(noteId: string): Promise<Note | null> {
+  const db = await getDb();
+  const rows = await db.select<NoteRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [noteId]);
+  return rows.length > 0 ? rowToNote(rows[0]) : null;
+}
+
+/**
+ * Shape of a `notes` Firestore document as written by lib/sync/push.ts's
+ * `noteToFirestoreDoc`, plus the Firestore doc id (same as local `id`).
+ * `content`/`canvasData` are plain objects here (as stored in Firestore),
+ * not JSON strings - `upsertNoteFromRemote` below stringifies them the same
+ * way `updateNote` does before writing to the local `TEXT` columns.
+ */
+export type RemoteNoteData = {
+  id: string;
+  title: string;
+  type: "note" | "canvas";
+  folderId: string | null;
+  userId: string;
+  content: object | null;
+  canvasData: object | null;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+};
+
+/**
+ * Inserts a new local note row from remote (Firestore) data, or overwrites
+ * an existing one, via `INSERT ... ON CONFLICT(id) DO UPDATE`. This is the
+ * write primitive pull sync (lib/sync/pull.ts) uses once it has already
+ * decided - via LWW/conflict comparison - that the remote data should land
+ * locally; this function does not itself make that decision. See
+ * `upsertFolderFromRemote` in lib/db/folders.ts for the full reasoning on
+ * why `dirty`/`syncedAt` are caller-supplied rather than hardcoded.
+ */
+export async function upsertNoteFromRemote(
+  remote: RemoteNoteData,
+  dirty: boolean,
+  syncedAt: number | null,
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `INSERT INTO ${TABLE}
+       (id, title, type, folder_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       type = excluded.type,
+       folder_id = excluded.folder_id,
+       user_id = excluded.user_id,
+       content = excluded.content,
+       canvas_data = excluded.canvas_data,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       deleted_at = excluded.deleted_at,
+       dirty = excluded.dirty,
+       synced_at = excluded.synced_at`,
+    [
+      remote.id,
+      remote.title,
+      remote.type,
+      remote.folderId,
+      remote.userId,
+      remote.content === null ? null : JSON.stringify(remote.content),
+      remote.canvasData === null ? null : JSON.stringify(remote.canvasData),
+      remote.createdAt,
+      remote.updatedAt,
+      remote.deletedAt,
+      dirty ? 1 : 0,
+      syncedAt,
+    ],
+  );
+}
+
 export async function createNote(
   userId: string,
   type: "note" | "canvas",
