@@ -59,6 +59,33 @@ export async function getNotes(userId: string): Promise<Note[]> {
   return rows.map(rowToNote);
 }
 
+/**
+ * Fetches every note for a user with `dirty = 1`, including soft-deleted
+ * ones (deletedAt tombstones must be pushed too - see spec.md subtask 11).
+ * Used by lib/sync/push.ts to find rows that need to go to Firestore.
+ */
+export async function getDirtyNotes(userId: string): Promise<Note[]> {
+  const db = await getDb();
+  const rows = await db.select<NoteRow[]>(
+    `SELECT * FROM ${TABLE} WHERE user_id = $1 AND dirty = 1`,
+    [userId],
+  );
+  return rows.map(rowToNote);
+}
+
+/**
+ * Marks a note as successfully synced: clears `dirty` and stamps `syncedAt`
+ * with the same client timestamp used for the Firestore write, so local and
+ * remote agree on when the push happened.
+ */
+export async function markNoteSynced(noteId: string, syncedAt: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `UPDATE ${TABLE} SET dirty = 0, synced_at = $1 WHERE id = $2`,
+    [syncedAt, noteId],
+  );
+}
+
 export async function getNoteById(noteId: string): Promise<Note | null> {
   const db = await getDb();
   const rows = await db.select<NoteRow[]>(

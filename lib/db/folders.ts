@@ -58,6 +58,33 @@ export async function getFolders(userId: string): Promise<Folder[]> {
   return rows.map(rowToFolder);
 }
 
+/**
+ * Fetches every folder for a user with `dirty = 1`, including soft-deleted
+ * ones (deletedAt tombstones must be pushed too - see spec.md subtask 11).
+ * Used by lib/sync/push.ts to find rows that need to go to Firestore.
+ */
+export async function getDirtyFolders(userId: string): Promise<Folder[]> {
+  const db = await getDb();
+  const rows = await db.select<FolderRow[]>(
+    `SELECT * FROM ${TABLE} WHERE user_id = $1 AND dirty = 1`,
+    [userId],
+  );
+  return rows.map(rowToFolder);
+}
+
+/**
+ * Marks a folder as successfully synced: clears `dirty` and stamps
+ * `syncedAt` with the same client timestamp used for the Firestore write, so
+ * local and remote agree on when the push happened.
+ */
+export async function markFolderSynced(folderId: string, syncedAt: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `UPDATE ${TABLE} SET dirty = 0, synced_at = $1 WHERE id = $2`,
+    [syncedAt, folderId],
+  );
+}
+
 export async function getFolderById(folderId: string): Promise<Folder | null> {
   const db = await getDb();
   const rows = await db.select<FolderRow[]>(
