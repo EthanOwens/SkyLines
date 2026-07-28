@@ -242,3 +242,4 @@ done unless marked parallel.
 - Subtask 11 (M3 — push sync) — done — commit 9808537 (also ported lib/firebase.ts as a prerequisite, not separately listed)
 - Subtask 12 (M3 — pull sync) — done — commit 7e3c91e
 - Subtask 13 (M3 — tombstones + cleanup) — done — commit d2fc0bb
+- Subtask 14 (M3 — real offline/retry + syncStatus) — done — commit 9318a81 — M3 sync engine (push/pull/cleanup/offline/retry/status) now complete
