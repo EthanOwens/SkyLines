@@ -144,22 +144,34 @@ function toRemoteNoteData(id: string, data: DocumentData): RemoteNoteData {
  *
  * "removed" changes only fire here if a `folders` doc was actually deleted
  * from Firestore outright (this app only ever soft-deletes via
- * `deletedAt`, so an outright delete would only come from tombstone
- * cleanup - spec.md subtask 13, not built yet - or manual intervention).
- * `change.doc.data()` is still populated with the doc's last known data for
- * "removed" changes even though the doc is gone, so those are skipped
- * outright rather than treated as a write (see the early return below) -
- * otherwise a hard-deleted Firestore doc would get resurrected locally.
- * Reconciling actual hard-deletes is tombstone cleanup's job (subtask 13),
- * not this pull path's.
+ * `deletedAt`, so an outright delete now only comes from
+ * lib/sync/cleanup.ts's `cleanupOldTombstones` - spec.md subtask 13 - or
+ * manual intervention). `change.doc.data()` is still populated with the
+ * doc's last known data for "removed" changes even though the doc is gone,
+ * so those are skipped outright rather than treated as a write (see the
+ * early return below) - otherwise a hard-deleted Firestore doc would get
+ * resurrected locally.
+ *
+ * Confirmed still correct now that subtask 13 exists and actually triggers
+ * real Firestore deletes: `cleanupOldTombstones` only ever hard-deletes a
+ * row whose local `deletedAt` is already old, and `deletedAt` is a synced
+ * field - so any OTHER device that has pulled this row already has the
+ * same old tombstone locally, and that device's own future
+ * `cleanupOldTombstones` pass will independently hard-delete its local
+ * copy too (its remote `deleteDoc()` call simply becomes a harmless no-op
+ * the second time). Hard-delete convergence across devices happens via
+ * each device's own periodic cleanup eventually running, not by reacting
+ * to "removed" here - reacting here would mean treating "the doc is gone"
+ * as a trustworthy signal to hard-delete local data with no LWW
+ * protection, and there's no way to distinguish "removed by legitimate
+ * tombstone cleanup" from "removed by something else" from a bare
+ * `docChanges()` event. So this stays a no-op skip.
  */
 async function applyFolderChange(change: DocumentChange<DocumentData>): Promise<void> {
   if (change.type === "removed") {
-    // Hard-delete reconciliation is out of scope here (a separate, later
-    // subtask). Skip rather than resurrect the doc's last-known data as if
-    // it were a legitimate write - this app's own delete path is
-    // soft-delete via `deletedAt`, which arrives as a "modified" change,
-    // not "removed".
+    // See the function-level comment above for why this remains a no-op
+    // skip even after subtask 13 (lib/sync/cleanup.ts) started performing
+    // real Firestore hard-deletes.
     return;
   }
 
@@ -181,15 +193,11 @@ async function applyFolderChange(change: DocumentChange<DocumentData>): Promise<
 /**
  * Same as `applyFolderChange`, for the `notes` collection - including
  * skipping "removed" changes outright instead of resurrecting them (see the
- * comment above `applyFolderChange`).
+ * comment above `applyFolderChange`, including the subtask 13 confirmation
+ * that this remains correct).
  */
 async function applyNoteChange(change: DocumentChange<DocumentData>): Promise<void> {
   if (change.type === "removed") {
-    // Hard-delete reconciliation is out of scope here (a separate, later
-    // subtask). Skip rather than resurrect the doc's last-known data as if
-    // it were a legitimate write - this app's own delete path is
-    // soft-delete via `deletedAt`, which arrives as a "modified" change,
-    // not "removed".
     return;
   }
 

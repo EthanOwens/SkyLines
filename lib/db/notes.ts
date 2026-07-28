@@ -86,6 +86,34 @@ export async function markNoteSynced(noteId: string, syncedAt: number): Promise<
   );
 }
 
+/**
+ * Fetches every soft-deleted note for a user whose `deletedAt` is older
+ * than `cutoffMs` (a Unix-ms timestamp, i.e. `Date.now() - maxAgeMs` in
+ * lib/sync/cleanup.ts). These are tombstones old enough to be hard-deleted
+ * by the periodic cleanup pass (spec.md subtask 13) - see
+ * `getOldTombstoneFolders` in lib/db/folders.ts for why non-dirty AND dirty
+ * rows are both included.
+ */
+export async function getOldTombstoneNotes(userId: string, cutoffMs: number): Promise<Note[]> {
+  const db = await getDb();
+  const rows = await db.select<NoteRow[]>(
+    `SELECT * FROM ${TABLE} WHERE user_id = $1 AND deleted_at IS NOT NULL AND deleted_at < $2`,
+    [userId, cutoffMs],
+  );
+  return rows.map(rowToNote);
+}
+
+/**
+ * Genuinely `DELETE FROM`s a note row - unlike every other write in this
+ * file, this does not soft-delete. Only meant to be called by the periodic
+ * tombstone cleanup pass (lib/sync/cleanup.ts, spec.md subtask 13) on rows
+ * that are already tombstones old enough to purge.
+ */
+export async function hardDeleteNote(noteId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(`DELETE FROM ${TABLE} WHERE id = $1`, [noteId]);
+}
+
 export async function getNoteById(noteId: string): Promise<Note | null> {
   const db = await getDb();
   const rows = await db.select<NoteRow[]>(

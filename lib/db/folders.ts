@@ -85,6 +85,42 @@ export async function markFolderSynced(folderId: string, syncedAt: number): Prom
   );
 }
 
+/**
+ * Fetches every soft-deleted folder for a user whose `deletedAt` is older
+ * than `cutoffMs` (a Unix-ms timestamp, i.e. `Date.now() - maxAgeMs` in
+ * lib/sync/cleanup.ts). These are tombstones old enough to be hard-deleted
+ * by the periodic cleanup pass (spec.md subtask 13) - includes both dirty
+ * and non-dirty rows. Fetching a dirty row here does NOT by itself mean
+ * it's safe to hard-delete: `hardDeleteTombstone` in lib/sync/cleanup.ts
+ * decides per-row whether a fetched candidate is actually safe to purge
+ * this pass, since "dirty" is ambiguous between "never synced at all" (safe
+ * to clean up locally) and "was synced once but the soft-delete itself
+ * hasn't been confirmed pushed yet" (must be skipped entirely - see that
+ * file for the full reasoning).
+ */
+export async function getOldTombstoneFolders(userId: string, cutoffMs: number): Promise<Folder[]> {
+  const db = await getDb();
+  const rows = await db.select<FolderRow[]>(
+    `SELECT * FROM ${TABLE} WHERE user_id = $1 AND deleted_at IS NOT NULL AND deleted_at < $2`,
+    [userId, cutoffMs],
+  );
+  return rows.map(rowToFolder);
+}
+
+/**
+ * Genuinely `DELETE FROM`s a folder row - unlike every other write in this
+ * file, this does not soft-delete. Only meant to be called by the periodic
+ * tombstone cleanup pass (lib/sync/cleanup.ts, spec.md subtask 13) on rows
+ * that are already tombstones old enough to purge; callers are responsible
+ * for FK-safe ordering (child folders/notes before parents - see
+ * lib/sync/cleanup.ts) since `folders.parent_id` and `notes.folder_id` are
+ * enforced foreign keys.
+ */
+export async function hardDeleteFolder(folderId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(`DELETE FROM ${TABLE} WHERE id = $1`, [folderId]);
+}
+
 export async function getFolderById(folderId: string): Promise<Folder | null> {
   const db = await getDb();
   const rows = await db.select<FolderRow[]>(
