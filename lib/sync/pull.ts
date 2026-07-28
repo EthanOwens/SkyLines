@@ -256,12 +256,41 @@ async function applyDecision<TLocal, TRemote>(
 }
 
 /**
+ * Optional observability hooks (spec.md subtask 14, lib/sync/engine.ts)
+ * letting a caller derive a real `syncStatus` from pull activity without
+ * this file needing to know anything about that state machine itself.
+ * Entirely optional/additive - every existing caller that omits `hooks`
+ * (e.g. app/spike-pull/page.tsx) behaves exactly as before.
+ *
+ * `onApplyError` and `onListenError` are deliberately separate: applying one
+ * changed doc can fail (`onApplyError`) while the listener itself is still
+ * alive and will keep delivering future snapshots just fine (see the
+ * per-change `.catch` below, and pull.ts's existing resilience to
+ * individual bad changes) - that's not a reason for a caller to resubscribe.
+ * The listener itself dying (`onListenError`, onSnapshot's second callback)
+ * is different: Firestore does not auto-retry a fatal listen error (e.g.
+ * permission-denied), so no more snapshots will ever arrive on this
+ * particular listener and a caller that wants to keep receiving updates
+ * must call `subscribeFolderPull`/`subscribeNotePull`/`startPullSync` again.
+ */
+export type PullHooks = {
+  /** A snapshot arrived carrying at least one doc change to apply. */
+  onActivity?: () => void;
+  /** The snapshot's doc changes all finished applying (whether or not one of them individually failed - see `onApplyError`). Only fired for snapshots that had at least one change (mirrors `onActivity`). */
+  onIdle?: () => void;
+  /** One doc change failed to apply; the listener is still alive. */
+  onApplyError?: (err: unknown) => void;
+  /** The onSnapshot listener itself died; no more snapshots will arrive on it. */
+  onListenError?: (err: unknown) => void;
+};
+
+/**
  * Subscribes to every `folders` doc owned by `userId` and pulls
  * added/modified/removed changes into SQLite via the LWW/conflict logic
  * above. Returns the Firestore `Unsubscribe` so callers can tear the
  * listener down (e.g. on sign-out or app teardown).
  */
-export function subscribeFolderPull(userId: string): Unsubscribe {
+export function subscribeFolderPull(userId: string, hooks?: PullHooks): Unsubscribe {
   const q = query(collection(db, FOLDERS_COLLECTION), where("userId", "==", userId));
   // A write from this same client to a doc this listener watches delivers
   // TWO onSnapshot callbacks for it: an optimistic one from the local
@@ -277,44 +306,67 @@ export function subscribeFolderPull(userId: string): Unsubscribe {
   return onSnapshot(
     q,
     (snapshot) => {
+      const changes = snapshot.docChanges();
+      if (changes.length > 0) hooks?.onActivity?.();
       queue = queue
         .then(async () => {
-          for (const change of snapshot.docChanges()) {
+          for (const change of changes) {
             await applyFolderChange(change);
           }
         })
-        .catch((err) => console.error("[sync/pull] failed to apply folder changes", err));
+        .catch((err) => {
+          console.error("[sync/pull] failed to apply folder changes", err);
+          hooks?.onApplyError?.(err);
+        })
+        .finally(() => {
+          if (changes.length > 0) hooks?.onIdle?.();
+        });
     },
-    (err) => console.error("[sync/pull] folders onSnapshot error", err),
+    (err) => {
+      console.error("[sync/pull] folders onSnapshot error", err);
+      hooks?.onListenError?.(err);
+    },
   );
 }
 
 /** Same as `subscribeFolderPull`, for the `notes` collection. */
-export function subscribeNotePull(userId: string): Unsubscribe {
+export function subscribeNotePull(userId: string, hooks?: PullHooks): Unsubscribe {
   const q = query(collection(db, NOTES_COLLECTION), where("userId", "==", userId));
   let queue: Promise<void> = Promise.resolve();
   return onSnapshot(
     q,
     (snapshot) => {
+      const changes = snapshot.docChanges();
+      if (changes.length > 0) hooks?.onActivity?.();
       queue = queue
         .then(async () => {
-          for (const change of snapshot.docChanges()) {
+          for (const change of changes) {
             await applyNoteChange(change);
           }
         })
-        .catch((err) => console.error("[sync/pull] failed to apply note changes", err));
+        .catch((err) => {
+          console.error("[sync/pull] failed to apply note changes", err);
+          hooks?.onApplyError?.(err);
+        })
+        .finally(() => {
+          if (changes.length > 0) hooks?.onIdle?.();
+        });
     },
-    (err) => console.error("[sync/pull] notes onSnapshot error", err),
+    (err) => {
+      console.error("[sync/pull] notes onSnapshot error", err);
+      hooks?.onListenError?.(err);
+    },
   );
 }
 
 /**
  * Starts both pull listeners for a user and returns a single combined
- * unsubscribe function.
+ * unsubscribe function. `hooks` (optional) are passed through unchanged to
+ * both listeners - see `PullHooks` above.
  */
-export function startPullSync(userId: string): Unsubscribe {
-  const unsubscribeFolders = subscribeFolderPull(userId);
-  const unsubscribeNotes = subscribeNotePull(userId);
+export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
+  const unsubscribeFolders = subscribeFolderPull(userId, hooks);
+  const unsubscribeNotes = subscribeNotePull(userId, hooks);
   return () => {
     unsubscribeFolders();
     unsubscribeNotes();
