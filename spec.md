@@ -241,3 +241,4 @@ done unless marked parallel.
 - Subtask 10 (M2 — fix folder-delete recursion bug) — done — commit dca4192
 - Subtask 11 (M3 — push sync) — done — commit 9808537 (also ported lib/firebase.ts as a prerequisite, not separately listed)
 - Subtask 12 (M3 — pull sync) — done — commit 7e3c91e
+- Subtask 13 (M3 — tombstones + cleanup) — done — commit d2fc0bb
