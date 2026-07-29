@@ -243,3 +243,4 @@ done unless marked parallel.
 - Subtask 12 (M3 — pull sync) — done — commit 7e3c91e
 - Subtask 13 (M3 — tombstones + cleanup) — done — commit d2fc0bb
 - Subtask 14 (M3 — real offline/retry + syncStatus) — done — commit 9318a81 — M3 sync engine (push/pull/cleanup/offline/retry/status) now complete
+- Subtask 15 (M4 — auth + data hooks rewire) — done — commit 2ba6040
