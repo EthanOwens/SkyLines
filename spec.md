@@ -244,3 +244,4 @@ done unless marked parallel.
 - Subtask 13 (M3 — tombstones + cleanup) — done — commit d2fc0bb
 - Subtask 14 (M3 — real offline/retry + syncStatus) — done — commit 9318a81 — M3 sync engine (push/pull/cleanup/offline/retry/status) now complete
 - Subtask 15 (M4 — auth + data hooks rewire) — done — commit 2ba6040
+- Subtask 16 (M4 — sidebar) — done — commit 61aef57 (also fixed a real deleteFolder atomicity regression found during live testing)
