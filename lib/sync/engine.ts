@@ -449,6 +449,7 @@ export function startSyncEngine(userId: string): () => void {
   }
 
   const myGeneration = ++generation;
+  setStatus("saved"); // fresh session, don't inherit a stale status from a prior sign-in/out cycle
 
   startOrRestartPull(userId);
 
@@ -486,6 +487,7 @@ export function startSyncEngine(userId: string): () => void {
     pendingPushUserId = null;
     pushBackoffMs = BASE_BACKOFF_MS;
     pullBackoffMs = BASE_BACKOFF_MS;
+    setStatus("saved"); // reset before this engine instance's state is torn down, so the next session (if any) starts clean too
 
     window.removeEventListener("online", handleOnline);
     window.removeEventListener("offline", handleOffline);

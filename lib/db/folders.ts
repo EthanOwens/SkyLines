@@ -1,5 +1,6 @@
 import type { Folder } from "@/types";
 import { getDb } from "./client";
+import { notifyDataChange } from "./events";
 
 // Local SQLite data-access layer for `folders` (spec.md subtask 9), mirroring
 // the function names/shapes of the current Firestore-backed
@@ -119,6 +120,7 @@ export async function getOldTombstoneFolders(userId: string, cutoffMs: number): 
 export async function hardDeleteFolder(folderId: string): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM ${TABLE} WHERE id = $1`, [folderId]);
+  notifyDataChange("remote");
 }
 
 export async function getFolderById(folderId: string): Promise<Folder | null> {
@@ -211,6 +213,7 @@ export async function upsertFolderFromRemote(
       syncedAt,
     ],
   );
+  notifyDataChange("remote");
 }
 
 export async function createFolder(
@@ -230,6 +233,7 @@ export async function createFolder(
     [id, name, parentId, userId, order, now, now],
   );
 
+  notifyDataChange("local");
   return id;
 }
 
@@ -267,6 +271,7 @@ export async function updateFolder(
     `UPDATE ${TABLE} SET ${setClauses.join(", ")} WHERE id = $${i}`,
     params,
   );
+  notifyDataChange("local");
 }
 
 /**
@@ -328,4 +333,5 @@ export async function deleteFolder(folderId: string): Promise<void> {
     await db.execute("ROLLBACK");
     throw err;
   }
+  notifyDataChange("local");
 }

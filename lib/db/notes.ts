@@ -1,5 +1,6 @@
 import type { Note } from "@/types";
 import { getDb } from "./client";
+import { notifyDataChange } from "./events";
 
 // Local SQLite data-access layer for `notes` (spec.md subtask 9), mirroring
 // the function names/shapes of the current Firestore-backed
@@ -112,6 +113,7 @@ export async function getOldTombstoneNotes(userId: string, cutoffMs: number): Pr
 export async function hardDeleteNote(noteId: string): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM ${TABLE} WHERE id = $1`, [noteId]);
+  notifyDataChange("remote");
 }
 
 export async function getNoteById(noteId: string): Promise<Note | null> {
@@ -201,6 +203,7 @@ export async function upsertNoteFromRemote(
       syncedAt,
     ],
   );
+  notifyDataChange("remote");
 }
 
 export async function createNote(
@@ -220,6 +223,7 @@ export async function createNote(
     [id, title, type, folderId, userId, now, now],
   );
 
+  notifyDataChange("local");
   return id;
 }
 
@@ -261,6 +265,7 @@ export async function updateNote(
     `UPDATE ${TABLE} SET ${setClauses.join(", ")} WHERE id = $${i}`,
     params,
   );
+  notifyDataChange("local");
 }
 
 /**
@@ -275,4 +280,5 @@ export async function deleteNote(noteId: string): Promise<void> {
     `UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id = $3`,
     [now, now, noteId],
   );
+  notifyDataChange("local");
 }
