@@ -153,8 +153,12 @@ done unless marked parallel.
 19. **M4 — shared UI + styling.** Port shadcn primitives (`button`, `dialog`,
     `dropdown-menu`, `input`, `scroll-area`, `separator`, `tooltip`),
     `globals.css`, `editor.css`. Can run in parallel with 16–18.
-20. **M4 — sync status badge.** Wire the sidebar-header and editor-toolbar
-    sync status badges to the real `syncStatus` from subtask 14.
+20. ~~**M4 — sync status badge.**~~ **Already satisfied — no standalone pass
+    needed.** Sidebar.tsx's `SyncBadge` (subtask 16) and EditorToolbar.tsx's
+    `SyncStatus` (subtask 17) both already read `useAppStore(s =>
+    s.syncStatus)` as ported, and subtask 15's `useSyncEngine` already wires
+    the real engine status into that store field — both badges already
+    reflect real sync activity with nothing further to wire.
 21. **M5 — auth rework.** Replace `signInWithPopup` (Google sign-in) with a
     system-browser + deep-link flow (`@tauri-apps/plugin-shell` `open()` +
     `tauri-plugin-deep-link`) or `signInWithRedirect`. Leave email/password
@@ -248,3 +252,4 @@ done unless marked parallel.
 - Subtask 17 (M4 — rich text editor) — done — commit cc5b7b5 (fixed a real stuck-loading bug introduced by query-param routing making bare /note reachable)
 - Subtask 18 (M4 — canvas editor) — done — commit 503087f (fixed a real stale-closure data-corruption bug on note-switch, plus a resource leak; also fixed a leftover branding typo in Sidebar.tsx). Note: user's commit message flags canvas/drawing may be deprioritized in future updates — no action needed now.
 - Subtask 19 (M4 — shared UI + styling) — done — commit 3fa671d (mostly already satisfied by subtasks 16-17; only Dialog + Input remained)
+- Subtask 20 (M4 — sync status badge) — resolved without an implementor pass: already satisfied by subtasks 15-17 (both badges already read the real syncStatus)
