@@ -246,3 +246,4 @@ done unless marked parallel.
 - Subtask 15 (M4 — auth + data hooks rewire) — done — commit 2ba6040
 - Subtask 16 (M4 — sidebar) — done — commit 61aef57 (also fixed a real deleteFolder atomicity regression found during live testing)
 - Subtask 17 (M4 — rich text editor) — done — commit cc5b7b5 (fixed a real stuck-loading bug introduced by query-param routing making bare /note reachable)
+- Subtask 18 (M4 — canvas editor) — done — commit 503087f (fixed a real stale-closure data-corruption bug on note-switch, plus a resource leak; also fixed a leftover branding typo in Sidebar.tsx). Note: user's commit message flags canvas/drawing may be deprioritized in future updates — no action needed now.
