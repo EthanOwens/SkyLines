@@ -162,7 +162,7 @@ export function Sidebar({ user }: Props) {
     >
       {/* Header */}
       <div className="flex h-12 items-center justify-between px-3">
-        <span className="text-sm font-semibold text-sidebar-foreground">NoteFlow</span>
+        <span className="text-sm font-semibold text-sidebar-foreground">Skylines</span>
         <div className="flex items-center gap-1">
           <SyncBadge />
           <Button variant="ghost" size="icon" onClick={toggleSidebar} className="h-7 w-7">
