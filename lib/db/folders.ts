@@ -308,6 +308,26 @@ async function getDescendantFolderIds(folderId: string): Promise<string[]> {
  * under any of them) get the same `deletedAt` timestamp, `dirty = 1`, and
  * `updatedAt`, matching the soft-delete pattern used elsewhere in this file
  * and in lib/db/notes.ts. Nothing is ever `DELETE FROM`-ed.
+ *
+ * Both `UPDATE`s below are sent as a SINGLE multi-statement `db.execute()`
+ * call (one semicolon-joined `BEGIN; UPDATE ...; UPDATE ...; COMMIT;` string)
+ * rather than as separate `db.execute()` calls wrapping a `BEGIN`/`COMMIT`
+ * transaction. Separate calls don't work here: `@tauri-apps/plugin-sql`'s
+ * SQLite backend pools connections, so a `db.execute("BEGIN")` followed by
+ * further `db.execute(...)` calls isn't guaranteed to reuse the same pooled
+ * connection, which surfaced as a real, reproducible `cannot commit - no
+ * transaction is active` runtime error. Each `db.execute()` call is exactly
+ * one `invoke()` IPC round-trip that acquires exactly one pooled connection
+ * and streams the whole query string through it, and sqlx-sqlite's
+ * `VirtualStatement` natively steps through multiple `;`-separated
+ * statements sequentially on that one connection - so folding both `UPDATE`s
+ * (plus `BEGIN`/`COMMIT`) into one call restores real atomicity without ever
+ * needing two calls to coordinate a transaction across connections. The
+ * named `$N` placeholders resolve directly from the literal number in the
+ * SQL text against the single flat bind-values array regardless of which
+ * sub-statement they're in, so both `UPDATE`s can keep reusing `$1`/`$2` for
+ * the timestamps and `$3...` for the folder ids against the same
+ * `[now, now, ...folderIds]` array.
  */
 export async function deleteFolder(folderId: string): Promise<void> {
   const db = await getDb();
@@ -316,22 +336,13 @@ export async function deleteFolder(folderId: string): Promise<void> {
   const folderIds = await getDescendantFolderIds(folderId);
   const placeholders = folderIds.map((_, i) => `$${i + 3}`).join(", ");
 
-  await db.execute("BEGIN");
-  try {
-    await db.execute(
-      `UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id IN (${placeholders})`,
-      [now, now, ...folderIds],
-    );
+  await db.execute(
+    `BEGIN;
+     UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id IN (${placeholders});
+     UPDATE notes SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE folder_id IN (${placeholders});
+     COMMIT;`,
+    [now, now, ...folderIds],
+  );
 
-    await db.execute(
-      `UPDATE notes SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE folder_id IN (${placeholders})`,
-      [now, now, ...folderIds],
-    );
-
-    await db.execute("COMMIT");
-  } catch (err) {
-    await db.execute("ROLLBACK");
-    throw err;
-  }
   notifyDataChange("local");
 }
