@@ -27,7 +27,7 @@ fn greet(name: &str) -> String {
 fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-    use tauri::{Manager, WindowEvent};
+    use tauri::{DragDropEvent, Manager, WindowEvent};
 
     // --- System tray ---------------------------------------------------
     let show_item = MenuItem::with_id(app, "show", "Show Skylines", true, None::<&str>)?;
@@ -99,9 +99,52 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
         let window_clone = window.clone();
         window.on_window_event(move |event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window_clone.hide();
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window_clone.hide();
+                }
+                // M6 (spec.md subtask 25): drag-and-drop plumbing only - no
+                // attachment/file-import feature exists yet for a dropped
+                // file to feed into (see spec.md's note on this subtask's
+                // scope), so this just logs what the OS handed the window
+                // (`tauri://drag-enter` / `-over` / `-drop` / `-leave` on
+                // the JS side, all funneled into this single
+                // `WindowEvent::DragDrop` variant on the Rust side) and
+                // does nothing further. `dragDropEnabled` is set on the
+                // window in tauri.conf.json so these events actually fire.
+                //
+                // Deliberately using `writeln!` to a raw stderr handle
+                // instead of println!/eprintln! - see the global shortcut
+                // registration failure handler below for why those macros
+                // are unsafe to call from a release build with no attached
+                // console.
+                WindowEvent::DragDrop(drag_drop_event) => {
+                    use std::io::Write;
+                    match drag_drop_event {
+                        DragDropEvent::Enter { paths, position } => {
+                            let _ = writeln!(
+                                std::io::stderr(),
+                                "drag-drop: enter {paths:?} at {position:?}"
+                            );
+                        }
+                        DragDropEvent::Over { position } => {
+                            let _ =
+                                writeln!(std::io::stderr(), "drag-drop: over {position:?}");
+                        }
+                        DragDropEvent::Drop { paths, position } => {
+                            let _ = writeln!(
+                                std::io::stderr(),
+                                "drag-drop: drop {paths:?} at {position:?}"
+                            );
+                        }
+                        DragDropEvent::Leave => {
+                            let _ = writeln!(std::io::stderr(), "drag-drop: leave");
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         });
     }
