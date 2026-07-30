@@ -26,4 +26,5 @@ tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
 tauri-plugin-shell = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-global-shortcut = "2"
 

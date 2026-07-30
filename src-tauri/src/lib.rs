@@ -226,6 +226,27 @@ pub fn run() {
             // before this callback runs, which is all app/login/page.tsx's
             // `onOpenUrl` listener needs.
         }));
+
+        // M6 (spec.md subtask 24): global shortcut plugin. Desktop-only -
+        // the crate itself is compiled to nothing on Android/iOS
+        // (`#![cfg(not(any(target_os = "android", target_os = "ios")))]`
+        // in tauri-plugin-global-shortcut's own lib.rs), but this is still
+        // wrapped in `#[cfg(desktop)]` to match the guarding pattern used
+        // for tray/menu/single-instance elsewhere in this file. Only the
+        // handler is wired up here; the actual shortcut is registered (and
+        // any registration failure handled non-fatally) down in `.setup()`
+        // below, so a collision with another app's shortcut can't abort
+        // this plugin's own `setup` step and take the whole app down with
+        // it via the `.expect(...)` at the bottom of `run()`.
+        builder = builder.plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        show_main_window(app);
+                    }
+                })
+                .build(),
+        );
     }
 
     builder
@@ -255,6 +276,52 @@ pub fn run() {
             // tauri_plugin_single_instance registration above.
             #[cfg(desktop)]
             setup_tray_and_menu(app)?;
+
+            // M6 (spec.md subtask 24): register the "show/focus Skylines"
+            // global shortcut. Mirrors the tray icon's "Show Skylines"
+            // item/left-click behavior - a common "summon the app"
+            // background hotkey pattern for note-taking/quick-capture apps
+            // (Notion, Obsidian, etc). No other app-specific global
+            // shortcuts are registered - there's no reliable way to, say,
+            // quick-capture a note from outside the sidebar's own UI yet.
+            //
+            // Keybinding: Ctrl+Alt+S (Cmd+Option+S on macOS, via the
+            // cross-platform "CmdOrCtrl" alias - see global-hotkey's
+            // hotkey.rs parser). Chosen to be low-collision: plain
+            // Ctrl+<letter> combos (Ctrl+N, Ctrl+O, ...) are heavily
+            // reserved by browsers/OSes/IDEs, but two-modifier Ctrl+Alt (or
+            // Cmd+Option) chords are rarely bound by other applications.
+            // "S" is mnemonic for Skylines.
+            #[cfg(desktop)]
+            {
+                use std::io::Write;
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+                const SHOW_WINDOW_SHORTCUT: &str = "CmdOrCtrl+Alt+S";
+                if let Err(err) = app.global_shortcut().register(SHOW_WINDOW_SHORTCUT) {
+                    // Non-fatal: the combo may already be claimed by another
+                    // application on the user's system. Unlike the tray/menu
+                    // setup above (core UX, fails loudly via `?`), a global
+                    // shortcut collision is a low-stakes, plausible-in-
+                    // normal-use failure mode that shouldn't take down the
+                    // whole app's startup.
+                    //
+                    // Deliberately NOT using eprintln!/println! here: those macros
+                    // panic if the write fails (library/std/src/io/stdio.rs's
+                    // print_to helper), and in a release build (main.rs sets
+                    // windows_subsystem = "windows" for non-debug builds) there is
+                    // no console attached unless the app was launched from one -
+                    // GetStdHandle returns NULL, the write fails, and eprintln!
+                    // would panic and crash the whole app on exactly the collision
+                    // this handler exists to survive. writeln! on a raw Stderr
+                    // handle returns a Result instead of panicking, so a failed
+                    // write here is itself silently and safely ignored.
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "failed to register global shortcut {SHOW_WINDOW_SHORTCUT}: {err}"
+                    );
+                }
+            }
 
             Ok(())
         })
