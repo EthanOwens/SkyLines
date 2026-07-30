@@ -6,6 +6,120 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+// M6 (spec.md subtask 23): tray icon + native application menu. Desktop-only
+// (see the `#[cfg(desktop)]` call site in `run()` below) since there is no
+// system tray or native menu bar concept on mobile.
+//
+// There is no reference implementation to port here - `../note_taking_app`
+// is a pure Next.js web app with no Tauri/native code at all - so this is
+// deliberately minimal: a "Show Skylines" / "Quit" tray menu, and a File /
+// Edit native menu. No app-specific actions (e.g. "New Note") are wired up,
+// since there's no real authenticated app shell yet for them to hook into
+// (see spec.md's note on this subtask's scope).
+//
+// Close-to-tray: the native close button (X) on the main window is
+// intercepted so it hides the window instead of destroying it (Tauri's
+// default behavior when the last window closes is to exit the whole app).
+// Without that, the tray's "Show Skylines" item would have nothing left to
+// show once the window was closed. The tray's "Quit" item (and File > Quit,
+// same handler) is the actual way to terminate the app now.
+#[cfg(desktop)]
+fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::{Manager, WindowEvent};
+
+    // --- System tray ---------------------------------------------------
+    let show_item = MenuItem::with_id(app, "show", "Show Skylines", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+    let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+    TrayIconBuilder::new()
+        // Reuse the app's own icon (from src-tauri/icons/, wired up via
+        // tauri.conf.json's `bundle.icon`) rather than shipping a second
+        // tray-specific asset.
+        .icon(
+            app.default_window_icon()
+                .cloned()
+                .expect("app icon should be configured in tauri.conf.json's bundle.icon"),
+        )
+        .menu(&tray_menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Standard tray behavior: left-click shows/focuses the main
+            // window. Right-click opens the context menu built above
+            // (that's handled natively by the OS/tray-icon crate and
+            // doesn't need to be wired up here).
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+
+    // --- Native application menu ---------------------------------------
+    // On Windows (unlike macOS) this attaches as the traditional top-of-
+    // window menu bar via the native SetMenu API, applied per-window
+    // rather than as a single global menu bar.
+    let file_menu = SubmenuBuilder::new(app, "File").item(&quit_item).build()?;
+
+    // Predefined items so OS-level Undo/Redo/Cut/Copy/Paste/Select All
+    // keep working for the rich text editor and canvas.
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .separator()
+        .select_all()
+        .build()?;
+
+    let menu = Menu::with_items(app, &[&file_menu, &edit_menu])?;
+    app.set_menu(menu)?;
+
+    // Close-to-tray: intercept the native close button so it hides the
+    // window instead of destroying it (Tauri's default behavior when the
+    // last window closes is to exit the whole app). Without this, the
+    // tray's "Show Skylines" item can never be clicked to bring anything
+    // back once the window is closed - the process would already be gone.
+    // The tray's "Quit" item (and the File > Quit menu item, same handler)
+    // is now the actual way to terminate the app.
+    if let Some(window) = app.get_webview_window("main") {
+        let window_clone = window.clone();
+        window.on_window_event(move |event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window_clone.hide();
+            }
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(desktop)]
+fn show_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // M2 (spec.md subtask 7): real local storage schema, mirroring
@@ -134,6 +248,14 @@ pub fn run() {
             {
                 app.deep_link().register_all()?;
             }
+
+            // M6 (spec.md subtask 23): system tray + native application menu.
+            // Both are desktop-only concepts (there is no tray or native menu
+            // bar on Android/iOS), so this is gated the same way as the
+            // tauri_plugin_single_instance registration above.
+            #[cfg(desktop)]
+            setup_tray_and_menu(app)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![greet])
