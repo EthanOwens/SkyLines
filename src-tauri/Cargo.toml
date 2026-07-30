@@ -18,7 +18,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -27,4 +26,15 @@ tauri-plugin-shell = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-global-shortcut = "2"
+
+# `devtools` is intentionally Android-only: it's needed to attach a CDP
+# inspector to a release-profile Android build (release profiles strip the
+# `debug_assertions`-gated auto-enable that Tauri normally relies on), but it
+# must not leak into the already-shipped Windows desktop build, where it
+# would expose the JS/IPC context of a notes app to anyone with local access.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri = { version = "2", features = ["tray-icon", "devtools"] }
 

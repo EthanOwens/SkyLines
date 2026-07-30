@@ -120,6 +120,18 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
+  body {
+    /* Without a definite height here, any `h-full` descendant (e.g.
+       components/canvas/CanvasEditor.tsx's tldraw wrapper) resolves its
+       percentage height against an undefined ancestor and collapses to 0.
+       That's invisible on pages using `min-h-screen` (a definite length,
+       not a percentage - e.g. app/login/page.tsx), but it breaks
+       tldraw's container bounding-rect math outright: touch drags on
+       Android get spuriously cut short by a `pointercancel` partway
+       through the gesture, so no shape is ever committed. */
+    height: 100%;
+  }
   body {
     @apply bg-background text-foreground font-sans;
   }
