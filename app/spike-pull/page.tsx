@@ -9,6 +9,7 @@ import {
 import { deleteDoc, doc, setDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { createFolder, getFolderRowById, updateFolder } from "@/lib/db/folders";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { pushDirtyFolders } from "@/lib/sync/push";
 import { startPullSync } from "@/lib/sync/pull";
 import { getSyncConflicts } from "@/lib/db/syncConflicts";
@@ -96,7 +97,8 @@ export default function SpikePull() {
   async function runRemoteNewerOverwriteCase() {
     if (!user) return append("sign in first");
     try {
-      const folderId = await createFolder(user.uid, "Local Folder (overwrite case)", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Local Folder (overwrite case)", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderId);
       await pushDirtyFolders(user.uid);
       const afterPush = await getFolderRowById(folderId);
@@ -127,7 +129,8 @@ export default function SpikePull() {
   async function runConflictRemoteWinsCase() {
     if (!user) return append("sign in first");
     try {
-      const folderId = await createFolder(user.uid, "Local Folder (conflict, remote wins)", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Local Folder (conflict, remote wins)", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderId);
       await pushDirtyFolders(user.uid);
       const synced = await getFolderRowById(folderId);
@@ -175,7 +178,8 @@ export default function SpikePull() {
   async function runConflictLocalWinsCase() {
     if (!user) return append("sign in first");
     try {
-      const folderId = await createFolder(user.uid, "Local Folder (conflict, local wins)", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Local Folder (conflict, local wins)", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderId);
       await pushDirtyFolders(user.uid);
       const synced = await getFolderRowById(folderId);
@@ -224,7 +228,8 @@ export default function SpikePull() {
   async function runTombstoneCase() {
     if (!user) return append("sign in first");
     try {
-      const folderId = await createFolder(user.uid, "Local Folder (tombstone case)", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Local Folder (tombstone case)", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderId);
       await pushDirtyFolders(user.uid);
       append(`created+pushed local folder -> id=${folderId}`);

@@ -15,6 +15,7 @@ import { useAppStore } from "@/stores/appStore";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { createFolder as dbCreateFolder } from "@/lib/db/folders";
 import { createNote as dbCreateNote } from "@/lib/db/notes";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 
 // spec.md subtask 16 verification route (M4 "sidebar"). Renders the real,
 // ported Sidebar/FolderTree/FolderItem/NoteItem components wired against the
@@ -74,7 +75,8 @@ function SpikeSidebarInner() {
   // change-notification wiring, per this subtask's verification section.
   async function createFolderDirectly() {
     if (!user) return append("sign in first");
-    const id = await dbCreateFolder(user.uid, "Direct DB Folder");
+    const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+    const id = await dbCreateFolder(user.uid, "Direct DB Folder", notebookId);
     createdFolderIdsRef.current.add(id);
     append(`created folder id=${id} directly via lib/db/folders.ts (not through the Sidebar UI)`);
   }

@@ -7,6 +7,7 @@ import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { createNote } from "@/lib/db/notes";
 import { createFolder } from "@/lib/db/folders";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { useAppStore } from "@/stores/appStore";
 import { FolderTree } from "./FolderTree";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -99,7 +100,8 @@ export function Sidebar({ user }: Props) {
   }
 
   async function newFolder() {
-    await createFolder(user.uid, "New Folder");
+    const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+    await createFolder(user.uid, "New Folder", notebookId);
   }
 
   async function handleSignOut() {

@@ -16,6 +16,7 @@ import {
   getFolderRowById,
 } from "@/lib/db/folders";
 import { createNote, deleteNote, getNoteRowById } from "@/lib/db/notes";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { pushDirtyRows } from "@/lib/sync/push";
 import { cleanupOldTombstones } from "@/lib/sync/cleanup";
 
@@ -97,7 +98,8 @@ export default function SpikeCleanup() {
   async function runOldTombstoneCase() {
     if (!user) return append("sign in first");
     try {
-      const folderId = await createFolder(user.uid, "Cleanup Case: old tombstone folder", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Cleanup Case: old tombstone folder", notebookId, null, 1);
       const noteId = await createNote(user.uid, "note", folderId, "Cleanup Case: old tombstone note");
       await pushDirtyRows(user.uid);
       pushedFolderIdsRef.current.push(folderId);
@@ -144,7 +146,8 @@ export default function SpikeCleanup() {
   async function runYoungTombstoneCase() {
     if (!user) return append("sign in first");
     try {
-      const folderId = await createFolder(user.uid, "Cleanup Case: young tombstone folder", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Cleanup Case: young tombstone folder", notebookId, null, 1);
       await pushDirtyRows(user.uid);
       pushedFolderIdsRef.current.push(folderId);
       append(`created+pushed folder=${folderId}`);
@@ -225,8 +228,9 @@ export default function SpikeCleanup() {
   async function runNestedFolderFkCase() {
     if (!user) return append("sign in first");
     try {
-      const parentId = await createFolder(user.uid, "Cleanup Case: FK parent", null, 1);
-      const childId = await createFolder(user.uid, "Cleanup Case: FK child", parentId, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const parentId = await createFolder(user.uid, "Cleanup Case: FK parent", notebookId, null, 1);
+      const childId = await createFolder(user.uid, "Cleanup Case: FK child", notebookId, parentId, 1);
       const noteId = await createNote(user.uid, "note", childId, "Cleanup Case: FK note in child");
       await pushDirtyRows(user.uid);
       pushedFolderIdsRef.current.push(parentId, childId);

@@ -26,6 +26,7 @@ function folderToFirestoreDoc(folder: Folder, updatedAt: number) {
   return {
     name: folder.name,
     parentId: folder.parentId,
+    notebookId: folder.notebookId,
     userId: folder.userId,
     order: folder.order,
     createdAt: folder.createdAt,

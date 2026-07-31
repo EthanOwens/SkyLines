@@ -80,7 +80,11 @@ export function FolderItem({ folder, allFolders, allNotes, userId, depth }: Prop
   }
 
   async function addSubfolder() {
-    await createFolder(userId, "New Folder", folder.id);
+    // A new subfolder inherits its parent's notebook (folders don't move
+    // between notebooks by being nested) - `folder.notebookId` is
+    // guaranteed non-null in practice, see the notebookId comment on the
+    // `Folder` type in types/index.ts.
+    await createFolder(userId, "New Folder", folder.notebookId as string, folder.id);
     setOpen(true);
   }
 

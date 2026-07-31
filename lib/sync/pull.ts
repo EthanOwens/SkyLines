@@ -116,6 +116,7 @@ function toRemoteFolderData(id: string, data: DocumentData): RemoteFolderData {
     id,
     name: data.name as string,
     parentId: (data.parentId as string | null) ?? null,
+    notebookId: (data.notebookId as string | null) ?? null,
     userId: data.userId as string,
     order: (data.order as number) ?? 0,
     createdAt: data.createdAt as number,

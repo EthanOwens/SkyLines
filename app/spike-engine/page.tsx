@@ -10,6 +10,7 @@ import {
 import { deleteDoc, doc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { createFolder, getFolderRowById } from "@/lib/db/folders";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import {
   flushDirtyPush,
   getSyncStatus,
@@ -110,7 +111,8 @@ export default function SpikeEngine() {
     if (!user) return append("sign in first");
     if (engineRunning) return append("stop the engine first (this test needs push in isolation)");
     try {
-      const folderId = await createFolder(user.uid, "Debounce test folder", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Debounce test folder", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderId);
       append(`created dirty folder id=${folderId}`);
 
@@ -153,7 +155,8 @@ export default function SpikeEngine() {
     if (!user) return append("sign in first");
     if (!engineRunning) return append("start the engine first (this test needs the online/offline listeners)");
     try {
-      const folderId = await createFolder(user.uid, "Offline test folder", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Offline test folder", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderId);
       append(`created dirty folder id=${folderId}`);
 
@@ -199,7 +202,8 @@ export default function SpikeEngine() {
     if (!user) return append("sign in first");
     if (!engineRunning) return append("start the engine first (this test needs the visibilitychange listener)");
     try {
-      const folderId = await createFolder(user.uid, "App-resume test folder", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "App-resume test folder", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderId);
       append(`created dirty folder id=${folderId}`);
 
@@ -244,14 +248,15 @@ export default function SpikeEngine() {
     if (!user) return append("sign in first");
     try {
       const uid = user.uid;
-      const folderIdA = await createFolder(uid, "Mid-flight A", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(uid);
+      const folderIdA = await createFolder(uid, "Mid-flight A", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderIdA);
       append(`created dirty folder A id=${folderIdA}`);
 
       flushDirtyPush(uid); // starts push #1 for A, not awaited
       append(`flushed push #1 (for A) -> syncStatus=${getSyncStatus()}`);
 
-      const folderIdB = await createFolder(uid, "Mid-flight B", null, 1);
+      const folderIdB = await createFolder(uid, "Mid-flight B", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderIdB);
       append(`created dirty folder B id=${folderIdB} while push #1 should still be in flight`);
 
@@ -303,7 +308,8 @@ export default function SpikeEngine() {
   async function runBackoffRetryTest() {
     if (!user) return append("sign in first");
     try {
-      const folderId = await createFolder(user.uid, "Backoff test folder", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const folderId = await createFolder(user.uid, "Backoff test folder", notebookId, null, 1);
       createdFolderIdsRef.current.push(folderId);
       const uid = user.uid;
       append(`created dirty folder id=${folderId} (uid=${uid})`);
