@@ -237,6 +237,118 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
+        // M1 (spec.md subtask 1): notebooks are a real new entity - a
+        // OneNote-style Notebook -> Section(folder) -> Note hierarchy sits
+        // above the existing folders/notes tables, not a reinterpretation of
+        // folders. Additive-only, same as migration 2's comment explains:
+        // migrations 1 and 2's SQL strings are left byte-for-byte untouched
+        // (tauri-plugin-sql checksums each migration and refuses to run any
+        // migration at all if an earlier one's checksum no longer matches
+        // what's recorded in `_sqlx_migrations`), so this applies cleanly as
+        // a third step on top of either a fresh database or one that
+        // already has real `folders`/`notes` rows from before this feature
+        // existed.
+        tauri_plugin_sql::Migration {
+            version: 3,
+            description: "create notebooks table, add folders.notebook_id, backfill existing folders",
+            sql: "
+                -- notebooks mirrors folders' shape (id, name, user_id,
+                -- order_index, created_at, updated_at, deleted_at, dirty,
+                -- synced_at) exactly, but has no parent_id - notebooks are
+                -- top-level and don't nest.
+                CREATE TABLE notebooks (
+                  id          TEXT PRIMARY KEY,
+                  name        TEXT NOT NULL,
+                  user_id     TEXT NOT NULL,
+                  order_index INTEGER NOT NULL DEFAULT 0,
+                  created_at  INTEGER NOT NULL,
+                  updated_at  INTEGER NOT NULL,
+                  deleted_at  INTEGER,
+                  dirty       INTEGER NOT NULL DEFAULT 1,
+                  synced_at   INTEGER
+                );
+
+                -- `notebook_id` is deliberately added WITHOUT a `NOT NULL`
+                -- constraint here. SQLite's `ALTER TABLE ... ADD COLUMN`
+                -- flatly refuses to add a `NOT NULL` column to a table that
+                -- already has rows unless a constant `DEFAULT` is supplied,
+                -- and even a `DEFAULT` wouldn't help here (there is no
+                -- single sensible default notebook id - it's per-user, and
+                -- a literal constant can't express that). SQLite also has
+                -- no `ALTER TABLE ... ALTER COLUMN`, so a `NOT NULL`
+                -- constraint could never be retrofitted onto this column
+                -- afterwards without the full create-new-table / copy-rows /
+                -- drop-old / rename-new dance - not worth that added risk
+                -- and complexity for a single-column constraint. Every
+                -- existing folders row IS backfilled to a real notebook by
+                -- the UPDATE below, so in practice no row is left with a
+                -- NULL notebook_id once this migration finishes, and
+                -- `createFolder` going forward is expected to always supply
+                -- one - but the column stays nullable at the schema level,
+                -- with `notebook_id IS NOT NULL` enforced at the
+                -- application layer instead (lib/db/folders.ts, spec.md
+                -- subtask 2), not by the database.
+                ALTER TABLE folders ADD COLUMN notebook_id TEXT REFERENCES notebooks(id);
+
+                -- Backfill: create one default \"My Notebook\" per distinct
+                -- user_id already present in folders, so pre-existing local
+                -- databases (which predate the notebooks feature) don't get
+                -- silently orphaned data. Ids need to be UUID-shaped like
+                -- the client-generated ones lib/db/folders.ts's
+                -- createFolder makes via crypto.randomUUID() - but this
+                -- runs as pure SQL inside a migration script with no JS
+                -- runtime available, so SQLite's built-in
+                -- randomblob()/hex() functions build an equivalent-looking
+                -- (not RFC 4122 version/variant-bit-strict, but
+                -- collision-safe in practice - randomblob() is backed by
+                -- SQLite's own strong PRNG) 8-4-4-4-12 hex id instead, one
+                -- freshly generated per output row since these are scalar
+                -- functions evaluated per-row, not once for the whole
+                -- statement. Timestamps use unixepoch() * 1000 to land in
+                -- the same millisecond-Unix-timestamp units
+                -- created_at/updated_at use everywhere else (Date.now() on
+                -- the JS side) - unixepoch() alone returns whole seconds.
+                INSERT INTO notebooks (id, name, user_id, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+                SELECT
+                  lower(
+                    hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' ||
+                    hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' ||
+                    hex(randomblob(6))
+                  ),
+                  'My Notebook',
+                  user_id,
+                  0,
+                  unixepoch() * 1000,
+                  unixepoch() * 1000,
+                  NULL,
+                  1,
+                  NULL
+                FROM (SELECT DISTINCT user_id FROM folders);
+
+                -- This backfill is a real content change (notebook_id) to
+                -- rows that may already be synced (dirty = 0), so it must
+                -- re-dirty the row the same way every other folder mutation
+                -- in lib/db/folders.ts does (createFolder, updateFolder,
+                -- deleteFolder, upsertFolderFromRemote), since
+                -- getDirtyFolders() - the only thing lib/sync/push.ts
+                -- consults - filters on dirty = 1. Without this, a folder
+                -- row that was already synced before this migration ran
+                -- would never have its new notebook_id pushed to Firestore
+                -- once a later notebook-sync subtask starts sending it.
+                UPDATE folders
+                SET notebook_id = (
+                  SELECT n.id FROM notebooks n
+                  WHERE n.user_id = folders.user_id AND n.name = 'My Notebook'
+                  LIMIT 1
+                ),
+                  dirty = 1,
+                  updated_at = unixepoch() * 1000
+                WHERE notebook_id IS NULL;
+
+                CREATE INDEX idx_folders_notebook ON folders(notebook_id);
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
     ];
 
     // M5 (spec.md subtask 21): Google sign-in uses a system-browser +
