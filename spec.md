@@ -206,3 +206,4 @@ then the UI layers on top.
 ## Progress
 
 - Subtask 1 (SQLite schema for notebooks) — done — commit 3ff2ede. Fixed a real forward-looking bug: the backfill didn't mark rows dirty, which would have silently broken notebook sync for pre-existing folders once subtask 3 lands.
+- Subtask 2 (Notebook types + data-access layer) — done — commit 62a0571. Fixed two real bugs: a genuine compile break (createFolder's new required notebookId param broke Sidebar.tsx's live "New Folder" button + 7 spike routes), and folder push/pull sync silently dropping notebookId (would have set notebook_id = NULL on any folder synced fresh from another device). Both verified fixed live, including a real fresh-pull scenario.
