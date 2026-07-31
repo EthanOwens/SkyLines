@@ -14,8 +14,13 @@ import {
   type RemoteFolderData,
 } from "@/lib/db/folders";
 import { getNoteRowById, upsertNoteFromRemote, type RemoteNoteData } from "@/lib/db/notes";
+import {
+  getNotebookRowById,
+  upsertNotebookFromRemote,
+  type RemoteNotebookData,
+} from "@/lib/db/notebooks";
 import { recordSyncConflict } from "@/lib/db/syncConflicts";
-import type { Folder, Note } from "@/types";
+import type { Folder, Note, Notebook } from "@/types";
 
 // Firestore -> local pull (spec.md subtask 12, M3 "sync engine": pull side.
 // Push is subtask 11/lib/sync/push.ts, tombstone hard-delete cleanup is
@@ -28,6 +33,7 @@ import type { Folder, Note } from "@/types";
 
 const FOLDERS_COLLECTION = "folders";
 const NOTES_COLLECTION = "notes";
+const NOTEBOOKS_COLLECTION = "notebooks";
 
 /**
  * Minimal shape pull needs from a local row to decide what to do with an
@@ -140,6 +146,18 @@ function toRemoteNoteData(id: string, data: DocumentData): RemoteNoteData {
   };
 }
 
+function toRemoteNotebookData(id: string, data: DocumentData): RemoteNotebookData {
+  return {
+    id,
+    name: data.name as string,
+    userId: data.userId as string,
+    order: (data.order as number) ?? 0,
+    createdAt: data.createdAt as number,
+    updatedAt: data.updatedAt as number,
+    deletedAt: (data.deletedAt as number | null) ?? null,
+  };
+}
+
 /**
  * Applies one Firestore `docChanges()` entry for the `folders` collection.
  *
@@ -218,6 +236,36 @@ async function applyNoteChange(change: DocumentChange<DocumentData>): Promise<vo
 }
 
 /**
+ * Same as `applyFolderChange`, for the `notebooks` collection - including
+ * skipping "removed" changes outright instead of resurrecting them (see the
+ * comment above `applyFolderChange`, including the subtask 13 confirmation
+ * that this remains correct).
+ */
+async function applyNotebookChange(change: DocumentChange<DocumentData>): Promise<void> {
+  if (change.type === "removed") {
+    return;
+  }
+
+  const data = change.doc.data();
+  if (!data) return;
+
+  const remote = toRemoteNotebookData(change.doc.id, data);
+  const local = await getNotebookRowById(remote.id);
+  const decision = decidePull(
+    local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
+    remote.updatedAt,
+  );
+
+  await applyDecision<Notebook, RemoteNotebookData>(
+    decision,
+    "notebooks",
+    local,
+    remote,
+    (r, dirty, syncedAt) => upsertNotebookFromRemote(r, dirty, syncedAt),
+  );
+}
+
+/**
  * Shared "given a decision, do the actual writes" step for both tables.
  *
  * Why `conflict-local-wins` never calls `upsert`: the local row already
@@ -229,7 +277,7 @@ async function applyNoteChange(change: DocumentChange<DocumentData>): Promise<vo
  */
 async function applyDecision<TLocal, TRemote>(
   decision: PullDecision,
-  tableName: "folders" | "notes",
+  tableName: "folders" | "notes" | "notebooks",
   local: TLocal | null,
   remote: TRemote,
   upsert: (remote: TRemote, dirty: boolean, syncedAt: number | null) => Promise<void>,
@@ -360,16 +408,48 @@ export function subscribeNotePull(userId: string, hooks?: PullHooks): Unsubscrib
   );
 }
 
+/** Same as `subscribeFolderPull`, for the `notebooks` collection. */
+export function subscribeNotebookPull(userId: string, hooks?: PullHooks): Unsubscribe {
+  const q = query(collection(db, NOTEBOOKS_COLLECTION), where("userId", "==", userId));
+  let queue: Promise<void> = Promise.resolve();
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const changes = snapshot.docChanges();
+      if (changes.length > 0) hooks?.onActivity?.();
+      queue = queue
+        .then(async () => {
+          for (const change of changes) {
+            await applyNotebookChange(change);
+          }
+        })
+        .catch((err) => {
+          console.error("[sync/pull] failed to apply notebook changes", err);
+          hooks?.onApplyError?.(err);
+        })
+        .finally(() => {
+          if (changes.length > 0) hooks?.onIdle?.();
+        });
+    },
+    (err) => {
+      console.error("[sync/pull] notebooks onSnapshot error", err);
+      hooks?.onListenError?.(err);
+    },
+  );
+}
+
 /**
- * Starts both pull listeners for a user and returns a single combined
+ * Starts all pull listeners for a user and returns a single combined
  * unsubscribe function. `hooks` (optional) are passed through unchanged to
- * both listeners - see `PullHooks` above.
+ * every listener - see `PullHooks` above.
  */
 export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
   const unsubscribeFolders = subscribeFolderPull(userId, hooks);
   const unsubscribeNotes = subscribeNotePull(userId, hooks);
+  const unsubscribeNotebooks = subscribeNotebookPull(userId, hooks);
   return () => {
     unsubscribeFolders();
     unsubscribeNotes();
+    unsubscribeNotebooks();
   };
 }
