@@ -204,3 +204,5 @@ then the UI layers on top.
   `@tauri-apps/api` version at implementation time, not assumed.
 
 ## Progress
+
+- Subtask 1 (SQLite schema for notebooks) — done — commit 3ff2ede. Fixed a real forward-looking bug: the backfill didn't mark rows dirty, which would have silently broken notebook sync for pre-existing folders once subtask 3 lands.
