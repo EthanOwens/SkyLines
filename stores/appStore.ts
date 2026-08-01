@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Folder, Note, SyncStatus } from "@/types";
+import type { Folder, Note, Notebook, SyncStatus } from "@/types";
 
 // Ported unchanged from ../note_taking_app/stores/appStore.ts (spec.md
 // subtask 15, M4 "auth + data hooks rewire") - this is generic client state
@@ -11,6 +11,7 @@ import type { Folder, Note, SyncStatus } from "@/types";
 interface AppState {
   folders: Folder[];
   notes: Note[];
+  notebooks: Notebook[];
   selectedNoteId: string | null;
   selectedFolderId: string | null;
   sidebarOpen: boolean;
@@ -18,6 +19,7 @@ interface AppState {
 
   setFolders: (folders: Folder[]) => void;
   setNotes: (notes: Note[]) => void;
+  setNotebooks: (notebooks: Notebook[]) => void;
   setSelectedNote: (id: string | null) => void;
   setSelectedFolder: (id: string | null) => void;
   toggleSidebar: () => void;
@@ -28,6 +30,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   folders: [],
   notes: [],
+  notebooks: [],
   selectedNoteId: null,
   selectedFolderId: null,
   sidebarOpen: true,
@@ -35,6 +38,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   setFolders: (folders) => set({ folders }),
   setNotes: (notes) => set({ notes }),
+  setNotebooks: (notebooks) => set({ notebooks }),
   setSelectedNote: (id) => set({ selectedNoteId: id }),
   setSelectedFolder: (id) => set({ selectedFolderId: id }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
