@@ -10,6 +10,7 @@ import { useNotebooks } from "@/hooks/useNotebooks";
 import { getLastOpen } from "@/lib/lastOpen";
 import { getNoteById } from "@/lib/db/notes";
 import { useAppStore } from "@/stores/appStore";
+import { AppLayout } from "@/components/shell/AppLayout";
 
 // New (spec.md subtask 4, "Root app shell"): the actual gatekeeper wiring
 // AuthProvider + the sync engine + the data hooks into real app lifecycle,
@@ -42,6 +43,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
+  const notebooks = useAppStore((s) => s.notebooks);
+  const notebooksLoaded = useAppStore((s) => s.notebooksLoaded);
 
   const publicRoute = isPublicRoute(pathname);
   // Same trailing-slash normalization as isPublicRoute above (next.config.ts
@@ -99,6 +102,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     void getNoteById(lastOpen.noteId).then((note) => {
       if (cancelled || !note) return;
+      // Set selectedNotebookId from the note's own `notebookId` (subtask 7's
+      // migration 4 column), not `lastOpen.notebookId` - the latter is null
+      // for the common case of a folder-less/root-level note (see
+      // lib/lastOpen.ts's recordNoteOpened), which would otherwise leave
+      // AppLayout's sidebar+ribbon shell (spec.md subtask 8) un-rendered on
+      // a fresh app launch that restores straight into a note.
+      //
+      // Validate against the live `notebooks` array first (mirrors
+      // app/page.tsx's own `selectedNotebook = notebooks.find(...)`
+      // fallback) - `note.notebookId` can point at a notebook that no
+      // longer exists (e.g. deleted on another device, or a stale
+      // folder-less note left behind by deleteNotebook's cascade in
+      // lib/db/notebooks.ts), and blindly setting it would scope
+      // AppLayout's sidebar/ribbon to a dead notebook id with no visible
+      // error. If `notebooks` hasn't loaded yet, it's not yet safe to
+      // conclude the id is invalid, so set it optimistically rather than
+      // block the restore-and-navigate flow on that fetch - the picker's
+      // own safety net still applies if the user ever lands back on "/".
+      const notebookIsValid =
+        note.notebookId === null ||
+        !notebooksLoaded ||
+        notebooks.some((n) => n.id === note.notebookId);
+      setSelectedNotebook(notebookIsValid ? note.notebookId : null);
       const dest = note.type === "canvas" ? "/canvas" : "/note";
       router.replace(`${dest}?id=${note.id}`);
     });
@@ -106,7 +132,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [loading, user, isRootRoute, router, setSelectedNotebook]);
+  }, [
+    loading,
+    user,
+    isRootRoute,
+    router,
+    setSelectedNotebook,
+    notebooks,
+    notebooksLoaded,
+  ]);
 
   if (!publicRoute && (loading || shouldRedirect)) {
     return (
@@ -116,5 +150,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  // AppLayout (spec.md subtask 8, part B) provides the persistent
+  // sidebar+ribbon shell around page content once a notebook is open - but
+  // only for real authenticated, non-public-route renders (the branch above
+  // already handled loading/redirect, and public routes like /login and
+  // every /spike-* harness manage their own full-page layout and must not
+  // get the shell wrapped around them here).
+  if (publicRoute) {
+    return <>{children}</>;
+  }
+
+  return <AppLayout>{children}</AppLayout>;
 }
