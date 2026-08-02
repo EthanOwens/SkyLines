@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { Editor } from "@tiptap/react";
 import type { Folder, Note, Notebook, SyncStatus } from "@/types";
 
 // Ported unchanged from ../note_taking_app/stores/appStore.ts (spec.md
@@ -30,6 +31,16 @@ interface AppState {
   selectedNotebookId: string | null;
   sidebarOpen: boolean;
   syncStatus: SyncStatus;
+  // The Tiptap `Editor` instance for whichever note is currently mounted
+  // (spec.md subtask 10, "Format tab") - `Ribbon` is rendered by
+  // AppLayout.tsx as a sibling of the note/canvas page, not a descendant of
+  // RichTextEditor.tsx, so it has no direct access to the `editor` instance
+  // RichTextEditor.tsx's `useEditor()` creates. `RichTextEditor.tsx` sets
+  // this on mount/editor-instance-change and clears it (back to `null`) on
+  // unmount, so the Format tab can tell "a note editor is genuinely mounted"
+  // apart from "no note open" / "canvas note with no Tiptap instance at
+  // all" and render accordingly.
+  activeEditor: Editor | null;
 
   setFolders: (folders: Folder[]) => void;
   setNotes: (notes: Note[]) => void;
@@ -41,6 +52,7 @@ interface AppState {
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSyncStatus: (status: SyncStatus) => void;
+  setActiveEditor: (editor: Editor | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -53,6 +65,7 @@ export const useAppStore = create<AppState>((set) => ({
   selectedNotebookId: null,
   sidebarOpen: true,
   syncStatus: "saved",
+  activeEditor: null,
 
   setFolders: (folders) => set({ folders }),
   setNotes: (notes) => set({ notes }),
@@ -64,4 +77,5 @@ export const useAppStore = create<AppState>((set) => ({
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),
+  setActiveEditor: (activeEditor) => set({ activeEditor }),
 }));

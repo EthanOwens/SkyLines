@@ -16,7 +16,10 @@ import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { createLowlight, common } from "lowlight";
-import { EditorToolbar } from "./EditorToolbar";
+import { TextStyle, FontSize } from "@tiptap/extension-text-style";
+import FontFamily from "@tiptap/extension-font-family";
+import Color from "@tiptap/extension-color";
+import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 import "./editor.css";
 
@@ -30,6 +33,7 @@ interface Props {
 
 export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
   const [title, setTitle] = useState(note.title || "Untitled");
+  const setActiveEditor = useAppStore((s) => s.setActiveEditor);
 
   const editor = useEditor({
     extensions: [
@@ -42,6 +46,14 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder: "Start writing…" }),
       CodeBlockLowlight.configure({ lowlight }),
+      // TextStyle is a prerequisite for FontFamily/FontSize/Color (spec.md
+      // subtask 10, "Format tab") - all three attach `textStyle` mark
+      // attributes and require the base mark to be registered first, per
+      // Tiptap v3's docs.
+      TextStyle,
+      FontFamily,
+      FontSize,
+      Color,
     ],
     content: note.content as object ?? "",
     editorProps: {
@@ -53,6 +65,18 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
       onChange(editor.getJSON());
     },
   });
+
+  // Exposes the live Tiptap `editor` instance to the Ribbon's Format tab
+  // (spec.md subtask 10, "Format tab") via stores/appStore.ts - `Ribbon` is
+  // rendered by AppLayout.tsx as a sibling of this component, not a
+  // descendant, so it has no other way to reach `editor`. Clears back to
+  // `null` on unmount (e.g. navigating away from this note) so the Format
+  // tab correctly falls back to a neutral state instead of holding a stale
+  // reference to a torn-down editor.
+  useEffect(() => {
+    setActiveEditor(editor);
+    return () => setActiveEditor(null);
+  }, [editor, setActiveEditor]);
 
   // Load new content when note changes
   useEffect(() => {
@@ -74,9 +98,6 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Toolbar */}
-      <EditorToolbar editor={editor} />
-
       {/* Scrollable content area */}
       <div className="flex flex-1 flex-col overflow-y-auto px-8 py-6 md:px-16 md:py-10">
         <input
