@@ -27,6 +27,7 @@
 import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { getNoteById, updateNote } from "@/lib/db/notes";
+import { recordNoteOpened } from "@/lib/lastOpen";
 import { RichTextEditor } from "@/components/editor/RichTextEditor";
 import type { Note } from "@/types";
 
@@ -43,7 +44,12 @@ function NotePageInner() {
     }
     setLoading(true);
     getNoteById(id)
-      .then((n) => setNote(n))
+      .then((n) => {
+        setNote(n);
+        // Remember this as the last-open note (spec.md subtask 5) once it's
+        // confirmed to exist - best-effort, never blocks rendering.
+        if (n) void recordNoteOpened(n);
+      })
       .catch(() => setNote(null))
       .finally(() => setLoading(false));
   }, [id]);

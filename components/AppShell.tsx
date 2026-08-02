@@ -7,6 +7,8 @@ import { useSyncEngine } from "@/hooks/useSyncEngine";
 import { useNotes } from "@/hooks/useNotes";
 import { useFolders } from "@/hooks/useFolders";
 import { useNotebooks } from "@/hooks/useNotebooks";
+import { getLastOpen } from "@/lib/lastOpen";
+import { getNoteById } from "@/lib/db/notes";
 
 // New (spec.md subtask 4, "Root app shell"): the actual gatekeeper wiring
 // AuthProvider + the sync engine + the data hooks into real app lifecycle,
@@ -40,6 +42,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   const publicRoute = isPublicRoute(pathname);
+  // Same trailing-slash normalization as isPublicRoute above (next.config.ts
+  // sets trailingSlash: true for the static export).
+  const normalizedPathname =
+    pathname && pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname;
+  const isRootRoute = normalizedPathname === "/";
 
   // Only wire the real signed-in user's uid into these hooks off of public
   // routes. Spike routes sign in with real Firebase accounts and drive the
@@ -62,6 +69,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (shouldRedirect) router.replace("/login");
   }, [shouldRedirect, router]);
+
+  // Last-open restore (spec.md subtask 5): once the user is authenticated
+  // and landed on the root route (not deep-linked to a specific note/canvas
+  // or a /spike-* harness), check for a remembered last-open note and jump
+  // straight to it if it still exists. If there's no stored state, or the
+  // note was deleted, this intentionally does nothing further - the user
+  // stays on "/", whose placeholder content the notebook picker (spec.md
+  // subtask 6) will later replace.
+  useEffect(() => {
+    if (loading || !user || !isRootRoute) return;
+
+    let cancelled = false;
+
+    const lastOpen = getLastOpen();
+    if (!lastOpen) return;
+
+    void getNoteById(lastOpen.noteId).then((note) => {
+      if (cancelled || !note) return;
+      const dest = note.type === "canvas" ? "/canvas" : "/note";
+      router.replace(`${dest}?id=${note.id}`);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, user, isRootRoute, router]);
 
   if (!publicRoute && (loading || shouldRedirect)) {
     return (
