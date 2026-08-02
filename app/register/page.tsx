@@ -31,7 +31,7 @@ export default function RegisterPage() {
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       if (name) await updateProfile(cred.user, { displayName: name });
-      router.replace("/home");
+      router.replace("/");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Registration failed.";
       if (msg.includes("email-already-in-use")) {

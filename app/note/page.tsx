@@ -36,6 +36,13 @@ function NotePageInner() {
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks a content edit that's been debounced but not yet written to
+  // SQLite, along with the note id it belongs to (the id is captured here
+  // rather than read fresh on unmount, since this page's editor isn't keyed
+  // by note id - switching notes via the sidebar can change `id` in place
+  // without unmounting, so relying on a closed-over `id` in the unmount
+  // cleanup below could flush to the wrong note).
+  const pendingContentRef = useRef<{ id: string; content: object } | null>(null);
 
   useEffect(() => {
     if (!id) {
@@ -58,12 +65,27 @@ function NotePageInner() {
     (content: object) => {
       if (!id) return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
+      pendingContentRef.current = { id, content };
       saveTimer.current = setTimeout(() => {
         void updateNote(id, { content });
+        pendingContentRef.current = null;
       }, 600);
     },
     [id],
   );
+
+  // Flush any pending debounced save on unmount, so navigating away within
+  // the 600ms debounce window doesn't silently drop the edit.
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (pendingContentRef.current) {
+        const { id: pendingId, content } = pendingContentRef.current;
+        pendingContentRef.current = null;
+        void updateNote(pendingId, { content });
+      }
+    };
+  }, []);
 
   const handleTitleChange = useCallback(
     (title: string) => {
