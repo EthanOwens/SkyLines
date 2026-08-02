@@ -16,7 +16,10 @@ const STORAGE_KEY = "skylines:lastOpen";
 export interface LastOpenState {
   notebookId: string | null;
   folderId: string | null;
-  noteId: string;
+  // Nullable (spec.md subtask 6, "Notebook picker"): a notebook can be
+  // "open" with no note selected/opened yet - e.g. right after picking a
+  // notebook from the picker, before any note exists or has been opened.
+  noteId: string | null;
 }
 
 function isLastOpenState(value: unknown): value is LastOpenState {
@@ -25,8 +28,7 @@ function isLastOpenState(value: unknown): value is LastOpenState {
   return (
     (typeof v.notebookId === "string" || v.notebookId === null) &&
     (typeof v.folderId === "string" || v.folderId === null) &&
-    typeof v.noteId === "string" &&
-    v.noteId.length > 0
+    (v.noteId === null || (typeof v.noteId === "string" && v.noteId.length > 0))
   );
 }
 
@@ -68,6 +70,16 @@ export function setLastOpen(state: LastOpenState): void {
   } catch {
     // localStorage unavailable/full/disabled - nothing meaningful to do.
   }
+}
+
+/**
+ * Records that `notebookId` was just opened (selected from the notebook
+ * picker, spec.md subtask 6) with no section/note chosen yet. Distinct from
+ * `recordNoteOpened` below, which records a specific note - this is for the
+ * "notebook open, nothing else selected" state the picker itself produces.
+ */
+export function setLastOpenNotebook(notebookId: string): void {
+  setLastOpen({ notebookId, folderId: null, noteId: null });
 }
 
 /**

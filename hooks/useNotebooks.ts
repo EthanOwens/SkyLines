@@ -12,6 +12,7 @@ import { useAppStore } from "@/stores/appStore";
 // `getNotebooks` instead of lib/db/folders.ts's `getFolders`.
 export function useNotebooks(userId: string | undefined) {
   const setNotebooks = useAppStore((s) => s.setNotebooks);
+  const setNotebooksLoaded = useAppStore((s) => s.setNotebooksLoaded);
 
   useEffect(() => {
     if (!userId) return;
@@ -22,7 +23,14 @@ export function useNotebooks(userId: string | undefined) {
     function refetch() {
       const myRequestId = ++requestId;
       void getNotebooks(userId as string).then((notebooks) => {
-        if (!cancelled && myRequestId === requestId) setNotebooks(notebooks);
+        if (!cancelled && myRequestId === requestId) {
+          setNotebooks(notebooks);
+          // Only ever flips false -> true: later refetches (e.g. after
+          // creating a notebook) must not reset this, or app/page.tsx would
+          // briefly re-show its loading state instead of the picker/create
+          // form during a refetch.
+          setNotebooksLoaded(true);
+        }
       });
     }
 
@@ -33,5 +41,5 @@ export function useNotebooks(userId: string | undefined) {
       cancelled = true;
       unsubscribe();
     };
-  }, [userId, setNotebooks]);
+  }, [userId, setNotebooks, setNotebooksLoaded]);
 }

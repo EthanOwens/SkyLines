@@ -9,6 +9,7 @@ import { useFolders } from "@/hooks/useFolders";
 import { useNotebooks } from "@/hooks/useNotebooks";
 import { getLastOpen } from "@/lib/lastOpen";
 import { getNoteById } from "@/lib/db/notes";
+import { useAppStore } from "@/stores/appStore";
 
 // New (spec.md subtask 4, "Root app shell"): the actual gatekeeper wiring
 // AuthProvider + the sync engine + the data hooks into real app lifecycle,
@@ -40,6 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthContext();
   const router = useRouter();
   const pathname = usePathname();
+  const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
 
   const publicRoute = isPublicRoute(pathname);
   // Same trailing-slash normalization as isPublicRoute above (next.config.ts
@@ -70,13 +72,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (shouldRedirect) router.replace("/login");
   }, [shouldRedirect, router]);
 
-  // Last-open restore (spec.md subtask 5): once the user is authenticated
-  // and landed on the root route (not deep-linked to a specific note/canvas
-  // or a /spike-* harness), check for a remembered last-open note and jump
-  // straight to it if it still exists. If there's no stored state, or the
-  // note was deleted, this intentionally does nothing further - the user
-  // stays on "/", whose placeholder content the notebook picker (spec.md
-  // subtask 6) will later replace.
+  // Last-open restore (spec.md subtask 5, extended by subtask 6 "Notebook
+  // picker"): once the user is authenticated and landed on the root route
+  // (not deep-linked to a specific note/canvas or a /spike-* harness), check
+  // for a remembered last-open note and jump straight to it if it still
+  // exists. If there's no stored note (either nothing stored at all, or a
+  // stored state with `noteId: null` - the "notebook open, no note yet"
+  // state the picker itself produces), this falls through to restoring just
+  // the notebook selection into the store instead, so app/page.tsx's picker
+  // can render the "notebook open" confirmation directly rather than
+  // re-showing an already-answered picker. If the notebook was deleted, or
+  // nothing at all is stored, the user is left on "/" with the picker's
+  // empty state, which the notebook picker (spec.md subtask 6) renders.
   useEffect(() => {
     if (loading || !user || !isRootRoute) return;
 
@@ -84,6 +91,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     const lastOpen = getLastOpen();
     if (!lastOpen) return;
+
+    if (!lastOpen.noteId) {
+      if (lastOpen.notebookId) setSelectedNotebook(lastOpen.notebookId);
+      return;
+    }
 
     void getNoteById(lastOpen.noteId).then((note) => {
       if (cancelled || !note) return;
@@ -94,7 +106,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [loading, user, isRootRoute, router]);
+  }, [loading, user, isRootRoute, router, setSelectedNotebook]);
 
   if (!publicRoute && (loading || shouldRedirect)) {
     return (
