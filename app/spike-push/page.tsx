@@ -34,7 +34,7 @@ export default function SpikePush() {
 
       const notebookId = await getOrCreateDefaultNotebookId(userId);
       const folderId = await createFolder(userId, "Push Spike Folder", notebookId, null, 1);
-      const noteId = await createNote(userId, "note", null, "Push Spike Note");
+      const noteId = await createNote(userId, "note", notebookId, null, "Push Spike Note");
       append(`created local rows -> folderId=${folderId} noteId=${noteId}`);
 
       await updateNote(noteId, { content: { type: "doc", content: [] } });

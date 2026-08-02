@@ -64,7 +64,7 @@ export default function SpikeNotebooks() {
     try {
       const notebookId = await createNotebook(userId, "Cascade Notebook", 1);
       const folderId = await createFolder(userId, "Cascade Folder", notebookId, null, 1);
-      const noteId = await createNote(userId, "note", folderId, "Cascade Note");
+      const noteId = await createNote(userId, "note", notebookId, folderId, "Cascade Note");
       append(`created: notebook=${notebookId} folder=${folderId} note=${noteId}`);
 
       await deleteNotebook(notebookId);

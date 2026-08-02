@@ -74,14 +74,27 @@ export function Sidebar({ user }: Props) {
   const router = useRouter();
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const selectedNotebookId = useAppStore((s) => s.selectedNotebookId);
   const [creating, setCreating] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
+
+  // When a notebook is currently open in the sidebar (selectedNotebookId),
+  // new notes/canvases/folders must land in THAT notebook - not just
+  // whichever notebook happens to have the lowest order_index, which is all
+  // getOrCreateDefaultNotebookId can know about. Falling back to the
+  // default notebook only when nothing is open keeps today's no-UI-yet
+  // behavior (spec.md subtask 7; the ribbon shell that lets users switch
+  // notebooks is subtask 8) working exactly as before.
+  async function resolveNotebookId() {
+    return selectedNotebookId ?? (await getOrCreateDefaultNotebookId(user.uid));
+  }
 
   async function newNote() {
     if (creating) return;
     setCreating(true);
     try {
-      const id = await createNote(user.uid, "note");
+      const notebookId = await resolveNotebookId();
+      const id = await createNote(user.uid, "note", notebookId);
       router.push(`/note?id=${id}`);
     } finally {
       setCreating(false);
@@ -92,7 +105,8 @@ export function Sidebar({ user }: Props) {
     if (creating) return;
     setCreating(true);
     try {
-      const id = await createNote(user.uid, "canvas");
+      const notebookId = await resolveNotebookId();
+      const id = await createNote(user.uid, "canvas", notebookId);
       router.push(`/canvas?id=${id}`);
     } finally {
       setCreating(false);
@@ -100,7 +114,7 @@ export function Sidebar({ user }: Props) {
   }
 
   async function newFolder() {
-    const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+    const notebookId = await resolveNotebookId();
     await createFolder(user.uid, "New Folder", notebookId);
   }
 
@@ -211,7 +225,13 @@ export function Sidebar({ user }: Props) {
 
       {/* Tree */}
       <ScrollArea className="flex-1 px-1">
-        <FolderTree userId={user.uid} />
+        {selectedNotebookId ? (
+          <FolderTree userId={user.uid} notebookId={selectedNotebookId} />
+        ) : (
+          <p className="px-3 py-2 text-xs text-muted-foreground">
+            No notebook open.
+          </p>
+        )}
       </ScrollArea>
 
       <Separator />

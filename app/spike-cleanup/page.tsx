@@ -100,7 +100,7 @@ export default function SpikeCleanup() {
     try {
       const notebookId = await getOrCreateDefaultNotebookId(user.uid);
       const folderId = await createFolder(user.uid, "Cleanup Case: old tombstone folder", notebookId, null, 1);
-      const noteId = await createNote(user.uid, "note", folderId, "Cleanup Case: old tombstone note");
+      const noteId = await createNote(user.uid, "note", notebookId, folderId, "Cleanup Case: old tombstone note");
       await pushDirtyRows(user.uid);
       pushedFolderIdsRef.current.push(folderId);
       pushedNoteIdsRef.current.push(noteId);
@@ -186,7 +186,8 @@ export default function SpikeCleanup() {
   async function runStaleSyncedAtCase() {
     if (!user) return append("sign in first");
     try {
-      const noteId = await createNote(user.uid, "note", null, "Cleanup Case: stale syncedAt note");
+      const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+      const noteId = await createNote(user.uid, "note", notebookId, null, "Cleanup Case: stale syncedAt note");
       await pushDirtyRows(user.uid); // live-and-pushed: dirty=false, syncedAt=non-null
       pushedNoteIdsRef.current.push(noteId);
       append(`created+pushed note=${noteId}`);
@@ -231,7 +232,7 @@ export default function SpikeCleanup() {
       const notebookId = await getOrCreateDefaultNotebookId(user.uid);
       const parentId = await createFolder(user.uid, "Cleanup Case: FK parent", notebookId, null, 1);
       const childId = await createFolder(user.uid, "Cleanup Case: FK child", notebookId, parentId, 1);
-      const noteId = await createNote(user.uid, "note", childId, "Cleanup Case: FK note in child");
+      const noteId = await createNote(user.uid, "note", notebookId, childId, "Cleanup Case: FK note in child");
       await pushDirtyRows(user.uid);
       pushedFolderIdsRef.current.push(parentId, childId);
       pushedNoteIdsRef.current.push(noteId);

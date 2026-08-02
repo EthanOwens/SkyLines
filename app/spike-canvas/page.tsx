@@ -49,6 +49,7 @@ import { getSyncStatus, scheduleDirtyPush, startSyncEngine, subscribeSyncStatus 
 import { subscribeDataChange } from "@/lib/db/events";
 import { useAppStore } from "@/stores/appStore";
 import { createNote, getNoteById } from "@/lib/db/notes";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 
 const TEST_EMAIL = "skylines-canvas-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -114,7 +115,8 @@ function SpikeCanvasInner() {
 
   async function createAndOpenCanvas() {
     if (!user) return append("sign in first");
-    const id = await createNote(user.uid, "canvas", null, "Spike Canvas Note");
+    const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+    const id = await createNote(user.uid, "canvas", notebookId, null, "Spike Canvas Note");
     createdNoteIdsRef.current.add(id);
     setManualId(id);
     append(`created canvas note id=${id} directly via lib/db/notes.ts, navigating to /canvas?id=${id}`);

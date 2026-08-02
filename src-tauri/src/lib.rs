@@ -349,6 +349,99 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
+        // spec.md subtask 7 ("Sidebar rework"): a note with no folder
+        // currently has no way to know which notebook it belongs to (the
+        // `notes` table only has `folder_id`, and folder_id can be NULL for
+        // a root-level note) - the sidebar rework needs to scope notes to
+        // "the currently open notebook" even when they have no folder, so
+        // notes need a real `notebook_id` column of their own, mirroring
+        // migration 3's exact approach for `folders.notebook_id` above
+        // (additive-only, migrations 1-3's SQL strings stay byte-for-byte
+        // untouched - tauri-plugin-sql checksums each migration and refuses
+        // to run ANY migration if an earlier one's checksum no longer
+        // matches what's recorded in `_sqlx_migrations`).
+        tauri_plugin_sql::Migration {
+            version: 4,
+            description: "add notes.notebook_id, backfill existing notes",
+            sql: "
+                -- Same reasoning as migration 3's `folders.notebook_id`
+                -- column: no `NOT NULL` constraint here, since SQLite's
+                -- `ALTER TABLE ... ADD COLUMN` can't add a `NOT NULL`
+                -- column with no usable constant `DEFAULT` to a table that
+                -- already has rows, and there is no single sensible default
+                -- notebook id (it's per-user). Every existing notes row IS
+                -- backfilled to a real notebook by the UPDATE below, and
+                -- `createNote` going forward is expected to always supply
+                -- one - but the column stays nullable at the schema level,
+                -- with `notebook_id IS NOT NULL` enforced at the
+                -- application layer instead (lib/db/notes.ts), not by the
+                -- database.
+                ALTER TABLE notes ADD COLUMN notebook_id TEXT REFERENCES notebooks(id);
+
+                -- Migration 3's \"My Notebook\" backfill only ran `FROM
+                -- (SELECT DISTINCT user_id FROM folders)`, so any user who
+                -- has notes but zero folders (a normal case - notes.folder_id
+                -- is nullable, root-level notes have always been allowed)
+                -- never got a \"My Notebook\" row created for them. The
+                -- COALESCE backfill below depends on that row existing as
+                -- its fallback for folder-less notes, so without this,
+                -- those notes' notebook_id would stay NULL forever
+                -- (migrations run once, never re-applied) and the notes
+                -- would become permanently invisible to the
+                -- notebook-scoped FolderTree. Fixing this forward here
+                -- (rather than editing migration 3's SQL in place) avoids
+                -- any risk of changing an already-applied migration's
+                -- checksum, which tauri-plugin-sql would reject on upgrade.
+                INSERT INTO notebooks (id, name, user_id, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+                SELECT
+                  lower(
+                    hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-' ||
+                    hex(randomblob(2)) || '-' || hex(randomblob(2)) || '-' ||
+                    hex(randomblob(6))
+                  ),
+                  'My Notebook',
+                  missing.user_id,
+                  0,
+                  unixepoch() * 1000,
+                  unixepoch() * 1000,
+                  NULL,
+                  1,
+                  NULL
+                FROM (
+                  SELECT DISTINCT user_id FROM notes
+                  WHERE user_id NOT IN (SELECT user_id FROM notebooks WHERE name = 'My Notebook')
+                ) AS missing;
+
+                -- Backfill: for every existing note, derive notebook_id from
+                -- its folder's notebook_id when it has one (folder_id ->
+                -- folders.notebook_id). Notes with no folder (folder_id IS
+                -- NULL) fall back to that user's default \"My Notebook\",
+                -- the exact same lookup migration 3 used for its own
+                -- folder backfill - now guaranteed to exist for every
+                -- note-owning user thanks to the INSERT above.
+                UPDATE notes
+                SET notebook_id = COALESCE(
+                  (SELECT f.notebook_id FROM folders f WHERE f.id = notes.folder_id),
+                  (SELECT n.id FROM notebooks n WHERE n.user_id = notes.user_id AND n.name = 'My Notebook' LIMIT 1)
+                ),
+                  dirty = 1,
+                  updated_at = unixepoch() * 1000
+                WHERE notebook_id IS NULL;
+
+                -- This backfill is a real content change (notebook_id) to
+                -- rows that may already be synced (dirty = 0), so it must
+                -- re-dirty the row the same way migration 3's folder
+                -- backfill did, since getDirtyNotes() - the only thing
+                -- lib/sync/push.ts consults - filters on dirty = 1. Without
+                -- this, a note row that was already synced before this
+                -- migration ran would never have its new notebook_id pushed
+                -- to Firestore once the notes push/pull code starts sending
+                -- it (see the UPDATE above, which already sets dirty = 1 /
+                -- updated_at alongside notebook_id in one statement).
+                CREATE INDEX idx_notes_notebook ON notes(notebook_id);
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
     ];
 
     // M5 (spec.md subtask 21): Google sign-in uses a system-browser +

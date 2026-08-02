@@ -53,6 +53,7 @@ function noteToFirestoreDoc(note: Note, updatedAt: number) {
     title: note.title,
     type: note.type,
     folderId: note.folderId,
+    notebookId: note.notebookId,
     userId: note.userId,
     content: note.content ?? null,
     canvasData: note.canvasData ?? null,

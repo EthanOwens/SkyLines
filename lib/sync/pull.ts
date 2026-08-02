@@ -137,6 +137,7 @@ function toRemoteNoteData(id: string, data: DocumentData): RemoteNoteData {
     title: (data.title as string) ?? "Untitled",
     type: (data.type as "note" | "canvas") ?? "note",
     folderId: (data.folderId as string | null) ?? null,
+    notebookId: (data.notebookId as string | null) ?? null,
     userId: data.userId as string,
     content: (data.content as object | null) ?? null,
     canvasData: (data.canvasData as object | null) ?? null,

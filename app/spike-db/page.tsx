@@ -63,7 +63,8 @@ export default function SpikeDb() {
   async function runNoteRoundTrip() {
     const userId = "spike-user";
     try {
-      const noteId = await createNote(userId, "note", null, "Spike Note");
+      const notebookId = await getOrCreateDefaultNotebookId(userId);
+      const noteId = await createNote(userId, "note", notebookId, null, "Spike Note");
       append(`createNote -> id=${noteId}`);
 
       let note = await getNoteById(noteId);
@@ -105,10 +106,10 @@ export default function SpikeDb() {
       const sibling = await createFolder(userId, "Sibling", notebookId, null, 2);
       append(`created tree: A=${folderA} B=${folderB} C=${folderC} Sibling=${sibling}`);
 
-      const noteA = await createNote(userId, "note", folderA, "Note in A");
-      const noteB = await createNote(userId, "note", folderB, "Note in B");
-      const noteC = await createNote(userId, "note", folderC, "Note in C");
-      const noteSibling = await createNote(userId, "note", sibling, "Note in Sibling");
+      const noteA = await createNote(userId, "note", notebookId, folderA, "Note in A");
+      const noteB = await createNote(userId, "note", notebookId, folderB, "Note in B");
+      const noteC = await createNote(userId, "note", notebookId, folderC, "Note in C");
+      const noteSibling = await createNote(userId, "note", notebookId, sibling, "Note in Sibling");
       append(
         `created notes: noteA=${noteA} noteB=${noteB} noteC=${noteC} noteSibling=${noteSibling}`,
       );

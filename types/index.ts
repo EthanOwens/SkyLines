@@ -46,6 +46,14 @@ export interface Note {
   title: string;
   type: "note" | "canvas";
   folderId: string | null;
+  // Which notebook this note belongs to. Nullable at the SQLite schema
+  // level for backward-compat reasons (see the migration 4 comment in
+  // src-tauri/src/lib.rs), but every note created going forward via
+  // `createNote` is required to supply one, and pre-existing rows are
+  // backfilled - so in practice this is only ever null for a row that
+  // somehow slipped past the application-layer requirement. Mirrors
+  // `Folder.notebookId` exactly.
+  notebookId: string | null;
   userId: string;
   content?: object | null;    // TipTap JSON doc
   canvasData?: object | null; // Tldraw snapshot

@@ -95,7 +95,8 @@ function SpikeHooksInner() {
 
   async function createTestNote() {
     if (!user) return append("sign in first");
-    const id = await createNote(user.uid, "note", null, "Spike Hooks Note");
+    const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+    const id = await createNote(user.uid, "note", notebookId, null, "Spike Hooks Note");
     createdNoteIdsRef.current.push(id);
     append(`created LOCAL note id=${id} via lib/db/notes.ts createNote only (no scheduleDirtyPush call here)`);
   }

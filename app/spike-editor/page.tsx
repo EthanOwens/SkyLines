@@ -49,6 +49,7 @@ import { getSyncStatus, scheduleDirtyPush, startSyncEngine, subscribeSyncStatus 
 import { subscribeDataChange } from "@/lib/db/events";
 import { useAppStore } from "@/stores/appStore";
 import { createNote, getNoteById } from "@/lib/db/notes";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 
 const TEST_EMAIL = "skylines-editor-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -114,7 +115,8 @@ function SpikeEditorInner() {
 
   async function createAndOpenNote() {
     if (!user) return append("sign in first");
-    const id = await createNote(user.uid, "note", null, "Spike Editor Note");
+    const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+    const id = await createNote(user.uid, "note", notebookId, null, "Spike Editor Note");
     createdNoteIdsRef.current.add(id);
     setManualId(id);
     append(`created note id=${id} directly via lib/db/notes.ts, navigating to /note?id=${id}`);
