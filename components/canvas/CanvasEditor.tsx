@@ -20,6 +20,7 @@ import { useCallback, useRef } from "react";
 import { Tldraw, type Editor, type TLEditorSnapshot } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import { updateNote } from "@/lib/db/notes";
+import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 
 interface Props {
@@ -34,9 +35,18 @@ export function CanvasEditor({ note }: Props) {
   // app/canvas/page.tsx), so an unmount always corresponds to leaving this
   // exact note - no risk of flushing to the wrong note here.
   const pendingSaveRef = useRef(false);
+  const setActiveCanvasEditor = useAppStore((s) => s.setActiveCanvasEditor);
 
   const handleMount = useCallback(
     (editor: Editor) => {
+      // Exposes the live tldraw `editor` instance to TopBar.tsx's top-bar
+      // Undo/Redo (spec.md subtask 15, "Undo/redo wiring") via
+      // stores/appStore.ts, mirroring RichTextEditor.tsx's `setActiveEditor`
+      // pattern for Tiptap. Cleared back to `null` in the cleanup function
+      // returned below (tldraw's `onMount` contract) so TopBar correctly
+      // falls back to a neutral/disabled state once this canvas unmounts.
+      setActiveCanvasEditor(editor);
+
       // Load persisted snapshot
       if (note.canvasData) {
         try {
@@ -61,6 +71,7 @@ export function CanvasEditor({ note }: Props) {
       );
 
       return () => {
+        setActiveCanvasEditor(null);
         if (saveTimer.current) clearTimeout(saveTimer.current);
         unlisten();
         // Flush any pending debounced save on unmount, so navigating away
@@ -72,7 +83,7 @@ export function CanvasEditor({ note }: Props) {
         }
       };
     },
-    [note.id, note.canvasData],
+    [note.id, note.canvasData, setActiveCanvasEditor],
   );
 
   return (

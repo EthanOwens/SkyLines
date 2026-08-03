@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
+import type { Editor as TldrawEditor } from "@tldraw/tldraw";
 import type { Folder, Note, Notebook, SyncStatus } from "@/types";
 
 // Note-visit history stack (spec.md subtask 14, "Back/forward navigation").
@@ -52,6 +53,16 @@ interface AppState {
   // apart from "no note open" / "canvas note with no Tiptap instance at
   // all" and render accordingly.
   activeEditor: Editor | null;
+  // The tldraw `Editor` instance for whichever canvas note is currently
+  // mounted (spec.md subtask 15, "Undo/redo wiring") - the tldraw analogue
+  // of `activeEditor` above, kept as a separate field (rather than reused)
+  // since tldraw's `Editor` type is unrelated to Tiptap's. Set/cleared by
+  // CanvasEditor.tsx's `handleMount` on mount/unmount, same lifecycle as
+  // `activeEditor`. Consumed by TopBar.tsx's top-bar-level Undo/Redo to act
+  // on "whichever editor is currently focused" - since /note and /canvas are
+  // mutually exclusive routes, at most one of `activeEditor`/
+  // `activeCanvasEditor` is ever non-null at a time.
+  activeCanvasEditor: TldrawEditor | null;
 
   // The note-visit history stack itself, plus a pointer into it (spec.md
   // subtask 14). `historyIndex` is `-1` when the stack is empty, and
@@ -78,6 +89,7 @@ interface AppState {
   setSidebarOpen: (open: boolean) => void;
   setSyncStatus: (status: SyncStatus) => void;
   setActiveEditor: (editor: Editor | null) => void;
+  setActiveCanvasEditor: (editor: TldrawEditor | null) => void;
   setIsHistoryNavigation: (value: boolean) => void;
   // Records a genuine new note/canvas visit. No-ops if `entry` is identical
   // to the entry currently pointed at by `historyIndex` (avoids duplicate
@@ -106,6 +118,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sidebarOpen: true,
   syncStatus: "saved",
   activeEditor: null,
+  activeCanvasEditor: null,
   noteHistory: [],
   historyIndex: -1,
   isHistoryNavigation: false,
@@ -121,6 +134,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),
   setActiveEditor: (activeEditor) => set({ activeEditor }),
+  setActiveCanvasEditor: (activeCanvasEditor) => set({ activeCanvasEditor }),
   setIsHistoryNavigation: (value) => set({ isHistoryNavigation: value }),
 
   visitNote: (entry) => {
