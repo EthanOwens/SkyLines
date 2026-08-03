@@ -277,7 +277,11 @@ export function Ribbon() {
           </div>
         )}
         {effectiveTab === "format" && <FormatTab />}
-        {effectiveTab === "draw" && <div>Draw tab — coming in subtask 12</div>}
+        {effectiveTab === "draw" && (
+          <div className="flex items-center">
+            Drawing tools are available directly on the canvas below.
+          </div>
+        )}
       </div>
     </div>
   );
