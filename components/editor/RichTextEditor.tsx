@@ -7,7 +7,9 @@
 // the caller (app/note/page.tsx), not here.
 
 import { useEffect, useCallback, useState } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
+import { isNodeSelection, isTextSelection } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
@@ -21,7 +23,19 @@ import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
+import { formatActions, selectFormatActionState } from "@/components/ribbon/formatActions";
+import { cn } from "@/lib/utils";
+import { Link as LinkIcon } from "lucide-react";
 import "./editor.css";
+
+// Subset of the Format tab's actions (spec.md subtask 11, "Bubble menu") -
+// intentionally excludes headings/lists/blockquote/divider/undo/redo, which
+// are either block-level (don't make sense on a selection popover) or too
+// heavy for a small floating toolbar. Filtered from formatActions.ts's
+// shared list rather than hand-writing duplicate action definitions (see
+// that file's header comment, which anticipated this reuse).
+const BUBBLE_MENU_ACTION_IDS = ["bold", "italic", "strike", "code"];
+const bubbleMenuActions = formatActions.filter((a) => BUBBLE_MENU_ACTION_IDS.includes(a.id));
 
 const lowlight = createLowlight(common);
 
@@ -96,8 +110,93 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
     onTitleChange(trimmed);
   }, [title, onTitleChange]);
 
+  // Reactive state for the bubble menu's active/disabled button styling
+  // (spec.md subtask 11, "Bubble menu") - reused from formatActions.ts, same
+  // as Ribbon.tsx's FormatTab. Unlike FormatTab (a sibling of this
+  // component, subscribing to `editor` via stores/appStore.ts), the bubble
+  // menu lives right here with direct access to the local `editor` variable
+  // - but it still needs `useEditorState` rather than relying on this
+  // component's own render cycle, because selection changes (which flip
+  // isActive results) don't trigger Tiptap's `onUpdate` callback (that only
+  // fires on document/content changes), so nothing would otherwise cause a
+  // re-render when the user just moves the selection.
+  const bubbleMenuState = useEditorState({
+    editor,
+    selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
+  });
+
+  const setLink = useCallback(() => {
+    if (!editor) return;
+    const prev = bubbleMenuState?.link ?? "https://";
+    const url = window.prompt("URL", prev);
+    if (url === null) return;
+    if (url === "") {
+      editor.chain().focus().extendMarkRange("link").unsetLink().run();
+    } else {
+      editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+    }
+  }, [editor, bubbleMenuState]);
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      {editor && (
+        <BubbleMenu
+          editor={editor}
+          shouldShow={({ editor: shouldShowEditor, view, state, from, to }) => {
+            // Replicates Tiptap's default shouldShow (hidden when the editor
+            // isn't focused, the selection is empty, or it's an empty text
+            // block) and additionally hides the menu for a NodeSelection
+            // (e.g. clicking to select an inserted Image), since none of the
+            // bubble menu's mark-based actions (bold/italic/etc.) apply to a
+            // selected node - see reviewer finding on spec.md subtask 11.
+            const { doc, selection } = state;
+            const { empty } = selection;
+            const isEmptyTextBlock = !doc.textBetween(from, to).length && isTextSelection(selection);
+            const hasEditorFocus = view.hasFocus();
+            if (!hasEditorFocus || empty || isEmptyTextBlock || !shouldShowEditor.isEditable) {
+              return false;
+            }
+            if (isNodeSelection(selection)) {
+              return false;
+            }
+            return true;
+          }}
+          className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+        >
+          {bubbleMenuState &&
+            bubbleMenuActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                title={action.tip}
+                disabled={action.isDisabled?.(bubbleMenuState)}
+                onClick={() => action.run(editor)}
+                className={cn(
+                  "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-50",
+                  action.isActive(bubbleMenuState)
+                    ? "bg-secondary text-secondary-foreground"
+                    : "hover:bg-accent hover:text-accent-foreground",
+                )}
+              >
+                <action.icon className="h-3.5 w-3.5" />
+              </button>
+            ))}
+          <button
+            type="button"
+            title="Insert link"
+            onClick={setLink}
+            className={cn(
+              "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+              bubbleMenuState?.link !== null && bubbleMenuState?.link !== undefined
+                ? "bg-secondary text-secondary-foreground"
+                : "hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            <LinkIcon className="h-3.5 w-3.5" />
+          </button>
+        </BubbleMenu>
+      )}
+
       {/* Scrollable content area */}
       <div className="flex flex-1 flex-col overflow-y-auto px-8 py-6 md:px-16 md:py-10">
         <input
