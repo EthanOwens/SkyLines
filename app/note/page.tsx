@@ -28,13 +28,17 @@ import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { getNoteById, updateNote } from "@/lib/db/notes";
 import { recordNoteOpened } from "@/lib/lastOpen";
+import { resolveNoteNotebookId } from "@/lib/notebookSync";
 import { RichTextEditor } from "@/components/editor/RichTextEditor";
+import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 
 function NotePageInner() {
   const id = useSearchParams().get("id");
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
+  const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
+  const visitNote = useAppStore((s) => s.visitNote);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks a content edit that's been debounced but not yet written to
   // SQLite, along with the note id it belongs to (the id is captured here
@@ -45,6 +49,7 @@ function NotePageInner() {
   const pendingContentRef = useRef<{ id: string; content: object } | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     if (!id) {
       setLoading(false);
       return;
@@ -52,14 +57,51 @@ function NotePageInner() {
     setLoading(true);
     getNoteById(id)
       .then((n) => {
+        if (cancelled) return;
         setNote(n);
-        // Remember this as the last-open note (spec.md subtask 5) once it's
-        // confirmed to exist - best-effort, never blocks rendering.
-        if (n) void recordNoteOpened(n);
+        if (n) {
+          // Remember this as the last-open note (spec.md subtask 5) once
+          // it's confirmed to exist - best-effort, never blocks rendering.
+          void recordNoteOpened(n);
+
+          // Keep selectedNotebookId in sync with whichever note is actually
+          // being viewed (spec.md subtask 14 correctness requirement) - a
+          // deep link or Back/Forward navigation can land on a note in a
+          // different notebook than whatever's currently selected. Reads
+          // the store directly (rather than subscribing notebooks/
+          // notebooksLoaded into this effect's deps) so a notebooks refetch
+          // elsewhere doesn't re-trigger this id-keyed fetch effect.
+          const { notebooks: liveNotebooks, notebooksLoaded: liveLoaded } =
+            useAppStore.getState();
+          setSelectedNotebook(
+            resolveNoteNotebookId(n.notebookId, liveNotebooks, liveLoaded),
+          );
+
+          // Record a history-stack visit (spec.md subtask 14) UNLESS this
+          // navigation was triggered by clicking Back/Forward in TopBar.tsx
+          // - goBack()/goForward() already moved historyIndex to the right
+          // place, so re-pushing here would immediately truncate the very
+          // forward-history the user just navigated back into. Read/consume
+          // the flag directly from the store (rather than subscribing it
+          // into this effect's deps) so flipping it back to `false` below
+          // doesn't itself re-trigger this id-keyed fetch effect.
+          if (useAppStore.getState().isHistoryNavigation) {
+            useAppStore.getState().setIsHistoryNavigation(false);
+          } else {
+            visitNote({ noteId: n.id, type: n.type });
+          }
+        }
       })
-      .catch(() => setNote(null))
-      .finally(() => setLoading(false));
-  }, [id]);
+      .catch(() => {
+        if (!cancelled) setNote(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, setSelectedNotebook, visitNote]);
 
   const handleChange = useCallback(
     (content: object) => {
