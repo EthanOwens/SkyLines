@@ -10,12 +10,29 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuthContext } from "@/components/AuthProvider";
 import { useAppStore } from "@/stores/appStore";
-import { LogOut, Settings, Cloud, CloudOff, Loader2, CheckCircle2 } from "lucide-react";
+import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
+import { setSelectedThemeId as persistSelectedThemeId } from "@/lib/themes/selection";
+import { LogOut, Palette, Cloud, CloudOff, Loader2, CheckCircle2 } from "lucide-react";
+
+// "Default" sentinel for the theme radio group - base-ui's RadioGroup value
+// must be a real string (not `null`), so the store's `selectedThemeId ===
+// null` ("no theme applied") is represented here as this sentinel and
+// translated back to `null` in the change handler below. Exported so
+// AppShell.tsx's theme-merge effect can filter out any user theme file that
+// happens to reuse this reserved id (which would otherwise collide with the
+// "Default" radio item and make the user's theme unreachable) using the
+// same single source of truth rather than a second hardcoded copy.
+export const DEFAULT_THEME_VALUE = "__default__";
 
 // Account icon + dropdown (spec.md subtask 16). Rendered into TopBar.tsx's
 // previously-empty right-side slot. This component only ever mounts inside
@@ -44,6 +61,9 @@ export function AccountMenu() {
   const router = useRouter();
   const { user } = useAuthContext();
   const syncStatus = useAppStore((s) => s.syncStatus);
+  const availableThemes = useAppStore((s) => s.availableThemes);
+  const selectedThemeId = useAppStore((s) => s.selectedThemeId);
+  const setSelectedThemeId = useAppStore((s) => s.setSelectedThemeId);
 
   if (!user) return null;
 
@@ -57,6 +77,28 @@ export function AccountMenu() {
   async function handleSignOut() {
     await signOut(auth);
     router.replace("/login");
+  }
+
+  // Theme picker (spec.md subtask 19): applies the selection immediately
+  // (clear any prior overrides first so switching to a theme that overrides
+  // fewer variables than the last one doesn't leave stale inline properties
+  // behind - see lib/themes/apply.ts's clearThemeOverrides docs) and
+  // persists the choice to localStorage.
+  function handleThemeChange(value: string) {
+    if (value === DEFAULT_THEME_VALUE) {
+      clearThemeOverrides();
+      persistSelectedThemeId(null);
+      setSelectedThemeId(null);
+      return;
+    }
+
+    const theme = availableThemes.find((t) => t.id === value);
+    if (!theme) return;
+
+    clearThemeOverrides();
+    applyTheme(theme);
+    persistSelectedThemeId(theme.id);
+    setSelectedThemeId(theme.id);
   }
 
   return (
@@ -87,10 +129,28 @@ export function AccountMenu() {
           {statusInfo.label}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled>
-          <Settings className="mr-2 h-4 w-4" />
-          Settings
-        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Palette className="mr-2 h-4 w-4" />
+            Theme
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup
+              value={selectedThemeId ?? DEFAULT_THEME_VALUE}
+              onValueChange={handleThemeChange}
+            >
+              <DropdownMenuRadioItem value={DEFAULT_THEME_VALUE}>
+                Default
+              </DropdownMenuRadioItem>
+              {availableThemes.map((theme) => (
+                <DropdownMenuRadioItem key={theme.id} value={theme.id}>
+                  {theme.name}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
           <LogOut className="mr-2 h-4 w-4" />
           Sign out

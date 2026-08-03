@@ -11,6 +11,11 @@ import { getLastOpen } from "@/lib/lastOpen";
 import { getNoteById } from "@/lib/db/notes";
 import { useAppStore } from "@/stores/appStore";
 import { AppLayout } from "@/components/shell/AppLayout";
+import { getSelectedThemeId } from "@/lib/themes/selection";
+import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
+import { loadThemes } from "@/lib/themes/loader";
+import { BUILTIN_THEMES } from "@/lib/themes/builtin";
+import { DEFAULT_THEME_VALUE } from "@/components/topbar/AccountMenu";
 
 // New (spec.md subtask 4, "Root app shell"): the actual gatekeeper wiring
 // AuthProvider + the sync engine + the data hooks into real app lifecycle,
@@ -45,6 +50,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
   const notebooks = useAppStore((s) => s.notebooks);
   const notebooksLoaded = useAppStore((s) => s.notebooksLoaded);
+  const setAvailableThemes = useAppStore((s) => s.setAvailableThemes);
+  const setUserThemesLoaded = useAppStore((s) => s.setUserThemesLoaded);
+  const setSelectedThemeId = useAppStore((s) => s.setSelectedThemeId);
 
   const publicRoute = isPublicRoute(pathname);
   // Same trailing-slash normalization as isPublicRoute above (next.config.ts
@@ -52,6 +60,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const normalizedPathname =
     pathname && pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname;
   const isRootRoute = normalizedPathname === "/";
+  // Narrower than `publicRoute` (which also covers /login and /register) -
+  // the theme-restore effect below must stay off of every /spike-* CDP
+  // verification harness (including app/spike-themes/page.tsx itself, whose
+  // own checks assume a clean/default baseline before its buttons are
+  // clicked), but there's no reason to also withhold theming from /login or
+  // /register, so this is deliberately its own check rather than reusing
+  // `publicRoute`.
+  const isSpikeRoute = normalizedPathname?.startsWith("/spike-") ?? false;
 
   // Only wire the real signed-in user's uid into these hooks off of public
   // routes. Spike routes sign in with real Firebase accounts and drive the
@@ -74,6 +90,83 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (shouldRedirect) router.replace("/login");
   }, [shouldRedirect, router]);
+
+  // Theme restore (spec.md subtask 19, "Theme picker"). Runs once on mount,
+  // independent of auth/user - the persisted theme choice is per-device UI
+  // state (like lastOpen.ts/quickAccessPrefs.ts), not user data, so there's
+  // no reason to gate it on a signed-in user. It IS gated on `isSpikeRoute`,
+  // though: applyTheme()/clearThemeOverrides() mutate document.documentElement's
+  // inline styles globally, so letting this run on a /spike-* harness would
+  // silently reapply a previous session's theme choice there, breaking those
+  // harnesses' assumption of a clean/default baseline (see isSpikeRoute's
+  // comment above). If the persisted id matches a built-in theme, apply it
+  // immediately (synchronously available, no disk I/O) to minimize any flash
+  // of default styling before this effect even runs React's commit phase.
+  // Then asynchronously load user themes, merge them into `availableThemes`,
+  // and if the persisted id turns out to match a *user* theme (not found
+  // among built-ins), apply it once that load resolves. If the persisted id
+  // matches nothing at all (deleted user theme file, corrupted localStorage,
+  // etc.), fall back to Default (no override applied) rather than leaving a
+  // stale/partial override active.
+  useEffect(() => {
+    if (isSpikeRoute) return;
+
+    const persistedId = getSelectedThemeId();
+
+    if (persistedId) {
+      const builtin = BUILTIN_THEMES.find((t) => t.id === persistedId);
+      if (builtin) {
+        clearThemeOverrides();
+        applyTheme(builtin);
+        setSelectedThemeId(builtin.id);
+      }
+    }
+
+    let cancelled = false;
+
+    void loadThemes()
+      .then(({ themes: userThemes }) => {
+        if (cancelled) return;
+        // Exclude any user theme whose id collides with either the reserved
+        // "__default__" sentinel (AccountMenu.tsx's DEFAULT_THEME_VALUE,
+        // which lib/themes/types.ts's isTheme() doesn't itself reject) or a
+        // built-in theme's id - either collision would give the radio group
+        // two items sharing the same `value`, permanently hiding the user
+        // theme behind whichever entry wins the `.find()` lookup, with no
+        // error surfaced. Treated the same as any other unusable theme file
+        // (silently excluded), matching lib/themes/loader.ts's own handling.
+        const usableUserThemes = userThemes.filter(
+          (t) => t.id !== DEFAULT_THEME_VALUE && !BUILTIN_THEMES.some((b) => b.id === t.id),
+        );
+        setAvailableThemes([...BUILTIN_THEMES, ...usableUserThemes]);
+        setUserThemesLoaded(true);
+
+        if (!persistedId) return;
+        const alreadyBuiltin = BUILTIN_THEMES.some((t) => t.id === persistedId);
+        if (alreadyBuiltin) return;
+
+        const userTheme = usableUserThemes.find((t) => t.id === persistedId);
+        if (userTheme) {
+          clearThemeOverrides();
+          applyTheme(userTheme);
+          setSelectedThemeId(userTheme.id);
+        }
+        // Otherwise the persisted id matches neither a built-in nor a user
+        // theme (deleted file / corrupted state) - leave Default applied,
+        // matching the "no theme applied" state this effect started in.
+      })
+      .catch(() => {
+        // loadThemes() itself never throws per-file (see lib/themes/loader.ts),
+        // but disk I/O (e.g. appConfigDir()) could still fail in principle -
+        // fall back to built-ins only rather than leaving availableThemes
+        // stuck in a half-loaded state.
+        if (!cancelled) setUserThemesLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSpikeRoute, setAvailableThemes, setUserThemesLoaded, setSelectedThemeId]);
 
   // Last-open restore (spec.md subtask 5, extended by subtask 6 "Notebook
   // picker"): once the user is authenticated and landed on the root route

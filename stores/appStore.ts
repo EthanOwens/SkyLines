@@ -2,6 +2,8 @@ import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
 import type { Editor as TldrawEditor } from "@tldraw/tldraw";
 import type { Folder, Note, Notebook, SyncStatus } from "@/types";
+import type { Theme } from "@/lib/themes/types";
+import { BUILTIN_THEMES } from "@/lib/themes/builtin";
 
 // Note-visit history stack (spec.md subtask 14, "Back/forward navigation").
 // Deliberately session-only, in-memory state (NOT persisted to localStorage
@@ -78,6 +80,22 @@ interface AppState {
   // `visitNote`).
   isHistoryNavigation: boolean;
 
+  // Theme picker (spec.md subtask 19). Initialized to `BUILTIN_THEMES` (all
+  // synchronously available, no disk I/O) so the picker is immediately
+  // usable before the async user-theme `loadThemes()` call (kicked off by
+  // AppShell.tsx on mount) resolves; that call then merges user themes in on
+  // top. `userThemesLoaded` mirrors the `notebooksLoaded` precedent above -
+  // lets callers tell "user themes haven't loaded yet" apart from "user
+  // genuinely has none".
+  availableThemes: Theme[];
+  userThemesLoaded: boolean;
+  // The currently-applied theme's id, or `null` for "Default" (no theme
+  // overrides applied, i.e. whatever globals.css renders by default). Kept
+  // in the store (rather than derived) so the picker's radio group can
+  // reflect the live selection immediately after a click, without waiting
+  // on a localStorage round-trip.
+  selectedThemeId: string | null;
+
   setFolders: (folders: Folder[]) => void;
   setNotes: (notes: Note[]) => void;
   setNotebooks: (notebooks: Notebook[]) => void;
@@ -91,6 +109,9 @@ interface AppState {
   setActiveEditor: (editor: Editor | null) => void;
   setActiveCanvasEditor: (editor: TldrawEditor | null) => void;
   setIsHistoryNavigation: (value: boolean) => void;
+  setAvailableThemes: (themes: Theme[]) => void;
+  setUserThemesLoaded: (loaded: boolean) => void;
+  setSelectedThemeId: (id: string | null) => void;
   // Records a genuine new note/canvas visit. No-ops if `entry` is identical
   // to the entry currently pointed at by `historyIndex` (avoids duplicate
   // consecutive entries from e.g. a content-only re-render re-triggering the
@@ -122,6 +143,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   noteHistory: [],
   historyIndex: -1,
   isHistoryNavigation: false,
+  availableThemes: BUILTIN_THEMES,
+  userThemesLoaded: false,
+  selectedThemeId: null,
 
   setFolders: (folders) => set({ folders }),
   setNotes: (notes) => set({ notes }),
@@ -136,6 +160,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveEditor: (activeEditor) => set({ activeEditor }),
   setActiveCanvasEditor: (activeCanvasEditor) => set({ activeCanvasEditor }),
   setIsHistoryNavigation: (value) => set({ isHistoryNavigation: value }),
+  setAvailableThemes: (availableThemes) => set({ availableThemes }),
+  setUserThemesLoaded: (loaded) => set({ userThemesLoaded: loaded }),
+  setSelectedThemeId: (selectedThemeId) => set({ selectedThemeId }),
 
   visitNote: (entry) => {
     const { noteHistory, historyIndex } = get();
