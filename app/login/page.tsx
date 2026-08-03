@@ -7,8 +7,10 @@ import {
   signInWithEmailAndPassword,
   signInWithCredential,
   sendPasswordResetEmail,
+  createUserWithEmailAndPassword,
   GoogleAuthProvider,
 } from "firebase/auth";
+import { FirebaseError } from "firebase/app";
 import { open as openInBrowser } from "@tauri-apps/plugin-shell";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { auth } from "@/lib/firebase";
@@ -22,6 +24,13 @@ import {
   shouldProcessCallbackUrl,
   verifyAndConsumeNonce,
 } from "@/lib/auth/googleOAuth";
+
+// Fixed, self-bootstrapping personal dev-login account (spec.md subtask 2).
+// Not security-sensitive - a throwaway account with no real data value,
+// matching the TEST_EMAIL/TEST_PASSWORD convention used throughout this
+// project's app/spike-*/page.tsx verification routes.
+const DEV_EMAIL = "dev@skylines.local";
+const DEV_PASSWORD = "DevLogin123!";
 
 // Ported from ../note_taking_app/app/login/page.tsx (spec.md subtask 21),
 // rebranded NoteFlow -> Skylines. Email/password sign-in is unchanged
@@ -39,6 +48,9 @@ export default function LoginPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [resetMessage, setResetMessage] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
+  const [devLoginLoading, setDevLoginLoading] = useState(false);
+
+  const anyActionInFlight = loading || resetLoading || googleLoading || devLoginLoading;
 
   async function finishGoogleSignIn(callbackUrl: string) {
     try {
@@ -115,6 +127,37 @@ export default function LoginPage() {
     }
   }
 
+  async function handleDevLogin() {
+    setError("");
+    setResetMessage("");
+    setDevLoginLoading(true);
+    try {
+      try {
+        await signInWithEmailAndPassword(auth, DEV_EMAIL, DEV_PASSWORD);
+      } catch (err) {
+        // Only self-bootstrap the account when sign-in failed because it
+        // genuinely doesn't exist yet ("auth/user-not-found", or
+        // "auth/invalid-credential" on projects with email enumeration
+        // protection enabled, which hides whether the account exists).
+        // Any other failure (network error, wrong password on an account
+        // that already exists correctly, etc.) is rethrown as-is so it
+        // isn't masked by an account-creation attempt.
+        const code = err instanceof FirebaseError ? err.code : undefined;
+        if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
+          await createUserWithEmailAndPassword(auth, DEV_EMAIL, DEV_PASSWORD);
+        } else {
+          throw err;
+        }
+      }
+      router.replace("/");
+    } catch (err) {
+      console.error(err);
+      setError("Dev login failed.");
+    } finally {
+      setDevLoginLoading(false);
+    }
+  }
+
   async function handleGoogle() {
     setError("");
     setResetMessage("");
@@ -164,7 +207,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={handleForgotPassword}
-              disabled={loading || resetLoading}
+              disabled={anyActionInFlight}
               className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
             >
               {resetLoading ? "Sending…" : "Forgot password?"}
@@ -172,7 +215,7 @@ export default function LoginPage() {
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           {resetMessage && <p className="text-sm text-muted-foreground">{resetMessage}</p>}
-          <Button type="submit" className="w-full" disabled={loading || resetLoading}>
+          <Button type="submit" className="w-full" disabled={anyActionInFlight}>
             {loading ? "Signing in…" : "Sign in"}
           </Button>
         </form>
@@ -190,7 +233,7 @@ export default function LoginPage() {
           variant="outline"
           className="w-full"
           onClick={handleGoogle}
-          disabled={googleLoading}
+          disabled={anyActionInFlight}
         >
           {googleLoading ? "Waiting for browser…" : "Continue with Google"}
         </Button>
@@ -201,6 +244,25 @@ export default function LoginPage() {
             Sign up
           </Link>
         </p>
+
+        <div className="relative pt-2">
+          <div className="absolute inset-0 flex items-center pt-2">
+            <div className="w-full border-t border-dashed border-border" />
+          </div>
+          <div className="relative flex justify-center text-xs text-muted-foreground">
+            <span className="bg-background px-2">dev only</span>
+          </div>
+        </div>
+
+        <Button
+          type="button"
+          variant="secondary"
+          className="w-full border border-dashed border-amber-500 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
+          onClick={handleDevLogin}
+          disabled={anyActionInFlight}
+        >
+          {devLoginLoading ? "Signing in…" : "Dev Login"}
+        </Button>
       </div>
     </div>
   );
