@@ -1,17 +1,7 @@
-Things to implement (research how onenote implements most of these):
-- When the application loads you should be greeting by a login page. It should remember if you're logged in. If you're logged in you should be greeted with the option to pic what notebook you want to open (and it should remember what notebook, section, and note you're in to navigate to on future opens).
-- The main page ui of a should be in a similar format to onenote 
-  - Left notebook collapsable sidebar for collapsable notebook with nested sections 
-  - consistent left sidebar (to the right of the notebook sidebar)
-  - The top natvie bar should have options for
-    - "File" - Has misc options, mostly blank at the moment (Create new notebook, swap notebook)
-    - "Format" - Has all the standard text editing options (font, font size, text color, bolded, bullets, etc)
-    - "Draw" - Options for drawing on the canvas (pencil w/ color options, drawing shapes, etc)
-  - When highlighting a portion of text opens a smaller version of the format above the head
-  - On the very top should be some customizable quick access options (configurable via a button). Options should include:
-    - "back" - navigate backwards from last visited note page
-    - "forward" - navigate forewards from last visited note page
-    - "undo" - Undo the last action on the canvas
-    - "redo" - Redo the last undid action on the canvas
-  - On the very top bar should be a login icon to show that you're logged in (Just make it the first letter of your username unless changed). When clicked has options for settings, shows your last synced time, account options (login, logout, etc)
-- Include options for theme styling (should have light, dark, sketch sheet, gruvbox dark). These should be easy to configure yourself, sort of like powershell themes
+Things to implement:
+- Add in forgot password option to sign-in. While this is still in development just let you change it freely without needing an email confirmation.
+- add in a "dev login" button to the login page that logs you in on a preset dev mode. This should be seperate from any changes you make and just be for things I want to test. Think of it like my personal login testing grounds
+
+
+Bugs to fix:
+- Google sign-in doesn't work. Returns error: "Google sign-in isn't configured yet (missing NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_ID)."
