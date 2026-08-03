@@ -4,6 +4,7 @@ import { useAuthContext } from "@/components/AuthProvider";
 import { useAppStore } from "@/stores/appStore";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { Ribbon } from "@/components/ribbon/Ribbon";
+import { TopBar } from "@/components/topbar/TopBar";
 
 // Persistent app shell (spec.md subtask 8, part B: "Wire the persistent
 // shell (sidebar + ribbon + content outlet)"). Sits INSIDE AppShell.tsx's
@@ -22,11 +23,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen">
-      <Sidebar user={user} />
-      <div className="flex flex-1 flex-col">
-        <Ribbon />
-        <div className="flex-1 overflow-auto">{children}</div>
+    <div className="flex h-screen flex-col">
+      <TopBar />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar user={user} />
+        <div className="flex flex-1 flex-col">
+          <Ribbon />
+          <div className="flex-1 overflow-auto">{children}</div>
+        </div>
       </div>
     </div>
   );
