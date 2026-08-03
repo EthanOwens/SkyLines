@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { loadThemes, getThemesDir, type LoadedThemesResult } from "@/lib/themes/loader";
 import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
-import type { Theme } from "@/lib/themes/types";
+import { isTheme, type Theme, THEME_VARIABLE_KEYS } from "@/lib/themes/types";
+import { BUILTIN_THEMES } from "@/lib/themes/builtin";
 
 // M6 spike route (spec.md subtask 17, "Theme engine foundation"). Exercises
 // lib/themes/{types,loader,apply}.ts end-to-end against the real on-disk
@@ -62,6 +63,27 @@ export default function SpikeThemes() {
     append("clearThemeOverrides() called");
   }
 
+  function handleValidateBuiltins() {
+    for (const theme of BUILTIN_THEMES) {
+      const valid = isTheme(theme);
+      const keyCount = Object.keys(theme.variables).length;
+      append(
+        `isTheme(${theme.id}) -> ${valid} (defines ${keyCount}/${THEME_VARIABLE_KEYS.length} keys)`,
+      );
+    }
+  }
+
+  function handleApplyBuiltin(theme: Theme) {
+    clearThemeOverrides();
+    applyTheme(theme);
+    setAppliedId(theme.id);
+    const computed = getComputedStyle(document.documentElement);
+    const dump = THEME_VARIABLE_KEYS.map(
+      (key) => `${key}=${computed.getPropertyValue(`--${key}`).trim()}`,
+    ).join(" | ");
+    append(`applyTheme(${theme.id}) -> ${dump}`);
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center gap-4 p-8">
       <h1 className="text-2xl font-semibold">Spike Themes (lib/themes)</h1>
@@ -85,6 +107,35 @@ export default function SpikeThemes() {
         >
           Clear overrides
         </button>
+      </div>
+
+      <div className="w-full max-w-2xl border-t pt-4">
+        <h2 className="font-medium">Built-in themes (lib/themes/builtin.ts)</h2>
+        <div className="mt-2 flex gap-2">
+          <button
+            onClick={handleValidateBuiltins}
+            className="rounded bg-purple-600 px-3 py-1 text-sm text-white"
+          >
+            Validate isTheme()
+          </button>
+        </div>
+        <ul data-testid="spike-builtin-themes-list" className="mt-2 flex flex-col gap-2">
+          {BUILTIN_THEMES.map((theme) => (
+            <li key={theme.id} className="flex items-center gap-3">
+              <span>
+                {theme.name} (id={theme.id}, {Object.keys(theme.variables).length} vars)
+              </span>
+              <button
+                onClick={() => handleApplyBuiltin(theme)}
+                data-testid={`spike-apply-builtin-${theme.id}`}
+                className="rounded bg-emerald-600 px-3 py-1 text-sm text-white"
+              >
+                Apply
+              </button>
+              {appliedId === theme.id && <span className="text-xs text-emerald-700">applied</span>}
+            </li>
+          ))}
+        </ul>
       </div>
 
       {dir && (
