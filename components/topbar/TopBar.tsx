@@ -23,6 +23,7 @@ import {
 } from "@/lib/quickAccessPrefs";
 import { useAppStore, type NoteHistoryEntry } from "@/stores/appStore";
 import { ArrowLeft, ArrowRight, Redo, Settings, Undo } from "lucide-react";
+import { AccountMenu } from "./AccountMenu";
 
 // Quick access toolbar (spec.md subtask 13, "Quick access toolbar"). Full-
 // width bar above Sidebar+Ribbon+content (see AppLayout.tsx), matching
@@ -37,8 +38,8 @@ import { ArrowLeft, ArrowRight, Redo, Settings, Undo } from "lucide-react";
 // localStorage persistence (lib/quickAccessPrefs.ts) is fully real/
 // functional.
 //
-// Leaves room on the right for the account icon (subtask 16) via a plain
-// `justify-between` split rather than building anything there now.
+// The right side of the `justify-between` split renders AccountMenu.tsx
+// (subtask 16, "Account icon + dropdown").
 
 type QuickAccessKey = keyof QuickAccessVisibility;
 
@@ -237,9 +238,7 @@ export function TopBar() {
         </DropdownMenu>
       </div>
 
-      {/* Reserved for the account icon (spec.md subtask 16) - intentionally
-          empty for now. */}
-      <div />
+      <AccountMenu />
     </div>
   );
 }
