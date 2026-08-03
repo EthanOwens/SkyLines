@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   signInWithEmailAndPassword,
   signInWithCredential,
+  sendPasswordResetEmail,
   GoogleAuthProvider,
 } from "firebase/auth";
 import { open as openInBrowser } from "@tauri-apps/plugin-shell";
@@ -36,6 +37,8 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
 
   async function finishGoogleSignIn(callbackUrl: string) {
     try {
@@ -48,6 +51,7 @@ export default function LoginPage() {
       router.replace("/");
     } catch {
       setError("Google sign-in failed.");
+      setResetMessage("");
     } finally {
       setGoogleLoading(false);
     }
@@ -83,6 +87,7 @@ export default function LoginPage() {
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setResetMessage("");
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
@@ -94,8 +99,25 @@ export default function LoginPage() {
     }
   }
 
+  async function handleForgotPassword() {
+    setError("");
+    setResetMessage("");
+    const targetEmail = email.trim() || window.prompt("Email", "")?.trim() || "";
+    if (!targetEmail) return;
+    setResetLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, targetEmail);
+      setResetMessage("Check your email for a password reset link.");
+    } catch {
+      setError("Could not send reset email. Please check the address and try again.");
+    } finally {
+      setResetLoading(false);
+    }
+  }
+
   async function handleGoogle() {
     setError("");
+    setResetMessage("");
     if (!isGoogleSignInConfigured()) {
       setError(
         "Google sign-in isn't configured yet (missing NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_ID).",
@@ -138,8 +160,19 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+          <div className="text-right">
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              disabled={loading || resetLoading}
+              className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+            >
+              {resetLoading ? "Sending…" : "Forgot password?"}
+            </button>
+          </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <Button type="submit" className="w-full" disabled={loading}>
+          {resetMessage && <p className="text-sm text-muted-foreground">{resetMessage}</p>}
+          <Button type="submit" className="w-full" disabled={loading || resetLoading}>
             {loading ? "Signing in…" : "Sign in"}
           </Button>
         </form>
