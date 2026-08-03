@@ -45,7 +45,7 @@ export default function LoginPage() {
       }
       const credential = GoogleAuthProvider.credential(idToken);
       await signInWithCredential(auth, credential);
-      router.replace("/home");
+      router.replace("/");
     } catch {
       setError("Google sign-in failed.");
     } finally {
@@ -86,7 +86,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      router.replace("/home");
+      router.replace("/");
     } catch {
       setError("Invalid email or password.");
     } finally {

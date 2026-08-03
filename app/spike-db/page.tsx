@@ -15,6 +15,7 @@ import {
   getNotes,
   updateNote,
 } from "@/lib/db/notes";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 
 // M2 spike route (spec.md subtask 9). Exercises lib/db/notes.ts and
 // lib/db/folders.ts end-to-end (create -> read -> update -> soft-delete ->
@@ -31,7 +32,8 @@ export default function SpikeDb() {
   async function runFolderRoundTrip() {
     const userId = "spike-user";
     try {
-      const folderId = await createFolder(userId, "Spike Folder", null, 1);
+      const notebookId = await getOrCreateDefaultNotebookId(userId);
+      const folderId = await createFolder(userId, "Spike Folder", notebookId, null, 1);
       append(`createFolder -> id=${folderId}`);
 
       let folders = await getFolders(userId);
@@ -61,7 +63,8 @@ export default function SpikeDb() {
   async function runNoteRoundTrip() {
     const userId = "spike-user";
     try {
-      const noteId = await createNote(userId, "note", null, "Spike Note");
+      const notebookId = await getOrCreateDefaultNotebookId(userId);
+      const noteId = await createNote(userId, "note", notebookId, null, "Spike Note");
       append(`createNote -> id=${noteId}`);
 
       let note = await getNoteById(noteId);
@@ -96,16 +99,17 @@ export default function SpikeDb() {
     // three notes are soft-deleted, while the sibling folder/note are not.
     const userId = "spike-user-recursion";
     try {
-      const folderA = await createFolder(userId, "A", null, 1);
-      const folderB = await createFolder(userId, "B", folderA, 1);
-      const folderC = await createFolder(userId, "C", folderB, 1);
-      const sibling = await createFolder(userId, "Sibling", null, 2);
+      const notebookId = await getOrCreateDefaultNotebookId(userId);
+      const folderA = await createFolder(userId, "A", notebookId, null, 1);
+      const folderB = await createFolder(userId, "B", notebookId, folderA, 1);
+      const folderC = await createFolder(userId, "C", notebookId, folderB, 1);
+      const sibling = await createFolder(userId, "Sibling", notebookId, null, 2);
       append(`created tree: A=${folderA} B=${folderB} C=${folderC} Sibling=${sibling}`);
 
-      const noteA = await createNote(userId, "note", folderA, "Note in A");
-      const noteB = await createNote(userId, "note", folderB, "Note in B");
-      const noteC = await createNote(userId, "note", folderC, "Note in C");
-      const noteSibling = await createNote(userId, "note", sibling, "Note in Sibling");
+      const noteA = await createNote(userId, "note", notebookId, folderA, "Note in A");
+      const noteB = await createNote(userId, "note", notebookId, folderB, "Note in B");
+      const noteC = await createNote(userId, "note", notebookId, folderC, "Note in C");
+      const noteSibling = await createNote(userId, "note", notebookId, sibling, "Note in Sibling");
       append(
         `created notes: noteA=${noteA} noteB=${noteB} noteC=${noteC} noteSibling=${noteSibling}`,
       );

@@ -23,25 +23,65 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getNoteById } from "@/lib/db/notes";
+import { recordNoteOpened } from "@/lib/lastOpen";
+import { resolveNoteNotebookId } from "@/lib/notebookSync";
 import { CanvasEditor } from "@/components/canvas/CanvasEditor";
+import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 
 function CanvasPageInner() {
   const id = useSearchParams().get("id");
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
+  const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
+  const visitNote = useAppStore((s) => s.visitNote);
 
   useEffect(() => {
+    let cancelled = false;
     if (!id) {
       setLoading(false);
       return;
     }
     setLoading(true);
     getNoteById(id)
-      .then((n) => setNote(n))
-      .catch(() => setNote(null))
-      .finally(() => setLoading(false));
-  }, [id]);
+      .then((n) => {
+        if (cancelled) return;
+        setNote(n);
+        if (n) {
+          // Remember this as the last-open note (spec.md subtask 5) once
+          // it's confirmed to exist - best-effort, never blocks rendering.
+          void recordNoteOpened(n);
+
+          // Keep selectedNotebookId in sync with whichever note is actually
+          // being viewed (spec.md subtask 14 correctness requirement) - see
+          // app/note/page.tsx for the identical logic/rationale.
+          const { notebooks: liveNotebooks, notebooksLoaded: liveLoaded } =
+            useAppStore.getState();
+          setSelectedNotebook(
+            resolveNoteNotebookId(n.notebookId, liveNotebooks, liveLoaded),
+          );
+
+          // Record a history-stack visit (spec.md subtask 14) UNLESS this
+          // navigation was triggered by clicking Back/Forward in
+          // TopBar.tsx - see app/note/page.tsx for the identical
+          // logic/rationale.
+          if (useAppStore.getState().isHistoryNavigation) {
+            useAppStore.getState().setIsHistoryNavigation(false);
+          } else {
+            visitNote({ noteId: n.id, type: n.type });
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setNote(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, setSelectedNotebook, visitNote]);
 
   if (!id) {
     return (

@@ -6,6 +6,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { createFolder, getFolderById } from "@/lib/db/folders";
 import { createNote, getNoteById, updateNote } from "@/lib/db/notes";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { pushDirtyRows } from "@/lib/sync/push";
 
 // M3 spike route (spec.md subtask 11). Verifies lib/sync/push.ts end-to-end:
@@ -31,8 +32,9 @@ export default function SpikePush() {
       const userId = cred.user.uid;
       append(`signed in -> userId=${userId}`);
 
-      const folderId = await createFolder(userId, "Push Spike Folder", null, 1);
-      const noteId = await createNote(userId, "note", null, "Push Spike Note");
+      const notebookId = await getOrCreateDefaultNotebookId(userId);
+      const folderId = await createFolder(userId, "Push Spike Folder", notebookId, null, 1);
+      const noteId = await createNote(userId, "note", notebookId, null, "Push Spike Note");
       append(`created local rows -> folderId=${folderId} noteId=${noteId}`);
 
       await updateNote(noteId, { content: { type: "doc", content: [] } });

@@ -15,21 +15,33 @@ import { useAppStore } from "@/stores/appStore";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { createFolder as dbCreateFolder } from "@/lib/db/folders";
 import { createNote as dbCreateNote } from "@/lib/db/notes";
+import { createNotebook, getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 
-// spec.md subtask 16 verification route (M4 "sidebar"). Renders the real,
-// ported Sidebar/FolderTree/FolderItem/NoteItem components wired against the
-// SQLite-backed useFolders/useNotes hooks (subtask 15) and real Firebase
-// Auth, so the sidebar's inline rename, create note/canvas/folder, per-folder
-// context menu, and recursive delete (subtask 10) can be exercised end to
-// end in a real browser. There is no app/login or app/home page yet (those
-// land in later subtasks), so this route stands in as the host page - same
-// pattern as app/spike-hooks/page.tsx, app/spike-engine/page.tsx. Signs in
-// with a throwaway test account solely to satisfy firestore.rules for the
-// sync engine wiring that starts once a user is present; this subtask's
-// actual behavior under test is local-SQLite-driven. Cleanup deletes
-// Firestore test docs BEFORE the auth account, always, and every created id
-// is tracked in a ref (survives re-renders, not page reloads - do not reload
-// mid-session). Not production UI.
+// spec.md subtask 16 verification route (M4 "sidebar"), extended by spec.md
+// subtask 7 ("Sidebar rework") to also exercise notebook-scoping: `Sidebar`
+// now reads `selectedNotebookId` from stores/appStore.ts and only renders
+// the currently-open notebook's folders/notes (via `FolderTree`'s
+// `notebookId` prop), so this harness creates two distinct notebooks with
+// their own folders/notes and lets a tester swap the "open" notebook via
+// `setSelectedNotebook` to confirm notebook A never leaks notebook B's
+// folders/notes into the sidebar (and vice versa) - this route is the
+// designated verification surface per subtask 7's scope (no persistent
+// app-shell sidebar integration yet; that's subtask 8).
+//
+// Renders the real, ported Sidebar/FolderTree/FolderItem/NoteItem components
+// wired against the SQLite-backed useFolders/useNotes hooks (subtask 15) and
+// real Firebase Auth, so the sidebar's inline rename, create note/canvas/
+// folder, per-folder context menu, and recursive delete (subtask 10) can
+// still be exercised end to end in a real browser. There is no app/login or
+// app/home page yet (those land in later subtasks), so this route stands in
+// as the host page - same pattern as app/spike-hooks/page.tsx,
+// app/spike-engine/page.tsx. Signs in with a throwaway test account solely
+// to satisfy firestore.rules for the sync engine wiring that starts once a
+// user is present; this subtask's actual behavior under test is
+// local-SQLite-driven. Cleanup deletes Firestore test docs BEFORE the auth
+// account, always, and every created id is tracked in a ref (survives
+// re-renders, not page reloads - do not reload mid-session). Not production
+// UI.
 
 const TEST_EMAIL = "skylines-sidebar-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -41,10 +53,15 @@ function SpikeSidebarInner() {
 
   const folders = useAppStore((s) => s.folders);
   const notes = useAppStore((s) => s.notes);
+  const selectedNotebookId = useAppStore((s) => s.selectedNotebookId);
+  const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
 
   const [log, setLog] = useState<string[]>([]);
+  const [notebookAId, setNotebookAId] = useState<string | null>(null);
+  const [notebookBId, setNotebookBId] = useState<string | null>(null);
   const createdFolderIdsRef = useRef<Set<string>>(new Set());
   const createdNoteIdsRef = useRef<Set<string>>(new Set());
+  const createdNotebookIdsRef = useRef<Set<string>>(new Set());
 
   function append(line: string) {
     setLog((prev) => [...prev, line]);
@@ -69,21 +86,37 @@ function SpikeSidebarInner() {
     append("signed out");
   }
 
+  // Creates two distinct notebooks ("Notebook A"/"Notebook B") to verify
+  // notebook-scoping - see the file-level comment above.
+  async function createTwoNotebooks() {
+    if (!user) return append("sign in first");
+    const idA = await createNotebook(user.uid, "Notebook A");
+    const idB = await createNotebook(user.uid, "Notebook B");
+    createdNotebookIdsRef.current.add(idA);
+    createdNotebookIdsRef.current.add(idB);
+    setNotebookAId(idA);
+    setNotebookBId(idB);
+    setSelectedNotebook(idA);
+    append(`created notebookA=${idA} notebookB=${idB}, opened notebookA`);
+  }
+
   // Creates a folder directly via lib/db (bypassing the Sidebar UI) to
   // sanity-check that the sidebar auto-updates off hooks/useFolders.ts's
   // change-notification wiring, per this subtask's verification section.
-  async function createFolderDirectly() {
+  async function createFolderDirectly(notebookId: string | null, label: string) {
     if (!user) return append("sign in first");
-    const id = await dbCreateFolder(user.uid, "Direct DB Folder");
+    const nbId = notebookId ?? (await getOrCreateDefaultNotebookId(user.uid));
+    const id = await dbCreateFolder(user.uid, `${label} Folder`, nbId);
     createdFolderIdsRef.current.add(id);
-    append(`created folder id=${id} directly via lib/db/folders.ts (not through the Sidebar UI)`);
+    append(`created folder id=${id} in notebook=${nbId} directly via lib/db/folders.ts (not through the Sidebar UI)`);
   }
 
-  async function createNoteDirectly() {
+  async function createNoteDirectly(notebookId: string | null, label: string) {
     if (!user) return append("sign in first");
-    const id = await dbCreateNote(user.uid, "note", null, "Direct DB Note");
+    const nbId = notebookId ?? (await getOrCreateDefaultNotebookId(user.uid));
+    const id = await dbCreateNote(user.uid, "note", nbId, null, `${label} Note`);
     createdNoteIdsRef.current.add(id);
-    append(`created note id=${id} directly via lib/db/notes.ts (not through the Sidebar UI)`);
+    append(`created note id=${id} in notebook=${nbId} directly via lib/db/notes.ts (not through the Sidebar UI)`);
   }
 
   function recordAllCurrentIds() {
@@ -115,6 +148,12 @@ function SpikeSidebarInner() {
       append(`deleted ${createdNoteIdsRef.current.size} test firestore note docs`);
       createdNoteIdsRef.current.clear();
 
+      for (const id of createdNotebookIdsRef.current) {
+        await deleteDoc(doc(db, "notebooks", id)).catch(() => {});
+      }
+      append(`deleted ${createdNotebookIdsRef.current.size} test firestore notebook docs`);
+      createdNotebookIdsRef.current.clear();
+
       await new Promise((r) => setTimeout(r, 200));
 
       if (auth.currentUser) {
@@ -136,12 +175,15 @@ function SpikeSidebarInner() {
 
   return (
     <div className="flex h-screen flex-col">
-      <div className="flex items-center gap-2 border-b border-border p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border p-2 text-xs">
         <span data-testid="spike-sidebar-auth">
           loading={String(loading)} user={user?.uid ?? "null"}
         </span>
         <span data-testid="spike-sidebar-store">
           store: folders={folders.length} notes={notes.length}
+        </span>
+        <span data-testid="spike-sidebar-selected-notebook">
+          selectedNotebookId={selectedNotebookId ?? "null"}
         </span>
         <button onClick={() => void signIn()} className="rounded bg-blue-500 px-2 py-1 text-white">
           Sign in
@@ -149,11 +191,50 @@ function SpikeSidebarInner() {
         <button onClick={() => void doSignOut()} className="rounded bg-teal-800 px-2 py-1 text-white">
           Sign out
         </button>
-        <button onClick={() => void createFolderDirectly()} className="rounded bg-green-600 px-2 py-1 text-white">
-          Create folder via lib/db (bypass UI)
+        <button onClick={() => void createTwoNotebooks()} className="rounded bg-indigo-600 px-2 py-1 text-white">
+          Create Notebook A + B
         </button>
-        <button onClick={() => void createNoteDirectly()} className="rounded bg-green-600 px-2 py-1 text-white">
-          Create note via lib/db (bypass UI)
+        <button
+          onClick={() => notebookAId && setSelectedNotebook(notebookAId)}
+          disabled={!notebookAId}
+          className="rounded bg-purple-600 px-2 py-1 text-white disabled:opacity-50"
+        >
+          Open Notebook A
+        </button>
+        <button
+          onClick={() => notebookBId && setSelectedNotebook(notebookBId)}
+          disabled={!notebookBId}
+          className="rounded bg-purple-600 px-2 py-1 text-white disabled:opacity-50"
+        >
+          Open Notebook B
+        </button>
+        <button
+          onClick={() => void createFolderDirectly(notebookAId, "A")}
+          disabled={!notebookAId}
+          className="rounded bg-green-600 px-2 py-1 text-white disabled:opacity-50"
+        >
+          Create folder in A (bypass UI)
+        </button>
+        <button
+          onClick={() => void createNoteDirectly(notebookAId, "A")}
+          disabled={!notebookAId}
+          className="rounded bg-green-600 px-2 py-1 text-white disabled:opacity-50"
+        >
+          Create note in A (bypass UI)
+        </button>
+        <button
+          onClick={() => void createFolderDirectly(notebookBId, "B")}
+          disabled={!notebookBId}
+          className="rounded bg-green-600 px-2 py-1 text-white disabled:opacity-50"
+        >
+          Create folder in B (bypass UI)
+        </button>
+        <button
+          onClick={() => void createNoteDirectly(notebookBId, "B")}
+          disabled={!notebookBId}
+          className="rounded bg-green-600 px-2 py-1 text-white disabled:opacity-50"
+        >
+          Create note in B (bypass UI)
         </button>
         <button onClick={() => void cleanup()} className="rounded bg-red-600 px-2 py-1 text-white">
           Cleanup (delete test data + user)

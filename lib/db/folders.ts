@@ -20,6 +20,7 @@ type FolderRow = {
   id: string;
   name: string;
   parent_id: string | null;
+  notebook_id: string | null;
   user_id: string;
   order_index: number;
   created_at: number;
@@ -34,6 +35,7 @@ function rowToFolder(row: FolderRow): Folder {
     id: row.id,
     name: row.name,
     parentId: row.parent_id,
+    notebookId: row.notebook_id,
     userId: row.user_id,
     order: row.order_index,
     createdAt: row.created_at,
@@ -155,6 +157,7 @@ export type RemoteFolderData = {
   id: string;
   name: string;
   parentId: string | null;
+  notebookId: string | null;
   userId: string;
   order: number;
   createdAt: number;
@@ -188,11 +191,12 @@ export async function upsertFolderFromRemote(
   const db = await getDb();
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, name, parent_id, user_id, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (id, name, parent_id, notebook_id, user_id, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        parent_id = excluded.parent_id,
+       notebook_id = excluded.notebook_id,
        user_id = excluded.user_id,
        order_index = excluded.order_index,
        created_at = excluded.created_at,
@@ -204,6 +208,7 @@ export async function upsertFolderFromRemote(
       remote.id,
       remote.name,
       remote.parentId,
+      remote.notebookId,
       remote.userId,
       remote.order,
       remote.createdAt,
@@ -216,9 +221,19 @@ export async function upsertFolderFromRemote(
   notifyDataChange("remote");
 }
 
+/**
+ * `notebookId` is a required parameter - every new folder must belong to a
+ * notebook now (spec.md M1 subtask 2). The `folders.notebook_id` column
+ * itself stays nullable at the SQLite schema level (see the migration 3
+ * comment in src-tauri/src/lib.rs for why - no single sensible constant
+ * `DEFAULT` exists for a per-user backfill), so this requirement is enforced
+ * here at the application layer instead, by simply not offering a way to
+ * omit it.
+ */
 export async function createFolder(
   userId: string,
   name: string,
+  notebookId: string,
   parentId: string | null = null,
   order = 0,
 ): Promise<string> {
@@ -228,9 +243,9 @@ export async function createFolder(
 
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, name, parent_id, user_id, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 1, NULL)`,
-    [id, name, parentId, userId, order, now, now],
+       (id, name, parent_id, user_id, notebook_id, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, 1, NULL)`,
+    [id, name, parentId, userId, notebookId, order, now, now],
   );
 
   notifyDataChange("local");

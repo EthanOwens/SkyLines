@@ -2,7 +2,8 @@ import { deleteDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getOldTombstoneFolders, hardDeleteFolder } from "@/lib/db/folders";
 import { getOldTombstoneNotes, hardDeleteNote } from "@/lib/db/notes";
-import type { Folder, Note } from "@/types";
+import { getOldTombstoneNotebooks, hardDeleteNotebook } from "@/lib/db/notebooks";
+import type { Folder, Note, Notebook } from "@/types";
 
 // Tombstone hard-delete cleanup (spec.md subtask 13, second half - the
 // soft-delete-pushed-like-any-other-update half was already done by
@@ -17,6 +18,7 @@ import type { Folder, Note } from "@/types";
 
 const FOLDERS_COLLECTION = "folders";
 const NOTES_COLLECTION = "notes";
+const NOTEBOOKS_COLLECTION = "notebooks";
 
 /**
  * Default tombstone retention window: 30 days. Chosen as a generous grace
@@ -124,8 +126,8 @@ function orderFoldersLeavesFirst(folders: Folder[]): Folder[] {
  * failed second step would never get cleaned up.
  */
 async function hardDeleteTombstone(
-  collectionName: "folders" | "notes",
-  row: Folder | Note,
+  collectionName: "folders" | "notes" | "notebooks",
+  row: Folder | Note | Notebook,
   hardDeleteLocal: (id: string) => Promise<void>,
 ): Promise<void> {
   if (row.dirty && row.syncedAt !== null) {
@@ -144,13 +146,19 @@ async function hardDeleteTombstone(
 
 /**
  * Runs one tombstone-cleanup pass for `userId`: hard-deletes (both locally
- * and on Firestore) every folder/note that has been soft-deleted for longer
- * than `maxAgeMs`. Notes are cleaned up before folders so that a note whose
- * `folder_id` points at an about-to-be-hard-deleted folder is already gone
- * by the time that folder's `DELETE FROM` runs (`notes.folder_id
- * REFERENCES folders(id)` is an enforced FK); within the folders batch,
- * `orderFoldersLeavesFirst` further ensures children are deleted before
- * their parents for the same reason.
+ * and on Firestore) every folder/note/notebook that has been soft-deleted
+ * for longer than `maxAgeMs`. Notes are cleaned up before folders so that a
+ * note whose `folder_id` points at an about-to-be-hard-deleted folder is
+ * already gone by the time that folder's `DELETE FROM` runs
+ * (`notes.folder_id REFERENCES folders(id)` is an enforced FK); within the
+ * folders batch, `orderFoldersLeavesFirst` further ensures children are
+ * deleted before their parents for the same reason. Notebooks are cleaned up
+ * last, after folders, so that a folder whose `notebook_id` points at an
+ * about-to-be-hard-deleted notebook is already gone by the time that
+ * notebook's `DELETE FROM` runs (`folders.notebook_id REFERENCES
+ * notebooks(id)` is an enforced FK) - no analogous "leaves first" ordering
+ * is needed within the notebooks batch itself since notebooks don't
+ * reference each other (see lib/db/notebooks.ts).
  *
  * Single on-demand pass only - no scheduling/timer here (see file header).
  */
@@ -182,7 +190,17 @@ export async function cleanupOldTombstones(
     }
   }
 
-  const errors = [...noteErrors, ...folderErrors];
+  const oldNotebooks = await getOldTombstoneNotebooks(userId, cutoffMs);
+  const notebookErrors: unknown[] = [];
+  for (const notebook of oldNotebooks) {
+    try {
+      await hardDeleteTombstone(NOTEBOOKS_COLLECTION, notebook, hardDeleteNotebook);
+    } catch (err) {
+      notebookErrors.push(err);
+    }
+  }
+
+  const errors = [...noteErrors, ...folderErrors, ...notebookErrors];
   if (errors.length > 0) {
     throw new AggregateError(errors, `cleanupOldTombstones: ${errors.length} row(s) failed`);
   }

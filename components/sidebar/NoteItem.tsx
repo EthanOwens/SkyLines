@@ -55,7 +55,7 @@ export function NoteItem({ note, depth }: Props) {
 
   async function handleDelete() {
     await deleteNote(note.id);
-    if (isActive) router.replace("/home");
+    if (isActive) router.replace("/");
   }
 
   return (

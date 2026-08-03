@@ -16,6 +16,7 @@ import { useSyncEngine } from "@/hooks/useSyncEngine";
 import { useAppStore } from "@/stores/appStore";
 import { createFolder, getFolderRowById } from "@/lib/db/folders";
 import { createNote } from "@/lib/db/notes";
+import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { getSyncStatus } from "@/lib/sync/engine";
 
 // spec.md subtask 15 verification route (M4 "auth + data hooks rewire").
@@ -86,14 +87,16 @@ function SpikeHooksInner() {
 
   async function createTestFolder() {
     if (!user) return append("sign in first");
-    const id = await createFolder(user.uid, "Spike Hooks Folder", null, 1);
+    const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+    const id = await createFolder(user.uid, "Spike Hooks Folder", notebookId, null, 1);
     createdFolderIdsRef.current.push(id);
     append(`created LOCAL folder id=${id} via lib/db/folders.ts createFolder only (no scheduleDirtyPush call here)`);
   }
 
   async function createTestNote() {
     if (!user) return append("sign in first");
-    const id = await createNote(user.uid, "note", null, "Spike Hooks Note");
+    const notebookId = await getOrCreateDefaultNotebookId(user.uid);
+    const id = await createNote(user.uid, "note", notebookId, null, "Spike Hooks Note");
     createdNoteIdsRef.current.push(id);
     append(`created LOCAL note id=${id} via lib/db/notes.ts createNote only (no scheduleDirtyPush call here)`);
   }
@@ -208,7 +211,8 @@ function SpikeHooksInner() {
     if (!lastUidRef.current) return append("sign in (and out) at least once first");
     if (auth.currentUser) return append("sign out first - engine is still running for the current session");
     const uid = lastUidRef.current;
-    const id = await createFolder(uid, "Post-signout folder", null, 1);
+    const notebookId = await getOrCreateDefaultNotebookId(uid);
+    const id = await createFolder(uid, "Post-signout folder", notebookId, null, 1);
     createdFolderIdsRef.current.push(id);
     append(`created LOCAL folder id=${id} for uid=${uid} AFTER sign-out (engine + its push wiring should be torn down)`);
     append(`getSyncStatus() right after teardown = ${getSyncStatus()}`);

@@ -17,6 +17,7 @@ type NoteRow = {
   title: string;
   type: "note" | "canvas";
   folder_id: string | null;
+  notebook_id: string | null;
   user_id: string;
   content: string | null;
   canvas_data: string | null;
@@ -33,6 +34,7 @@ function rowToNote(row: NoteRow): Note {
     title: row.title,
     type: row.type,
     folderId: row.folder_id,
+    notebookId: row.notebook_id,
     userId: row.user_id,
     content: row.content !== null ? (JSON.parse(row.content) as object | null) : null,
     canvasData:
@@ -149,6 +151,7 @@ export type RemoteNoteData = {
   title: string;
   type: "note" | "canvas";
   folderId: string | null;
+  notebookId: string | null;
   userId: string;
   content: object | null;
   canvasData: object | null;
@@ -174,12 +177,13 @@ export async function upsertNoteFromRemote(
   const db = await getDb();
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, title, type, folder_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      ON CONFLICT(id) DO UPDATE SET
        title = excluded.title,
        type = excluded.type,
        folder_id = excluded.folder_id,
+       notebook_id = excluded.notebook_id,
        user_id = excluded.user_id,
        content = excluded.content,
        canvas_data = excluded.canvas_data,
@@ -193,6 +197,7 @@ export async function upsertNoteFromRemote(
       remote.title,
       remote.type,
       remote.folderId,
+      remote.notebookId,
       remote.userId,
       remote.content === null ? null : JSON.stringify(remote.content),
       remote.canvasData === null ? null : JSON.stringify(remote.canvasData),
@@ -206,9 +211,19 @@ export async function upsertNoteFromRemote(
   notifyDataChange("remote");
 }
 
+/**
+ * `notebookId` is a required parameter - every new note must belong to a
+ * notebook now (spec.md subtask 7), mirroring `createFolder`'s
+ * `notebookId` requirement in lib/db/folders.ts. The `notes.notebook_id`
+ * column itself stays nullable at the SQLite schema level (see the
+ * migration 4 comment in src-tauri/src/lib.rs for why), so this requirement
+ * is enforced here at the application layer instead, by simply not offering
+ * a way to omit it.
+ */
 export async function createNote(
   userId: string,
   type: "note" | "canvas",
+  notebookId: string,
   folderId: string | null = null,
   title = "Untitled",
 ): Promise<string> {
@@ -218,9 +233,9 @@ export async function createNote(
 
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, title, type, folder_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, NULL, NULL, $6, $7, NULL, 1, NULL)`,
-    [id, title, type, folderId, userId, now, now],
+       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, NULL, 1, NULL)`,
+    [id, title, type, folderId, notebookId, userId, now, now],
   );
 
   notifyDataChange("local");

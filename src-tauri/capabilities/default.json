@@ -11,6 +11,22 @@
     "sql:allow-select",
     "shell:allow-open",
     "deep-link:default",
-    "global-shortcut:allow-register"
+    "global-shortcut:allow-register",
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$APPCONFIG/themes" }]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [{ "path": "$APPCONFIG/themes" }, { "path": "$APPCONFIG/themes/*" }]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [{ "path": "$APPCONFIG/themes" }]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "$APPCONFIG/themes/*" }]
+    }
   ]
 }

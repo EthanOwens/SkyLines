@@ -68,19 +68,27 @@ export function FolderItem({ folder, allFolders, allNotes, userId, depth }: Prop
   }
 
   async function addNote() {
-    const id = await createNote(userId, "note", folder.id);
+    // A note created inside this folder inherits the folder's notebook -
+    // `folder.notebookId` is guaranteed non-null in practice, see the
+    // notebookId comment on the `Folder` type in types/index.ts (same
+    // reasoning `addSubfolder` below already relies on).
+    const id = await createNote(userId, "note", folder.notebookId as string, folder.id);
     setOpen(true);
     router.push(`/note?id=${id}`);
   }
 
   async function addCanvas() {
-    const id = await createNote(userId, "canvas", folder.id);
+    const id = await createNote(userId, "canvas", folder.notebookId as string, folder.id);
     setOpen(true);
     router.push(`/canvas?id=${id}`);
   }
 
   async function addSubfolder() {
-    await createFolder(userId, "New Folder", folder.id);
+    // A new subfolder inherits its parent's notebook (folders don't move
+    // between notebooks by being nested) - `folder.notebookId` is
+    // guaranteed non-null in practice, see the notebookId comment on the
+    // `Folder` type in types/index.ts.
+    await createFolder(userId, "New Folder", folder.notebookId as string, folder.id);
     setOpen(true);
   }
 

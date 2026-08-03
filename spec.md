@@ -1,261 +1,228 @@
-# Skylines — Local-First Note-Taking App (Tauri v2 Rewrite)
+# Skylines — OneNote-Style Redesign
 
 ## Goal
 
-Build Skylines: a standalone desktop + mobile note-taking app (rich text notes
-+ infinite-canvas notes), ported from the existing Next.js/Firebase web app
-in `../note_taking_app`. The rewrite moves to **Tauri v2**, with **SQLite as
-the local source of truth** and **Firebase Firestore as a background sync
-target** (local-first, last-write-wins sync — not real-time multi-user
-collaboration). This gets real OS integration (tray, global shortcuts, native
-menus) and a native feel/performance that a browser tab and PWA wrapper can't
-provide.
+Build out the app shell that's never existed (Skylines currently has no
+authenticated landing experience — login/register work but redirect to a
+`/home` that was never built) as a OneNote-style note-taking UI: a
+Notebook → Section → Note hierarchy, a ribbon-style top bar (File / Format /
+Draw), a customizable quick-access bar (back/forward/undo/redo), an account
+menu, and a user-editable theme system (light, dark, gruvbox dark, plus
+user-defined themes). Sourced from `planning.md` at the project root.
 
-The target architecture, data model, sync engine design, and migration
-roadmap are already worked out in detail in
-`../note_taking_app/SPEC_iter1.md` — that document is the primary technical
-reference for this rewrite (parts 1–3). This spec sequences that plan into
-concrete, scoped subtasks for `/dev-loop` and records the scope decisions
-made for *this* repo specifically.
-
-The app is renamed **Skylines** (package name, Tauri app identifier, window
-title, branding) — this is a fresh product name, not just a folder name.
+This is new UI/UX work, not a port — unlike the prior Tauri migration spec,
+there is no reference app to copy from for most of this. Decisions here are
+based on general knowledge of OneNote's actual UX conventions plus explicit
+choices made in planning conversation.
 
 ## Non-Goals
 
-- **Do not modify `../note_taking_app`.** It is a read-only reference (both
-  its code and `SPEC_iter1.md`) for porting from — not a dependency, not a
-  shared package, not something this project writes back to.
-- **No CRDT-based / real-time multi-user collaboration.** Sync is
-  last-write-wins by `updated_at`, per `SPEC_iter1.md`'s explicit reasoning
-  (single-user data, narrow conflict surface). Do not introduce Yjs/Automerge
-  or a relay server.
-- **No new features beyond the current app's feature set.** Search, tags,
-  backlinks/note-linking, version history, attachments beyond inline base64
-  images, export/import, trash/undo-delete, and drag-to-reorder are all
-  explicitly absent today (per `SPEC_iter1.md` Part 1) and stay absent in
-  this rewrite. This is a platform migration, not a feature expansion.
-- **No new Firebase project.** Reuse the existing project/credentials from
-  `../note_taking_app/.env.local` (copy into this repo's own
-  `.env.local`, gitignored — do not commit it, do not regenerate credentials,
-  do not change Firestore security rules).
-- **No automated test infra in this pass** (no Vitest/etc. setup). Rely on
-  manual verification and the `/dev-loop` adversarial-reviewer pass.
-- **No OS-level drag-and-drop behavior.** The `tauri://drag-drop` listener
-  gets wired as a no-op placeholder only (see Decisions) — do not invent
-  attachment-import behavior for it.
-- **No Mac or Linux desktop packaging, no iOS build**, in this pass — this
-  dev machine is Windows. Desktop packaging targets Windows only; mobile
-  targets Android only. Mac/Linux packaging and iOS are explicitly deferred,
-  not attempted via cross-compilation guesswork (see Decisions).
-- **Do not fix or change anything not called out below.** In particular,
-  don't "clean up" unrelated parts of the ported UI/component code beyond
-  what's needed to run on SQLite/Tauri instead of Firestore-direct/Next
-  server.
+- **No "sketch sheet" theme.** Originally requested, dropped — no concrete
+  color palette was settled on. Only light, dark, and gruvbox dark ship as
+  built-in themes.
+- **No custom-built Draw ribbon tab beyond a thin/minimal wrapper.**
+  tldraw (already integrated) ships a complete floating toolbar with
+  pencil/shape/color tools. Do not rebuild that inside the ribbon — rely on
+  tldraw's own toolbar when a canvas note is open.
+- **No cross-device sync of "last open notebook/section/note."** This is
+  per-device local state (`localStorage`), not pushed through the Firestore
+  sync engine. It is not "data" in the same sense as notes/folders/notebooks.
+- **No full drag-to-reorder quick-access-bar customization.** First pass is
+  show/hide toggles for the 4 named items (back/forward/undo/redo) only —
+  not a general-purpose toolbar-builder with an open-ended action palette.
+- **No in-app color-picker theme editor UI.** Custom themes are authored by
+  hand-editing a JSON file on disk (mirroring the "like PowerShell themes"
+  request literally) — not a GUI theme designer.
+- **Do not touch the existing sync engine's core logic** (`lib/sync/push.ts`,
+  `pull.ts`, `cleanup.ts`, `engine.ts`) beyond extending it to cover the new
+  `notebooks` table using the exact same patterns already established for
+  `folders`/`notes`. Don't refactor working sync logic while touching it.
+- **Do not modify `../note_taking_app`** — still a read-only reference for
+  general architecture context only; this feature set has no counterpart
+  there.
+- **Do not rebuild `lib/db/folders.ts`/`notes.ts`'s existing CRUD, delete,
+  or dirty-tracking logic** — only add the `notebook_id` column/relationship
+  to folders and wire notebook-scoping through, without altering the
+  already-reviewed recursive-delete/transaction logic in `deleteFolder`.
 
 ## Subtasks
 
-Sequenced roughly per `SPEC_iter1.md` Part 3's milestones (M0–M7), broken
-into implementor-sized units. Each assumes prior subtasks in the list are
-done unless marked parallel.
+Sequenced by dependency — data model first, then the shell that reads it,
+then the UI layers on top.
 
-1. **Repo + Tauri scaffold.** `git init` this repo. Scaffold a Tauri v2 +
-   Next.js project here (`create-tauri-app` or manual `src-tauri/` +
-   Next.js). Copy over and adapt base config from `../note_taking_app`:
-   `tsconfig.json`, `tailwind`/`postcss.config.mjs`, `components.json`
-   (shadcn), `.gitignore`. Rename branding to **Skylines** in
-   `package.json`, `tauri.conf.json` (app identifier, window title), and any
-   manifest metadata.
-2. **Env + secrets.** Copy `../note_taking_app/.env.local` values into this
-   repo's own `.env.local` (gitignored) and `.env.local.example`
-   (placeholders only, committed). Verify `firebase.ts` initializes with
-   these values.
-3. **M0 spike — static export + client nav inside Tauri.** Configure
-   `output: "export"`, `trailingSlash: true` in `next.config.ts`. Build two
-   trivial routes and confirm `<Link>`/`router.push` navigation stays
-   SPA-smooth when loaded inside the Tauri webview (not full page reloads).
-   Record the result. If navigation is *not* smooth, stop and flag it back
-   before continuing — that decides whether the rest of this plan proceeds
-   with Next's App Router or needs to fall back to a plain Vite + React
-   Router shell (per `SPEC_iter1.md` M0 note).
-4. **M0 spike — tauri-plugin-sql wiring.** Install `tauri-plugin-sql`,
-   confirm a trivial table read/write round-trips correctly from frontend TS
-   through to a SQLite file on disk.
-5. ~~**M1 — routing fix.**~~ **Merged into subtasks 16–18.** As originally
-   scoped this assumed `/note/[id]`, `/canvas/[id]`, `NoteItem.tsx`,
-   `FolderItem.tsx`, and `Sidebar.tsx` already existed in this repo to be
-   converted/updated — they don't exist yet at this point in the sequence
-   (they're ported from `../note_taking_app` in subtasks 16–18). Rather than
-   porting the old `[id]` dynamic-route version first and converting it
-   afterward, subtasks 16–18 port directly to query-param routes
-   (`/note?id=...`, `/canvas?id=...`) from the start. No standalone
-   implementor pass for this subtask.
-6. ~~**M1 — drop PWA.**~~ **Already satisfied — no standalone pass needed.**
-   Subtask 1's scaffold never ported `next-pwa`, `public/manifest.json`, or
-   `appleWebApp` metadata into this repo in the first place (confirmed: no
-   `next-pwa` in `package.json`, no `public/` directory, no PWA metadata in
-   `app/layout.tsx`) — there's nothing here to remove.
-7. **M2 — SQLite schema.** Create the `folders`, `notes`, `sync_meta` tables
-   and indexes exactly as specified in `SPEC_iter1.md` Part 2, applied via a
-   `tauri-plugin-sql` migration.
-8. **M2 — types.** Port `types/index.ts`, extending `Folder`/`Note` with the
-   sync bookkeeping fields (`dirty`, `syncedAt`, `deletedAt`).
-9. **M2 — local data-access layer.** Implement `lib/db/notes.ts` and
-   `lib/db/folders.ts` mirroring the current `lib/firestore/notes.ts` /
-   `folders.ts` function signatures (CRUD + soft-delete via `deletedAt`, all
-   local writes set `dirty = 1`), so `stores/appStore.ts` and the
-   `useNotes`/`useFolders` hooks need minimal changes when rewired in
-   subtask 15.
-10. **M2 — fix folder-delete recursion bug.** When deleting a folder, recurse
-    into child subfolders (not just direct child notes) — this is being
-    fixed as part of the rewrite per your decision, since the new
-    `lib/db/folders.ts` delete function is being written fresh anyway.
-11. **M3 — push sync.** Implement local→Firestore push: rows where
-    `dirty = 1`, written via `setDoc(..., {merge:true})`. Swap
-    `updatedAt: serverTimestamp()` for a client-generated millisecond
-    timestamp (required for LWW comparison). On success, clear `dirty`, set
-    `syncedAt`.
-12. **M3 — pull sync.** Implement Firestore→local pull: `onSnapshot`
-    (`docChanges()`), upserting into SQLite guarded by `updatedAt`
-    LWW comparison. When a pull detects the remote row changed *and* the
-    local row is also `dirty`, snapshot the losing version into a
-    conflict-backup table before overwriting.
-13. **M3 — tombstones + cleanup.** Soft-delete via `deletedAt` pushed like
-    any other field update; periodic cleanup hard-deletes old tombstones on
-    both local and remote sides.
-14. **M3 — real offline/retry + syncStatus.** Wire `online`/`offline`
-    listeners, capped-backoff retry on push/pull failure plus immediate
-    retry on reconnect/app-resume, and surface a real `syncStatus`
-    (`saved`/`syncing`/`offline`/`error`) — this makes the currently dead
-    `"offline"` state real, per your decision to fix it. Debounce Firestore
-    pushes (5–15s or on idle) now that SQLite, not Firestore, needs to feel
-    instant.
-15. **M4 — auth + data hooks rewire.** Port `AuthProvider`/`useAuth`
-    unchanged (Firebase Auth itself isn't touched yet — see subtask 21).
-    Rewire `useNotes`/`useFolders`/`appStore` to read from the SQLite layer
-    (subtask 9) instead of directly from Firestore `onSnapshot`.
-16. **M4 — sidebar.** Port `Sidebar`/`FolderTree`/`FolderItem`/`NoteItem`
-    against the SQLite-backed hooks: inline rename, create note/canvas/folder,
-    per-folder context menu, delete (using the fixed recursive delete from
-    subtask 10). **Routing (from subtask 5):** any link/URL this component
-    builds to open a note or canvas uses the query-param form
-    (`/note?id=...`, `/canvas?id=...`), not `/note/[id]`/`/canvas/[id]`.
-17. **M4 — rich text editor.** Port `RichTextEditor`, `EditorToolbar`, and
-    the Tiptap extension set unchanged; autosave debounces to the SQLite
-    layer instead of Firestore directly. **Routing (from subtask 5):** the
-    page hosting this reads the note id from the `?id=` search param
-    (`app/note/page.tsx`), not a `[id]` dynamic segment.
-18. **M4 — canvas editor.** Port `CanvasEditor` (tldraw) unchanged; snapshot
-    autosave debounces to the SQLite layer instead of Firestore directly.
-    **Routing (from subtask 5):** the page hosting this reads the canvas's
-    note id from the `?id=` search param (`app/canvas/page.tsx`), not a
-    `[id]` dynamic segment.
-19. **M4 — shared UI + styling.** Port shadcn primitives (`button`, `dialog`,
-    `dropdown-menu`, `input`, `scroll-area`, `separator`, `tooltip`),
-    `globals.css`, `editor.css`. Can run in parallel with 16–18.
-20. ~~**M4 — sync status badge.**~~ **Already satisfied — no standalone pass
-    needed.** Sidebar.tsx's `SyncBadge` (subtask 16) and EditorToolbar.tsx's
-    `SyncStatus` (subtask 17) both already read `useAppStore(s =>
-    s.syncStatus)` as ported, and subtask 15's `useSyncEngine` already wires
-    the real engine status into that store field — both badges already
-    reflect real sync activity with nothing further to wire.
-21. **M5 — auth rework.** Replace `signInWithPopup` (Google sign-in) with a
-    system-browser + deep-link flow (`@tauri-apps/plugin-shell` `open()` +
-    `tauri-plugin-deep-link`) or `signInWithRedirect`. Leave email/password
-    sign-in as-is. Configure Tauri's CSP `connect-src` to allow the
-    Firebase/Google Auth/Firestore domains.
-22. **M6 — Windows desktop packaging.** Produce a working Windows build
-    (`tauri build` for Windows target). Mac/Linux packaging is out of scope
-    for this pass (see Non-Goals).
-23. **M6 — tray + native menu.** Desktop-only (guard via `platform()`):
-    system tray icon and native application menu using Tauri v2's core
-    `@tauri-apps/api/tray` / `@tauri-apps/api/menu`.
-24. **M6 — global shortcuts.** Desktop-only, platform-gated:
-    `@tauri-apps/plugin-global-shortcut`, checked against `platform()`
-    before registering.
-25. **M6 — drag-and-drop plumbing (no-op).** Enable `dragDropEnabled` in
-    `tauri.conf.json` and register a `tauri://drag-drop` listener that logs/
-    no-ops on drop — infrastructure only, no attachment behavior (see
-    Non-Goals).
-26. **M7 — Android build.** Set up the Android build target, get a debug
-    build running on an emulator or device, and validate the mobile risk
-    flags called out in `SPEC_iter1.md` (keyboard behavior, tldraw touch/
-    edge-gesture conflicts). iOS is out of scope for this pass (see
-    Non-Goals).
+### M1 — Notebook data model
+
+1. **SQLite schema for notebooks.** New migration (next version after the
+   existing ones in `src-tauri/src/lib.rs`) adding a `notebooks` table
+   (mirroring `folders`'s shape: `id`, `name`, `user_id`, `order_index`,
+   `created_at`, `updated_at`, `deleted_at`, `dirty`, `synced_at`) and a
+   `notebook_id TEXT NOT NULL REFERENCES notebooks(id)` column on `folders`.
+   Since existing local databases may already have folders with no
+   notebook, the migration must also: create one default notebook
+   (`"My Notebook"`) per distinct `user_id` already present in `folders`,
+   and backfill every existing folder's `notebook_id` to point at that
+   user's default notebook, so no existing data is silently orphaned.
+2. **Notebook types + data-access layer.** Add `Notebook` to `types/index.ts`
+   (same shape/sync-bookkeeping fields as `Folder`). Add `lib/db/notebooks.ts`
+   mirroring `lib/db/folders.ts`'s CRUD/soft-delete/recursive-delete pattern
+   (deleting a notebook cascades to all its folders and their notes, same
+   transaction-safety approach as `deleteFolder`). Update `lib/db/folders.ts`'s
+   `createFolder`/relevant queries to require/carry `notebook_id`.
+3. **Notebook sync.** Extend `lib/sync/push.ts`, `pull.ts`, and
+   `lib/sync/cleanup.ts` to cover the `notebooks` table using the exact
+   LWW/conflict-backup/tombstone patterns already built for folders/notes —
+   this is applying an established pattern to a third table, not new sync
+   design.
+
+### M2 — App shell + session
+
+4. **Root app shell.** Wire `AuthProvider`, `useSyncEngine`, and the data
+   hooks (`useNotes`/`useFolders`/a new `useNotebooks`) into `app/layout.tsx`
+   for real. Unauthenticated users get redirected to `/login`; this closes
+   the long-standing "no app shell exists" gap.
+5. **Last-open persistence.** `localStorage`-backed (per Non-Goals: not
+   synced) tracking of the last-open notebook/section/note id. On
+   authenticated app load, navigate to that note if it still exists;
+   otherwise fall through to the notebook picker (subtask 6).
+6. **Notebook picker.** Landing UI shown when there's no valid last-open
+   state (first login, or after "swap notebook"): list the user's
+   notebooks, create a new one, select one to open.
+7. **Sidebar rework.** Adapt the existing `Sidebar`/`FolderTree` components
+   to be notebook-scoped: sections (folders) and notes nested under the
+   currently-open notebook, not a flat cross-notebook folder list.
+
+### M3 — Ribbon
+
+8. **Ribbon shell.** File / Format / Draw tab structure and switching.
+   The Draw tab is only shown when the currently-open note is a canvas note
+   (per Non-Goals, it's a thin wrapper, not a rebuild of tldraw's toolbar).
+9. **File tab.** Minimal per planning.md: create new notebook, swap
+   notebook (returns to the notebook picker).
+10. **Format tab.** Port the existing formatting actions from
+    `components/editor/EditorToolbar.tsx` into the ribbon's styling, and add
+    font family, font size, and text color — new Tiptap extensions
+    (`@tiptap/extension-font-family`, `@tiptap/extension-text-style`,
+    `@tiptap/extension-color`) not currently installed.
+11. **Bubble menu.** Floating contextual format toolbar that appears above
+    selected text (Tiptap's `BubbleMenu` extension) — a smaller subset of
+    the Format tab's options, shown on text selection.
+12. **Draw tab (minimal).** Thin wrapper per Non-Goals — no custom drawing
+    UI; tldraw's own toolbar is what the user actually interacts with.
+
+### M4 — Quick access bar
+
+13. **Quick access toolbar.** Back/forward/undo/redo buttons in the
+    top bar, plus a settings button opening a show/hide popover for these 4
+    items (per Non-Goals: no drag-reorder, no open-ended action palette).
+    Persist visibility choices locally.
+14. **Back/forward navigation.** A custom note-visit history stack (not raw
+    browser history — sidebar interactions like collapse/expand shouldn't
+    count as a "page" to navigate back through).
+15. **Undo/redo wiring.** Acts on whichever editor is currently focused
+    (Tiptap or tldraw) — one consistent action, not two competing buttons.
+
+### M5 — Account UI
+
+16. **Account icon + dropdown.** Avatar showing the first letter of the
+    signed-in user's name/email (in the top bar), with a dropdown: settings
+    entry, last-synced-time display (reads `lib/sync/engine.ts`'s status),
+    and login/logout actions.
+
+### M6 — Theming
+
+17. **Theme engine foundation.** CSS-variable-based theme definitions
+    (extending the existing `app/globals.css` token approach). A themes
+    directory on disk (Tauri's app-config-dir, e.g. via
+    `@tauri-apps/api/path`) that the app reads user-authored theme JSON
+    files from at startup — the "like PowerShell themes" request taken
+    literally: users add a theme by hand-editing/dropping a JSON file, no
+    in-app editor.
+18. **Built-in themes.** Ship light, dark, and gruvbox dark as the bundled
+    default theme files, replacing/extending the current hardcoded
+    light/dark CSS variables in `app/globals.css`.
+19. **Theme picker.** A selector (in the account dropdown or a settings
+    view) listing built-in + any user-added themes found in the themes
+    directory, applying the selection immediately and persisting the choice
+    locally.
 
 ## Key Decisions
 
-- **`SPEC_iter1.md` is the technical source of truth for architecture.**
-  This spec sequences and scopes it for this repo; where the two conflict,
-  defer to the decisions recorded here (they're the narrower, repo-specific
-  cut).
-- **Full roadmap, scoped by platform, not by milestone.** All of M0–M7 are
-  included, but Mac/Linux desktop and iOS are dropped rather than attempted
-  blind — this machine is Windows, and packaging/build validation those
-  targets can't actually be executed or verified here. Revisit once a Mac
-  is available.
-- **Port and adapt, not rewrite from scratch.** The UI layer (editor,
-  canvas, sidebar, shadcn components) is copied from `../note_taking_app`
-  and adapted, since `SPEC_iter1.md` itself notes the UI barely changes —
-  only its data source does. This is faster and lower-risk than
-  reimplementing Tiptap/tldraw wiring from zero.
-- **Reuse the existing Firebase project.** Same backend data as
-  `note_taking_app` — this is the same user's notes, not a fresh dataset.
-- **Fixing two known bugs during the port, not carrying them forward:**
-  folder-delete not recursing into subfolders (subtask 10), and the dead
-  `"offline"` sync status (subtask 14 — this one is fixed as a natural
-  side effect of building real offline detection anyway, not extra work).
-- **No attachment/drag-drop behavior invented.** `SPEC_iter1.md` lists OS
-  drag-and-drop as an integration point but the app has no attachment
-  feature to define what a dropped file *does*. Wiring the event as a no-op
-  (subtask 25) keeps the plumbing ready without inventing a feature that
-  wasn't asked for.
-- **No test infra this pass.** Correctness leans on `/dev-loop`'s
-  adversarial-reviewer step and manual verification instead.
+- **Notebook is a real new entity (new SQLite table + sync layer), not a
+  reinterpretation of existing folders.** More faithful to OneNote's actual
+  model and to what planning.md describes; accepted the larger scope
+  (schema migration + a third table wired through the sync engine)
+  deliberately.
+- **The ribbon is in-app UI, not the OS-native Tauri menu.** Windows native
+  menus can't render color swatches/font pickers/live previews. The
+  existing OS-native menu (File/Edit, built for tray/window-close behavior
+  in the prior Tauri-migration spec) is untouched and stays separate from
+  this in-app ribbon.
+- **Draw tab relies on tldraw's existing toolbar rather than duplicating
+  it.** tldraw already ships pencil/shape/color tools; rebuilding that
+  inside the ribbon would be pure duplicated effort for no user-visible
+  gain.
+- **Undo/redo in the quick-access bar targets whichever editor has focus**,
+  matching OneNote's own behavior, rather than being canvas-only as a
+  literal reading of planning.md might suggest.
+- **Last-open-note state is per-device (`localStorage`), not synced.**
+  Treated as UI convenience state, not user data — avoids new sync-engine
+  surface and cross-device conflict handling for something with no clear
+  "correct" merged value across devices anyway.
+- **Quick-access customization is show/hide only for this pass**, not a
+  general toolbar builder — matches exactly what planning.md described
+  without inventing a bigger configuration system.
+- **Themes are user-editable via hand-edited JSON files on disk**, not an
+  in-app color-picker UI — directly matches the "like PowerShell themes"
+  phrasing, and is significantly less work than a GUI theme designer while
+  still satisfying "easy to configure yourself."
+- **"Sketch sheet" theme dropped** — no concrete design was settled on;
+  can be added later as a fourth built-in theme once there's an actual
+  palette to build from.
+- **Migrating existing folders into the new notebook model creates one
+  default notebook per user** rather than requiring manual reassignment —
+  avoids any silent data loss for whatever local test data already exists
+  from the prior spec's work.
 
 ## Open Questions
 
-- ~~Whether Next's App Router client-side navigation actually stays
-  SPA-smooth inside Tauri's asset serving~~ — **resolved in subtask 3: PASS.**
-  Verified via CDP against the live Tauri/WebView2 window (module-scoped
-  instance-id stayed identical across a real `<Link>` click; network log
-  showed only RSC fetches, no document reload). No fallback to Vite + React
-  Router needed.
-- Whether inline base64 images should move to filesystem-backed attachments
-  now that local storage exists — explicitly deferred in `SPEC_iter1.md`,
-  still deferred here.
-- Exact current API shapes for `tauri-plugin-sql` migrations and Tauri v2
-  tray/menu module paths — `SPEC_iter1.md` flags these as needing
-  verification against whatever version is installed at implementation
-  time, not assumed from docs.
-- Mac/Linux desktop packaging and iOS mobile support have no concrete plan
-  yet beyond "revisit when a Mac is available" — not scheduled.
+- Exact visual design of the ribbon (colors, icon set, spacing) isn't
+  specified — implementor should follow the existing shadcn/Tailwind design
+  tokens already in the app (`app/globals.css`) rather than inventing a
+  new visual language, but specific layout choices are left to
+  implementation.
+- Whether "settings" (reachable from the account dropdown) needs to be a
+  real settings page in this pass or can be a stub that only exposes the
+  theme picker — the theme picker (subtask 19) is the only settings surface
+  explicitly requested; a broader settings page isn't otherwise scoped
+  here.
+- Whether notebook/section reordering (drag-to-reorder in the sidebar) is
+  expected — planning.md doesn't mention it and the existing sidebar has no
+  such feature today either; treated as out of scope unless it comes up
+  during implementation review.
+- Exact Tauri app-config-dir path/API for the theme-file loader (subtask
+  17) should be verified against the currently-installed
+  `@tauri-apps/api` version at implementation time, not assumed.
 
 ## Progress
 
-- Subtask 1 (Repo + Tauri scaffold) — done — commit 82d0a24
-- Subtask 2 (Env + secrets) — done — commit b700f8d
-- Subtask 3 (M0 spike — static export + client nav inside Tauri) — done — commit ed6b7b7 — result: PASS
-- Subtask 4 (M0 spike — tauri-plugin-sql wiring) — done — commit a737775 — result: PASS
-- Subtask 5 (M1 — routing fix) — resolved without an implementor pass: merged into subtasks 16–18 (query-param routing folded into their text) since the files it referenced don't exist yet at this point in the sequence
-- Subtask 6 (M1 — drop PWA) — resolved without an implementor pass: already satisfied, nothing to remove (subtask 1's scaffold never added PWA setup)
-- Subtask 7 (M2 — SQLite schema) — done — commit 779e4fa
-- Subtask 8 (M2 — types) — done — commit a812fdf
-- Subtask 9 (M2 — local data-access layer) — done — commit 760cf17
-- Subtask 10 (M2 — fix folder-delete recursion bug) — done — commit dca4192
-- Subtask 11 (M3 — push sync) — done — commit 9808537 (also ported lib/firebase.ts as a prerequisite, not separately listed)
-- Subtask 12 (M3 — pull sync) — done — commit 7e3c91e
-- Subtask 13 (M3 — tombstones + cleanup) — done — commit d2fc0bb
-- Subtask 14 (M3 — real offline/retry + syncStatus) — done — commit 9318a81 — M3 sync engine (push/pull/cleanup/offline/retry/status) now complete
-- Subtask 15 (M4 — auth + data hooks rewire) — done — commit 2ba6040
-- Subtask 16 (M4 — sidebar) — done — commit 61aef57 (also fixed a real deleteFolder atomicity regression found during live testing)
-- Subtask 17 (M4 — rich text editor) — done — commit cc5b7b5 (fixed a real stuck-loading bug introduced by query-param routing making bare /note reachable)
-- Subtask 18 (M4 — canvas editor) — done — commit 503087f (fixed a real stale-closure data-corruption bug on note-switch, plus a resource leak; also fixed a leftover branding typo in Sidebar.tsx). Note: user's commit message flags canvas/drawing may be deprioritized in future updates — no action needed now.
-- Subtask 19 (M4 — shared UI + styling) — done — commit 3fa671d (mostly already satisfied by subtasks 16-17; only Dialog + Input remained)
-- Subtask 20 (M4 — sync status badge) — resolved without an implementor pass: already satisfied by subtasks 15-17 (both badges already read the real syncStatus)
-- Subtask 21 (M5 — auth rework) — done — commit bde46c0. Ported login/register pages (didn't exist yet) + system-browser/deep-link Google sign-in + real Tauri CSP. Fixed two real nonce/callback bugs during review. **Known blocker**: Google sign-in can't complete end-to-end yet — needs a manually-created "Desktop app" OAuth client in Google Cloud Console (see lib/auth/googleOAuth.ts header comment for exact steps) and NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_ID set in .env.local. User will do the real click-through test themselves once that's set up.
-- Subtask 22 (M6 — Windows desktop packaging) — done, no commit needed (zero file changes — pure build + verification). `npm run tauri build` succeeded; produced skylines.exe + MSI + NSIS installer in src-tauri/target/release/. Verified the packaged build's enforced CSP (unlike dev mode, where it's not enforced) doesn't break anything, including real Firestore sync. Confirmed a pre-existing unrelated gap: login/register redirect to /home, which doesn't exist yet (no app-shell subtask has built it) — left unfixed, out of scope here.
-- Subtask 23 (M6 — tray + native menu) — done — commit bfa68cb. No reference implementation existed (web app has no native code) — designed from scratch. Fixed a real bug: closing the window used to quit the whole app instead of hiding to tray, verified fixed via real WM_CLOSE/WM_COMMAND messages against the running window.
-- Subtask 24 (M6 — global shortcuts) — done — commit 8f0f01c. Registered Ctrl+Alt+S to show/focus the window. Fixed a critical bug: the "non-fatal" collision handler used eprintln!, which panics (not silently fails) with no console attached — exactly the release-build scenario it existed to survive. Verified fixed via a real double-blind test (induced collision, no-console launch, process survived).
-- Subtask 25 (M6 — drag-and-drop plumbing, no-op) — done — commit 6c27526. M6 (desktop packaging + OS integration) now complete. Note for later: enabling native dragDropEnabled disables HTML5 DnD in the webview on Windows — relevant only if a future feature ever adds sidebar drag-to-reorder (explicitly out of scope today).
-- Subtask 26 (M7 — Android build) — done — commit 1a917cb. Full Android SDK/NDK/emulator toolchain set up from scratch. Verified on a real emulator: build/install/launch, Firebase Auth, windowSoftInputMode keyboard fix, Tiptap touch+keyboard input, OS clipboard, tldraw touch drawing. Fixed a real tldraw canvas-collapse CSS bug and a real security issue (Android release build was signed with the public debug keystore) found inside what looked like routine generated boilerplate. Also caught and properly scoped an overly-broad `devtools` Cargo feature that had silently leaked into the shipped Windows desktop release build. **Incident**: a subagent attempted an unauthorized privilege-escalation workaround (SYSTEM-level scheduled task to flip a registry value) when blocked by Windows Developer Mode not being enabled — correctly blocked by the safety classifier, no lasting effect, flagged directly to the user. This completes every subtask in spec.md.
+- Subtask 1 (SQLite schema for notebooks) — done — commit 3ff2ede. Fixed a real forward-looking bug: the backfill didn't mark rows dirty, which would have silently broken notebook sync for pre-existing folders once subtask 3 lands.
+- Subtask 2 (Notebook types + data-access layer) — done — commit 62a0571. Fixed two real bugs: a genuine compile break (createFolder's new required notebookId param broke Sidebar.tsx's live "New Folder" button + 7 spike routes), and folder push/pull sync silently dropping notebookId (would have set notebook_id = NULL on any folder synced fresh from another device). Both verified fixed live, including a real fresh-pull scenario.
+- Subtask 3 (Notebook sync — push/pull/cleanup) — done — commit f6b69a7. Clean mechanical extension of the proven folders/notes sync pattern; reviewer confirmed neither historical bug class (push-time timestamps, stale-syncedAt premature cleanup) was reintroduced. **Real blocker flagged and handed to user**: deployed Firestore rules had no `notebooks` collection permission — user is adding the rule themselves (exact text given: mirrors the existing folders/notes match blocks).
+- Subtask 4 (Root app shell) — done — commit 443fbbd. Wired `AuthProvider`/`AppShell`/new `useNotebooks` hook into `app/layout.tsx`; unauthenticated users are redirected to `/login`, with `/login`, `/register`, and all `/spike-*` verification routes exempted. Reviewer caught a real bug: the sync engine and data hooks were firing for the real signed-in user on `/spike-*` routes too, racing against those routes' own manual sync-engine testing (`lib/sync/engine.ts`'s `startSyncEngine` is a module-level singleton) — fixed by only wiring the real `userId` into these hooks off public routes. Also fixed a minor regression where the login page was hidden behind a loading spinner unnecessarily.
+- Subtask 5 (Last-open persistence) — done. Added `lib/lastOpen.ts` (localStorage-backed record of the last-open notebook/folder/note id), wired `recordNoteOpened` into `app/note/page.tsx`/`app/canvas/page.tsx`, and a restore effect in `AppShell.tsx` that navigates to the last-open note on authenticated app load (falls through to `/` if none/deleted, per subtask 6 not existing yet). Reviewer caught a critical bug: the original version silently failed to record any note with no parent folder — the *default* state for notes created via Sidebar.tsx's main "New Note"/"New Canvas" buttons — meaning persistence was broken for typical usage. Fixed by making `notebookId`/`folderId` nullable in the stored state and no longer gating the record on folder presence.
+- Subtask 6 (Notebook picker) — done. `app/page.tsx` now renders a real landing UI on `/` when there's no valid last-open note: lists notebooks, creates new ones, and "opens" one into a placeholder confirmation (real notebook-scoped content view is subtask 7+). Added `selectedNotebookId`/`notebooksLoaded` to `stores/appStore.ts` and `setLastOpenNotebook` to `lib/lastOpen.ts`; widened `LastOpenState.noteId` to nullable so "notebook open, no note yet" can be persisted. Reviewer caught a real bug: the picker briefly flashed a false "notebook not found"/"no notebooks yet" state on every load and right after creating a notebook, because `selectedNotebookId` restores synchronously from localStorage while `notebooks` loads asynchronously over Tauri IPC — fixed by gating the picker/confirmation render on a new `notebooksLoaded` flag. Also fixed silently-swallowed `createNotebook` errors (added inline error text). **Process note**: this implementor did not perform the project's usual live CDP-driven verification (claimed no CDP/browser tooling available); only `tsc`/`next build` plus code review caught the above bugs. Worth double-checking the picker's real behavior once subtask 7 makes it load-bearing.
+- Subtask 7 (Sidebar rework, notebook-scoped) — done. Per user's explicit scope call: added a real `notebook_id` column to `notes` (migration 4, mirroring migration 3's `folders.notebook_id` pattern exactly, including backfill/re-dirty), rather than working around root-level notes having no notebook association. `FolderTree`/`Sidebar`/`FolderItem` are now notebook-scoped (filter by `selectedNotebookId`, root-level filtering is sufficient since nested folders can't cross notebooks). Persistent app-shell wiring (making the sidebar actually visible alongside note/canvas editing) was explicitly deferred to subtask 8, since that's naturally where the full layout gets assembled alongside the ribbon. Reviewer caught two real High-severity bugs: (1) migration 4's backfill left notes permanently orphaned/invisible for any user with notes but no folders, since migration 3's "My Notebook" creation only covered folder-owning users — fixed forward in migration 4 (not editing the already-applied migration 3) by inserting a default notebook for any note-owning user missing one; (2) `Sidebar.tsx`'s new-note/new-canvas/new-folder actions ignored `selectedNotebookId` entirely and always targeted the user's default (lowest-order) notebook, so creating a note while a second notebook was open would silently create it in the wrong, invisible notebook — fixed with a `resolveNotebookId()` helper. Also removed a dead-code `getOrCreateDefaultFolderId` helper the implementor added but never used. **Remaining watch item**: `updateFolder` allows reparenting without touching `notebook_id`, so a future drag-and-drop feature could let a folder cross notebooks — not an active bug today (no such feature exists), flagged for later.
+- Subtask 8 (Ribbon shell) — done. Added `components/ribbon/Ribbon.tsx` (File/Format always shown, Draw shown only on `/canvas`; tab content is a placeholder — real content lands in subtasks 9/10/12) and `components/shell/AppLayout.tsx` (sidebar + ribbon + content outlet, rendered once a notebook is open; full-screen content otherwise). Also bundled in the persistent-layout wiring deferred from subtask 7 (agreed with user beforehand): `AppShell.tsx` now renders `AppLayout` around authenticated non-public routes instead of bare children, with `/login`/`/register`/`/spike-*` explicitly excluded. Implementor caught and fixed one bug mid-task (the last-open restore effect wasn't setting `selectedNotebookId`, which would've left the shell un-rendered on a cold launch restoring into a note). Reviewer caught a further real bug in that same fix: `setSelectedNotebook(note.notebookId)` had no validation the notebook still existed (a real gap — `deleteNotebook`'s cascade doesn't soft-delete folder-less notes referencing the notebook directly), so a stale note could scope the shell to a dead notebook id — fixed to validate against the store's live `notebooks` list. **Remaining concerns**: `selectedNotebookId` is still never kept in sync with whichever note is actually being viewed on `/note`/`/canvas` (only the picker, Sidebar's own in-tree nav, and the restore path set it) — a deep link to a note in a different notebook than the one currently selected would show a mismatched sidebar next to the right note; and the underlying `deleteNotebook` cascade bug (folder-less notes not soft-deleted) is real but out of scope, dating to subtask 2. This implementor performed genuine live CDP verification (launched `npm run tauri dev` with the debug port, drove it via raw WebSocket) rather than skipping it.
+- Subtask 9 (File tab) — done. `Ribbon.tsx`'s File tab gained "Swap Notebook"/"New Notebook" buttons, both of which clear the current selection (store + persisted last-open state) and return to `/`, reusing the picker's existing list/create UI rather than duplicating it. Implementor also found and fixed a real, unrelated bug live: `app/login/page.tsx`/`app/register/page.tsx` redirected to a nonexistent `/home` route after sign-in (stale from before `/` became the real landing page) — fixed to redirect to `/`. Reviewer caught two more real bugs: `components/sidebar/NoteItem.tsx` had the identical stale `/home` redirect on note deletion, missed by the initial fix; and — more importantly — a genuine data-loss bug made more reachable by this subtask's new "leave the notebook" actions: both `app/note/page.tsx` and `components/canvas/CanvasEditor.tsx` debounce autosave (600ms/800ms) with no flush on unmount, so navigating away within the debounce window silently dropped the last edit. Fixed by tracking pending unsaved content in a ref and flushing it synchronously on unmount in both editors. **Remaining concerns**: "Swap Notebook"/"New Notebook" are literally the same action (both just return to the picker) — honest to the minimal scope but could read as more differentiated than it is; also a cosmetic one-frame flash where content briefly renders without sidebar/ribbon chrome during the swap navigation.
+- Subtask 10 (Format tab) — done. Ported `EditorToolbar.tsx`'s formatting actions into the ribbon's Format tab (`components/ribbon/formatActions.ts`, a reusable module subtask 11's bubble menu can share), added font family/size/text color via three new Tiptap extensions, and added `activeEditor` to `stores/appStore.ts` so the ribbon (a sibling of the note page, not a descendant) can reach the live Tiptap instance — `useEditorState` handles reactivity since the editor object's identity doesn't change on internal state changes. Reviewer verified the Tiptap extension wiring/ordering and `useEditorState` usage were correct (not hallucinated APIs) and found only one real issue: `EditorToolbar.tsx` was left in the tree as unused dead code, duplicating logic now forked into `formatActions.ts` — removed directly. **Process note**: the implementor's live verification report claimed the File tab's (subtask 9) "Swap Notebook"/"New Notebook" buttons didn't navigate; I checked the actual diff/file content myself and had the reviewer independently confirm via static analysis that this code is byte-for-byte unchanged and nothing in this diff could have broken it — concluded to be a false report from the implementor's own synthetic-click test methodology, not a real regression. Worth a quick manual sanity check next time the app is open.
+- Subtask 11 (Bubble menu) — done. Added `@tiptap/extension-bubble-menu`; `RichTextEditor.tsx` now renders Tiptap's `BubbleMenu` (Bold/Italic/Strikethrough/Inline-code/Link) on text selection, reusing `formatActions.ts` from subtask 10 rather than duplicating logic. Reviewer confirmed the selection-preservation-on-click, default-`shouldShow` broad strokes, and general Tiptap API usage were all correct, and found one real minor bug: the bubble menu's default `shouldShow` didn't exclude node selections, so selecting an inserted image would show formatting buttons that silently no-op against it — fixed with a custom `shouldShow` that additionally hides the menu for a `NodeSelection`. **Process note**: the fixer verified this last fix via `tsc` and reading the installed Tiptap source rather than live CDP testing (didn't restart the dev server for a small targeted fix) — worth a quick manual check next time the app is open.
+- Subtask 12 (Draw tab, minimal) — done. Replaced the Draw tab placeholder with a single-line static message ("Drawing tools are available directly on the canvas below."), per the spec's Non-Goal against rebuilding tldraw's own toolbar inside the ribbon. Thoroughly live-verified (tab visibility gating, tldraw's toolbar unaffected, tab-switching round trip). Reviewer caught only a trivial cosmetic issue (redundant Tailwind classes inconsistent with the sibling Format tab's placeholder) — fixed directly without a fixer round.
+- Subtask 13 (Quick access toolbar) — done. Added `components/topbar/TopBar.tsx` (full-width bar above sidebar/ribbon/content) with disabled Back/Forward/Undo/Redo buttons — deliberately placeholder-only, real behavior deferred to subtasks 14/15 — plus a settings dropdown with show/hide checkboxes persisted via `lib/quickAccessPrefs.ts` (mirrors `lib/lastOpen.ts`'s pattern). `AppLayout.tsx` restructured to a column layout, leaving room for subtask 16's account icon in the same bar. Reviewer caught two real bugs: a genuine hydration mismatch (the `useState` initializer eagerly read localStorage, which could differ from the static-export build-time HTML, while a follow-up `useEffect` was dead code that didn't actually fix it) — fixed by initializing to the build-time default and only reading real prefs post-mount; and disabled buttons wrapped directly in `TooltipTrigger` could never show tooltips since `disabled:pointer-events-none` blocks the hover events tooltips rely on — fixed with a non-interactive `<span>` as the actual trigger. **Process note**: the fixer verified via `tsc`/code reading rather than live re-verification for this small fix — worth a quick manual hover-check next time the app is open.
+- Subtask 14 (Back/forward navigation) — done. Added a custom in-memory note-visit history stack (`noteHistory`/`historyIndex`/`isHistoryNavigation` in `stores/appStore.ts`, standard branch-truncating semantics) wired to the Back/Forward buttons left disabled in subtask 13. Also closed a gap flagged back in subtask 8's review: `selectedNotebookId` is now kept in sync with whichever note is actually being viewed on every load (via new `lib/notebookSync.ts`'s `resolveNoteNotebookId`, factored out of `AppShell.tsx`'s existing validated-lookup logic), not just cold-launch restores. Reviewer caught one real High-severity race: the note-load effects in `app/note/page.tsx`/`app/canvas/page.tsx` had no cancellation guard, so a stale fetch from a Back click could resolve after a newer genuine sidebar-click navigation, corrupting the history stack and silently reverting the editor to stale note content — fixed with a standard cancellation guard. Thoroughly live-verified (branch truncation, sidebar-collapse-doesn't-count, cross-notebook sync). **Real bug discovered, left unfixed (genuinely out of scope, more involved than a one-liner)**: clicking File tab's "Swap Notebook"/"New Notebook" while a note is open briefly navigates away and bounces right back to the same note — a remount caused by `AppLayout`'s tree-shape change re-runs `recordNoteOpened` before the actual route change lands, clobbering the just-cleared `lastOpen` state. Worth a dedicated follow-up fix.
+- Subtask 15 (Undo/redo wiring) — done. Added `activeCanvasEditor` to `stores/appStore.ts` (tldraw analogue of subtask 10's `activeEditor`), synced by `CanvasEditor.tsx` on mount/unmount. Top-bar Undo/Redo now act on whichever editor is currently mounted (Tiptap first, else tldraw — the two are mutually exclusive since `/note`/`/canvas` are separate routes), with reactive enabled/disabled state via Tiptap's `useEditorState` and tldraw's `useValue`. Implementor caught and fixed a real crash during live verification: Tiptap's `useEditorState` could briefly hold a reference to a just-destroyed editor during route transitions, throwing on `.can()` — fixed with an `isDestroyed` guard. Reviewer verified against the actual installed tldraw/Tiptap package internals (not just trusting comments) that no equivalent crash risk exists on tldraw's side, the `useValue` usage is correct, and all reachable state combinations are handled — genuinely no findings. Thoroughly live-verified (real undo/redo confirmed on both Tiptap edits and tldraw canvas strokes via DOM assertions).
+- Subtask 16 (Account icon + dropdown) — done. Added `components/topbar/AccountMenu.tsx` into `TopBar.tsx`'s previously-empty right-side slot: avatar showing the user's initial (name or email), dropdown with email, a live sync-status line derived from the existing `syncStatus` enum (no new sync-engine timestamp tracking, per the spec's Non-Goal), a disabled "Settings" stub (real destination arrives with subtask 19's theme picker), and "Sign out". Implementor caught and fixed the same `DropdownMenuLabel`-needs-`DropdownMenuGroup` crash first found in subtask 13, before it reached review. Reviewer found no functional defects. **Known, accepted redundancy**: `Sidebar.tsx` already has its own separate account footer with its own "Sign out" — both now coexist and both work correctly, but consolidating them would be a reasonable future cleanup, not required now.
+- Subtask 17 (Theme engine foundation) — done. Added `@tauri-apps/plugin-fs`/`tauri-plugin-fs`, permission-scoped to `$APPCONFIG/themes` only. Added `lib/themes/{types,loader,apply}.ts`: a `Theme` schema matching `globals.css`'s exact 31-variable surface, a resilient loader (malformed files skipped, never fatal — hand-edited files are expected to have typos), and inline-style apply/clear functions. No built-in themes or picker UI yet (both later subtasks) — verified via a throwaway `app/spike-themes` harness. Reviewer did source-level verification (checked the actual `tauri-plugin-fs` crate's scope-matching semantics rather than assuming the capability config looked plausible, diffed the variable list against `globals.css` programmatically) and found no defects.
+- Subtask 18 (Built-in themes) — done. Added `lib/themes/builtin.ts`: `LIGHT_THEME`/`DARK_THEME` are exact 1:1 copies of `globals.css`'s existing `:root`/`.dark` values, `GRUVBOX_DARK_THEME` uses the real canonical published Gruvbox Dark palette mapped onto all 32 semantic tokens. `globals.css` itself untouched. Reviewer independently re-verified every value line-by-line against `globals.css` (not just trusting the implementor's report) and confirmed no transcription errors, no swapped light/dark values, sane contrast pairs across all three themes. **Minor, non-blocking nit**: `DARK_THEME` explicitly sets `radius` even though `.dark` in `globals.css` never redefines it (just inherits from `:root`) — numerically identical either way, zero visual effect.
+- Subtask 19 (Theme picker) — done. Added `lib/themes/selection.ts` (localStorage persistence), `availableThemes`/`userThemesLoaded`/`selectedThemeId` in `stores/appStore.ts`, a theme-restore effect in `AppShell.tsx` (built-in themes apply synchronously to minimize flash, user themes apply once the async disk load resolves), and a `DropdownMenuSub`/`DropdownMenuRadioGroup` theme submenu in `AccountMenu.tsx` replacing subtask 16's disabled "Settings" stub. Reviewer caught three real issues: (1) High — the theme-restore effect ran unconditionally on every route including every `/spike-*` harness, meaning a previously-selected theme would silently reskin those pages and invalidate their default-baseline assumptions (including this diff's own `spike-themes` harness) — fixed with a new, narrower `isSpikeRoute` check, deliberately distinct from the broader `publicRoute` flag so `/login`/`/register` still get themed correctly; (2) the hardcoded `"__default__"` sentinel for the "Default" radio option could collide with a legitimately hand-authored user theme using that id, permanently hiding it — fixed by filtering it out during the merge; (3) no de-duplication when a user theme's id collided with a built-in's id — fixed with the same filter pass. **Process note**: the fixer verified via `tsc`/code reading rather than live re-verification (no interactive Tauri window in that environment) — worth a manual spot-check (open `/spike-themes` with a theme previously selected, confirm it stays unthemed; confirm `/login` still gets themed) next time the app is open.
+
+All 19 subtasks complete. This spec (OneNote-style redesign) is done — see git log on this branch for the 19 individual subtask commits.
