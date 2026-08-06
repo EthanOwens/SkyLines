@@ -22,6 +22,14 @@ import "@tldraw/tldraw/tldraw.css";
 import { updateNote } from "@/lib/db/notes";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
+import { RichTextShapeUtil } from "./RichTextShape";
+
+// spec.md subtask 1 ("RichTextShape") - registers the custom shape type via
+// tldraw's `shapeUtils` prop. Defined as a module-level constant (rather
+// than inline in the JSX below) so it's referentially stable across
+// re-renders - <Tldraw> re-creates its internal shape registry if this
+// array's identity changes.
+const shapeUtils = [RichTextShapeUtil];
 
 interface Props {
   note: Note;
@@ -88,7 +96,7 @@ export function CanvasEditor({ note }: Props) {
 
   return (
     <div className="relative flex-1 h-full w-full">
-      <Tldraw onMount={handleMount} />
+      <Tldraw shapeUtils={shapeUtils} onMount={handleMount} />
     </div>
   );
 }
