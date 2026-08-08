@@ -23,6 +23,7 @@ import { updateNote } from "@/lib/db/notes";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 import { RichTextShapeUtil } from "./RichTextShape";
+import { RichTextTool, installRichTextToolAutoReturn } from "./RichTextTool";
 
 // spec.md subtask 1 ("RichTextShape") - registers the custom shape type via
 // tldraw's `shapeUtils` prop. Defined as a module-level constant (rather
@@ -30,6 +31,13 @@ import { RichTextShapeUtil } from "./RichTextShape";
 // re-renders - <Tldraw> re-creates its internal shape registry if this
 // array's identity changes.
 const shapeUtils = [RichTextShapeUtil];
+
+// spec.md subtask 2 ("Click-to-create tool") - registers the custom
+// click-to-create tool via tldraw's `tools` prop (see Tldraw.tsx's
+// `mergeArraysAndReplaceDefaults('id', tools, allDefaultTools)`, which adds
+// this alongside - not instead of - tldraw's own select/draw/etc. tools).
+// Same referential-stability reasoning as `shapeUtils` above.
+const tools = [RichTextTool];
 
 interface Props {
   note: Note;
@@ -54,6 +62,26 @@ export function CanvasEditor({ note }: Props) {
       // returned below (tldraw's `onMount` contract) so TopBar correctly
       // falls back to a neutral/disabled state once this canvas unmounts.
       setActiveCanvasEditor(editor);
+
+      // spec.md subtask 2 ("Click-to-create tool") - makes the rich-text
+      // tool the default/primary interaction on mount (design guidance:
+      // "set this new tool as the DEFAULT active tool when a canvas note
+      // first mounts"), instead of leaving tldraw's own `select` as the
+      // default. tldraw's `<TldrawEditor>` hardcodes `initialState="select"`
+      // internally (see Tldraw.tsx) with no prop to override it, so this is
+      // switched right after mount instead - the same place/pattern
+      // `editor.loadSnapshot` below already uses for other one-time
+      // post-mount setup. Users can still switch to `select`/`draw`/etc. via
+      // the toolbar (or `editor.setCurrentTool(...)`) exactly like any other
+      // tldraw tool - this only changes what's active by default.
+      editor.setCurrentTool("rich-text");
+
+      // See RichTextTool.tsx's header comment for why this is needed
+      // (tldraw's own framework force-switches `currentTool` to `select`
+      // any time a shape enters edit mode - this keeps the rich-text tool
+      // "sticky" across repeated click-to-create actions the way spec.md's
+      // "just works, no reselecting a tool" requirement needs).
+      const uninstallRichTextToolAutoReturn = installRichTextToolAutoReturn(editor);
 
       // Load persisted snapshot
       if (note.canvasData) {
@@ -82,6 +110,7 @@ export function CanvasEditor({ note }: Props) {
         setActiveCanvasEditor(null);
         if (saveTimer.current) clearTimeout(saveTimer.current);
         unlisten();
+        uninstallRichTextToolAutoReturn();
         // Flush any pending debounced save on unmount, so navigating away
         // within the 800ms debounce window doesn't silently drop the edit.
         if (pendingSaveRef.current) {
@@ -96,7 +125,7 @@ export function CanvasEditor({ note }: Props) {
 
   return (
     <div className="relative flex-1 h-full w-full">
-      <Tldraw shapeUtils={shapeUtils} onMount={handleMount} />
+      <Tldraw shapeUtils={shapeUtils} tools={tools} onMount={handleMount} />
     </div>
   );
 }

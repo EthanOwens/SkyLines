@@ -51,6 +51,15 @@ import type { Note } from "@/types";
 const TEST_EMAIL = "skylines-richtext-shape-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
 
+// Debug-only escape hatch for CDP-driven verification (spec.md subtask 2) -
+// lets a driver script poll `editor.getCurrentToolId()` etc. via
+// Runtime.evaluate WITHOUT dispatching any real DOM click (which would
+// itself be a confound, since real clicks on/off the tldraw container are
+// exactly the kind of interaction this subtask's tool cares about).
+if (typeof window !== "undefined") {
+  (window as unknown as { __appStore: typeof useAppStore }).__appStore = useAppStore;
+}
+
 function SpikeRichTextShapeInner() {
   const { user, loading } = useAuthContext();
 
@@ -133,6 +142,52 @@ function SpikeRichTextShapeInner() {
     const editor = useAppStore.getState().activeCanvasEditor;
     if (!editor) return append("no active tldraw editor");
     append(`debug: editingShapeId=${String(editor.getEditingShapeId())} selectedShapeIds=${JSON.stringify(editor.getSelectedShapeIds())} currentToolId=${editor.getCurrentToolId()}`);
+  }
+
+  // spec.md subtask 2 ("Click-to-create tool") verification helper - lists
+  // every shape currently on the page (id/type/x/y/content), so CDP-driven
+  // real pointer-down clicks on the canvas can be verified end to end
+  // (shape created at the right point, correct count after N clicks)
+  // without needing a save/reload round trip.
+  function debugListShapes() {
+    const editor = useAppStore.getState().activeCanvasEditor;
+    if (!editor) return append("no active tldraw editor");
+    const shapes = editor.getCurrentPageShapes().map((s) => ({
+      id: s.id,
+      type: s.type,
+      x: Math.round(s.x),
+      y: Math.round(s.y),
+      content: (s as unknown as RichTextShape).props?.content ?? null,
+    }));
+    append(`debug: shapes=${JSON.stringify(shapes)}`);
+  }
+
+  function setToolSelect() {
+    const editor = useAppStore.getState().activeCanvasEditor;
+    if (!editor) return append("no active tldraw editor");
+    // Mirrors the REAL toolbar Select button's own onSelect handler (see
+    // node_modules/tldraw/src/lib/ui/hooks/useTools.tsx) - a raw
+    // `editor.setCurrentTool("select")` is a no-op when already inside the
+    // `select` tool (e.g. mid-edit, in `select.editing_shape`), since
+    // StateNode.transition() only exits/enters when the target id differs
+    // from the CURRENT top-level id. The real toolbar button special-cases
+    // this by forcing an exit+enter of the whole `select` branch first, so
+    // this debug button does the same for a realistic verification of
+    // "explicitly switching to Select while mid-edit".
+    if (editor.isIn("select")) {
+      const currentNode = editor.root.getCurrent()!;
+      currentNode.exit({}, currentNode.id);
+      currentNode.enter({}, currentNode.id);
+    }
+    editor.setCurrentTool("select");
+    append(`set tool -> select, currentToolId=${editor.getCurrentToolId()}`);
+  }
+
+  function setToolRichText() {
+    const editor = useAppStore.getState().activeCanvasEditor;
+    if (!editor) return append("no active tldraw editor");
+    editor.setCurrentTool("rich-text");
+    append(`set tool -> rich-text, currentToolId=${editor.getCurrentToolId()}`);
   }
 
   function createRichTextShape() {
@@ -249,6 +304,15 @@ function SpikeRichTextShapeInner() {
         </button>
         <button onClick={debugEditingShape} className="rounded bg-gray-600 px-4 py-2 text-white">
           debug: editingShapeId
+        </button>
+        <button onClick={debugListShapes} className="rounded bg-gray-700 px-4 py-2 text-white">
+          debug: list shapes
+        </button>
+        <button onClick={setToolSelect} className="rounded bg-slate-600 px-4 py-2 text-white">
+          debug: set tool select
+        </button>
+        <button onClick={setToolRichText} className="rounded bg-slate-700 px-4 py-2 text-white">
+          debug: set tool rich-text
         </button>
         <button onClick={typeIntoLastShape} className="rounded bg-orange-800 px-4 py-2 text-white">
           6. Enter edit mode on last shape
