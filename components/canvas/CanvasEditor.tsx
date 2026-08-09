@@ -90,7 +90,7 @@ export function CanvasEditor({ note }: Props) {
         } catch {
           // Snapshot incompatible — start fresh
         }
-      } else if (note.content) {
+      } else if (note.content && editor.getCurrentPageShapes().length === 0) {
         // spec.md subtask 6 data-safety requirement: an old-format note
         // (`type: "note"`, real Tiptap `content` from the retired full-page
         // linear editor, no `canvasData` yet - subtask 8's full migration
@@ -106,6 +106,25 @@ export function CanvasEditor({ note }: Props) {
         // same note). This is intentionally the minimal, per-note version;
         // a startup/backfill pass over notes that are never individually
         // opened this way is still spec.md subtask 8's job.
+        //
+        // spec.md subtask 8 verification finding: `note.canvasData` alone
+        // is NOT a reliable idempotency guard against a second `onMount`
+        // firing for the SAME already-migrated editor/store instance within
+        // one component lifetime - `note` is a React prop captured in this
+        // callback's closure, so it stays stale (still reflecting
+        // `canvasData: null`) even after the migration below has already
+        // written a shape into this live editor and persisted it, until a
+        // fresh mount re-reads the note from the DB. This is exactly what
+        // React's dev-mode Strict Mode double-invocation of `onMount`
+        // exercises (mount -> cleanup -> mount again, reusing the same
+        // underlying editor/store) - confirmed live via CDP: without this
+        // second check, that double-invocation created two overlapping
+        // RichTextShapes from the same note content in a single session.
+        // Checking the live editor's own current shape count instead - not
+        // just the stale prop - makes the guard correct regardless of *why*
+        // `onMount` fires twice for the same store (Strict Mode today, but
+        // also any other real remount-with-shared-store scenario): a
+        // second invocation sees a non-empty page and skips.
         editor.createShape<RichTextShape>({
           type: "rich-text",
           x: 40,
