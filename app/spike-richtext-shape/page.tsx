@@ -44,6 +44,7 @@ import { useAppStore } from "@/stores/appStore";
 import { createNote, getNoteById } from "@/lib/db/notes";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { CanvasEditor } from "@/components/canvas/CanvasEditor";
+import { Ribbon } from "@/components/ribbon/Ribbon";
 import { createShapeId } from "@tldraw/tldraw";
 import type { RichTextShape } from "@/components/canvas/RichTextShape";
 import type { Note } from "@/types";
@@ -335,6 +336,15 @@ function SpikeRichTextShapeInner() {
           <li key={i}>{line}</li>
         ))}
       </ul>
+      {/* spec.md subtask 4 verification - the real Ribbon (with its Format
+          tab), not rendered by this route's normal AppLayout.tsx (this spike
+          bypasses AppLayout to hold a direct reference to the tldraw
+          `Editor`, see this file's header comment), added here so CDP-driven
+          verification can exercise the actual Format tab / bubble menu
+          wiring end to end against shapes on this page. */}
+      <div data-testid="spike-richtext-ribbon">
+        <Ribbon />
+      </div>
       <div className="relative h-[600px] w-full border border-border" data-testid="spike-richtext-canvas">
         {note ? <CanvasEditor key={note.id} note={note} /> : <div className="p-4">No note loaded.</div>}
       </div>

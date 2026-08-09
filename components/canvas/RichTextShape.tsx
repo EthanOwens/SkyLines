@@ -39,7 +39,7 @@
 // text-selection drags inside the editor from being reinterpreted as a
 // shape-drag gesture by tldraw's canvas-level pointer handling.
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   BaseBoxShapeUtil,
   HTMLContainer,
@@ -50,7 +50,9 @@ import {
   type RecordProps,
   type TLBaseShape,
 } from "@tldraw/tldraw";
-import { useEditor as useTiptapEditor, EditorContent } from "@tiptap/react";
+import { useEditor as useTiptapEditor, useEditorState, EditorContent } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
+import { isNodeSelection, isTextSelection } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
@@ -62,9 +64,21 @@ import { createLowlight, common } from "lowlight";
 import { TextStyle, FontSize } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
+import { useAppStore } from "@/stores/appStore";
+import { formatActions, selectFormatActionState } from "@/components/ribbon/formatActions";
+import { cn } from "@/lib/utils";
+import { Link as LinkIcon } from "lucide-react";
 import "@/components/editor/editor.css";
 
 const lowlight = createLowlight(common);
+
+// Same subset the full-page editor's bubble menu uses (see
+// components/editor/RichTextEditor.tsx's identical constant) - kept
+// duplicated rather than imported from there since RichTextEditor.tsx is a
+// route-specific component slated for retirement (spec.md subtask 6), not a
+// shared module.
+const BUBBLE_MENU_ACTION_IDS = ["bold", "italic", "strike", "code"];
+const bubbleMenuActions = formatActions.filter((a) => BUBBLE_MENU_ACTION_IDS.includes(a.id));
 
 export type RichTextShapeProps = {
   w: number;
@@ -123,6 +137,7 @@ export class RichTextShapeUtil extends BaseBoxShapeUtil<RichTextShape> {
 function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   const tldrawEditor = useTldrawEditor();
   const isEditing = useIsEditing(shape.id);
+  const setActiveEditor = useAppStore((s) => s.setActiveEditor);
 
   const tiptapEditor = useTiptapEditor(
     {
@@ -212,15 +227,22 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
       // tldraw's own container, so typed keystrokes never reach the
       // editor.
       tiptapEditor.commands.focus("end");
+      // spec.md subtask 4 ("Wire the Format tab / bubble menu to the
+      // focused shape's Tiptap instance"). Mirrors
+      // components/editor/RichTextEditor.tsx's identical `setActiveEditor`
+      // wiring, but keyed off this shape's own edit-focus rather than
+      // mount/unmount (see this file's header comment - shapes aren't
+      // mounted/unmounted the way page components are).
+      setActiveEditor(tiptapEditor);
       return;
     }
 
     // spec.md subtask 3 ("Empty-shape auto-delete on blur"). Only treat
-    // this as "blur" - and consider deleting - on a GENUINE true -> false
-    // transition of `isEditing` (driven by tldraw's own stable
-    // `editingShapeId`, via `useIsEditing`), i.e. this shape's edit session
-    // actually just ended, not a raw DOM blur event (which would be
-    // unreliable given this shape's own pointer-events/
+    // this as "blur" - and consider clearing `activeEditor`/deleting - on a
+    // GENUINE true -> false transition of `isEditing` (driven by tldraw's
+    // own stable `editingShapeId`, via `useIsEditing`), i.e. this shape's
+    // edit session actually just ended, not a raw DOM blur event (which
+    // would be unreliable given this shape's own pointer-events/
     // stopEventPropagation handling above; e.g. clicking inside the Tiptap
     // content to move the cursor, or the format tab/bubble menu (subtask 4)
     // stealing DOM focus, must NOT look like a real blur) - and NOT merely
@@ -229,6 +251,20 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     // this-session shape the moment it's rendered (e.g. right after being
     // loaded from a snapshot).
     if (!wasEditing) return;
+
+    // spec.md subtask 4. Clear `activeEditor` on this genuine blur - but
+    // only if the store's current `activeEditor` still actually IS this
+    // shape's own `tiptapEditor` instance. Without this guard, a race where
+    // shape A's blur-cleanup effect runs AFTER shape B has already called
+    // `setActiveEditor(tiptapEditor)` above (e.g. rapidly clicking from
+    // shape A straight into shape B, with no intervening deselect) would
+    // wrongly clobber B's now-active editor back to `null`. Read via
+    // `getState()` (not a subscribed value) since this is a one-off
+    // point-in-time check inside an effect, not something that should
+    // itself trigger a re-render.
+    if (useAppStore.getState().activeEditor === tiptapEditor) {
+      setActiveEditor(null);
+    }
 
     // `tiptapEditor.isEmpty` is Tiptap/ProseMirror's own doc-emptiness
     // check (true only for the doc's default empty-paragraph state) - it
@@ -239,7 +275,31 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     if (tiptapEditor.isEmpty) {
       tldrawEditor.deleteShapes([shape.id]);
     }
-  }, [isEditing, tiptapEditor, tldrawEditor, shape.id]);
+  }, [isEditing, tiptapEditor, tldrawEditor, shape.id, setActiveEditor]);
+
+  // Genuine unmount-cleanup path for `activeEditor`, kept SEPARATE from the
+  // `isEditing`-keyed effect above (that effect's cleanup semantics are tied
+  // to dependency changes, not true unmount, so it only clears
+  // `activeEditor` on an explicit true -> false transition). Mirrors
+  // components/editor/RichTextEditor.tsx's `useEffect(() => { ...; return ()
+  // => setActiveEditor(null); }, [editor, setActiveEditor])`, but guarded
+  // the same way as the blur-clear above: only clear if the store's current
+  // `activeEditor` still actually IS this shape's own `tiptapEditor`
+  // instance, so this never clobbers a different, more-recently-focused
+  // shape's claim. This runs whenever `tiptapEditor` changes OR this
+  // component genuinely unmounts (e.g. the user navigates away from the
+  // canvas note entirely while this shape is mid-edit), releasing the
+  // reference regardless of why - otherwise the store could keep pointing
+  // at a Tiptap `Editor` instance that's already been destroyed by
+  // `useEditor()`'s own unmount effect, which Ribbon.tsx/TopBar.tsx call
+  // methods on with no `isDestroyed` guard.
+  useEffect(() => {
+    return () => {
+      if (useAppStore.getState().activeEditor === tiptapEditor) {
+        setActiveEditor(null);
+      }
+    };
+  }, [tiptapEditor, setActiveEditor]);
 
   // Keep the Tiptap instance in sync with externally-changed content (e.g. a
   // fresh `loadSnapshot()` on note load) - mirrors
@@ -255,6 +315,29 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
       tiptapEditor.commands.setContent((shape.props.content as object) ?? "");
     }
   }, [shape.props.content, tiptapEditor]);
+
+  // spec.md subtask 4 ("Bubble menu"). Reactive state for the bubble menu's
+  // active/disabled button styling - mirrors
+  // components/editor/RichTextEditor.tsx's identical `bubbleMenuState`
+  // (see that file's header comment for why `useEditorState`, rather than
+  // this component's own render cycle, is required here: selection changes
+  // don't trigger Tiptap's `onUpdate`).
+  const bubbleMenuState = useEditorState({
+    editor: tiptapEditor,
+    selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
+  });
+
+  const setLink = useCallback(() => {
+    if (!tiptapEditor) return;
+    const prev = bubbleMenuState?.link ?? "https://";
+    const url = window.prompt("URL", prev);
+    if (url === null) return;
+    if (url === "") {
+      tiptapEditor.chain().focus().extendMarkRange("link").unsetLink().run();
+    } else {
+      tiptapEditor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+    }
+  }, [tiptapEditor, bubbleMenuState]);
 
   return (
     <HTMLContainer id={shape.id}>
@@ -274,6 +357,77 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
         onPointerDownCapture={isEditing ? stopEventPropagation : undefined}
         onTouchEndCapture={isEditing ? stopEventPropagation : undefined}
       >
+        {tiptapEditor && (
+          <BubbleMenu
+            editor={tiptapEditor}
+            // Portal to `document.body` rather than the default `appendTo`
+            // (the editor's own DOM parent - i.e. this shape's small,
+            // fixed-size `overflow: auto` div above) so the menu isn't
+            // clipped by that box's scroll/clip region near a shape's edges.
+            // Tiptap/Floating UI compute the menu's position from the
+            // selection's screen coordinates, independent of DOM parent, so
+            // this doesn't affect positioning - only where in the DOM tree
+            // the element lives.
+            appendTo={() => document.body}
+            shouldShow={({ editor: shouldShowEditor, view, state, from, to }) => {
+              // Replicates components/editor/RichTextEditor.tsx's identical
+              // `shouldShow` (see that file's header comment / reviewer
+              // finding on spec.md subtask 11) - hidden when the editor
+              // isn't focused, the selection is empty, it's an empty text
+              // block, or the selection is a NodeSelection (e.g. a selected
+              // inserted Image), none of which the bubble menu's mark-based
+              // actions apply to.
+              const { doc, selection } = state;
+              const { empty } = selection;
+              const isEmptyTextBlock = !doc.textBetween(from, to).length && isTextSelection(selection);
+              const hasEditorFocus = view.hasFocus();
+              if (!hasEditorFocus || empty || isEmptyTextBlock || !shouldShowEditor.isEditable) {
+                return false;
+              }
+              if (isNodeSelection(selection)) {
+                return false;
+              }
+              return true;
+            }}
+            // Smaller padding/gap than RichTextEditor.tsx's own bubble menu
+            // - a shape's bounding box is much smaller than a full page, so
+            // this keeps the popover compact enough to comfortably fit
+            // within/near a shape sized close to its 320x200 default.
+            className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-0.5 text-popover-foreground shadow-md"
+          >
+            {bubbleMenuState &&
+              bubbleMenuActions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  title={action.tip}
+                  disabled={action.isDisabled?.(bubbleMenuState)}
+                  onClick={() => action.run(tiptapEditor)}
+                  className={cn(
+                    "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-50",
+                    action.isActive(bubbleMenuState)
+                      ? "bg-secondary text-secondary-foreground"
+                      : "hover:bg-accent hover:text-accent-foreground",
+                  )}
+                >
+                  <action.icon className="h-3 w-3" />
+                </button>
+              ))}
+            <button
+              type="button"
+              title="Insert link"
+              onClick={setLink}
+              className={cn(
+                "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                bubbleMenuState?.link !== null && bubbleMenuState?.link !== undefined
+                  ? "bg-secondary text-secondary-foreground"
+                  : "hover:bg-accent hover:text-accent-foreground",
+              )}
+            >
+              <LinkIcon className="h-3 w-3" />
+            </button>
+          </BubbleMenu>
+        )}
         <EditorContent editor={tiptapEditor} className="h-full px-2 py-1" />
       </div>
     </HTMLContainer>
