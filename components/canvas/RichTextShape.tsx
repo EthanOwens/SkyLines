@@ -39,7 +39,7 @@
 // text-selection drags inside the editor from being reinterpreted as a
 // shape-drag gesture by tldraw's canvas-level pointer handling.
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   BaseBoxShapeUtil,
   HTMLContainer,
@@ -165,25 +165,81 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     [shape.id],
   );
 
+  // Tracks the previous `isEditing` value seen by the effect below, purely
+  // to distinguish a GENUINE true -> false transition (a real edit session
+  // just ended) from this component simply mounting/rendering with
+  // `isEditing` already false (e.g. an existing empty shape loaded from a
+  // snapshot that's never been edited this session) - the latter must never
+  // be treated as "blur" and trigger the auto-delete effect below. Starts
+  // at `isEditing`'s own initial value so the very first render is never
+  // mistaken for a transition.
+  //
+  // This bookkeeping runs unconditionally at the top of the effect below,
+  // BEFORE the `!tiptapEditor` guard - not after it. `useEditor()` here
+  // doesn't pass `immediatelyRender`, so per Tiptap's own Next.js
+  // auto-detection the Tiptap instance is created inside Tiptap's own
+  // internal effect rather than synchronously at render, meaning
+  // `tiptapEditor` can still be `null` on this component's very first
+  // render(s). If the ref update were gated behind the `!tiptapEditor`
+  // check, any `isEditing` transition that occurred while `tiptapEditor`
+  // was still null would leave the ref stale, and a genuine edit -> blur
+  // transition could go undetected once the Tiptap instance became ready.
+  // Keeping the ref in sync with `isEditing` on every render (regardless of
+  // Tiptap's readiness) avoids that gap; only the actual Tiptap-dependent
+  // operations (setEditable/focus/isEmpty/deleteShapes) stay gated on
+  // `tiptapEditor` being non-null.
+  const wasEditingRef = useRef(isEditing);
+
   // Toggle the underlying ProseMirror editable state as edit-mode is
   // entered/exited (tldraw's own default select-tool double-click-to-edit
   // behavior, driven by this shape's `canEdit()`), without recreating the
   // Tiptap instance itself.
   useEffect(() => {
+    const wasEditing = wasEditingRef.current;
+    wasEditingRef.current = isEditing;
+
     if (!tiptapEditor) return;
     tiptapEditor.setEditable(isEditing);
-    // tldraw's own default select-tool double-click-to-edit only flips
-    // `getEditingShapeId()` - it has no idea this shape hosts a real Tiptap
-    // instance, so it can't focus it for us (contrast with tldraw's own
-    // RichTextArea.tsx, which explicitly calls `.commands.focus()` when its
-    // own text editor mounts for editing - see this file's header comment).
-    // Without this, entering edit mode toggles `contenteditable` but leaves
-    // real keyboard focus on tldraw's own container, so typed keystrokes
-    // never reach the editor.
+
     if (isEditing) {
+      // tldraw's own default select-tool double-click-to-edit only flips
+      // `getEditingShapeId()` - it has no idea this shape hosts a real
+      // Tiptap instance, so it can't focus it for us (contrast with
+      // tldraw's own RichTextArea.tsx, which explicitly calls
+      // `.commands.focus()` when its own text editor mounts for editing -
+      // see this file's header comment). Without this, entering edit mode
+      // toggles `contenteditable` but leaves real keyboard focus on
+      // tldraw's own container, so typed keystrokes never reach the
+      // editor.
       tiptapEditor.commands.focus("end");
+      return;
     }
-  }, [isEditing, tiptapEditor]);
+
+    // spec.md subtask 3 ("Empty-shape auto-delete on blur"). Only treat
+    // this as "blur" - and consider deleting - on a GENUINE true -> false
+    // transition of `isEditing` (driven by tldraw's own stable
+    // `editingShapeId`, via `useIsEditing`), i.e. this shape's edit session
+    // actually just ended, not a raw DOM blur event (which would be
+    // unreliable given this shape's own pointer-events/
+    // stopEventPropagation handling above; e.g. clicking inside the Tiptap
+    // content to move the cursor, or the format tab/bubble menu (subtask 4)
+    // stealing DOM focus, must NOT look like a real blur) - and NOT merely
+    // "this component rendered with isEditing already false", which would
+    // otherwise wrongly delete an existing, already-empty, never-edited-
+    // this-session shape the moment it's rendered (e.g. right after being
+    // loaded from a snapshot).
+    if (!wasEditing) return;
+
+    // `tiptapEditor.isEmpty` is Tiptap/ProseMirror's own doc-emptiness
+    // check (true only for the doc's default empty-paragraph state) - it
+    // correctly returns false for whitespace-only text (a text node with a
+    // space character is still a text node) and for any non-text content
+    // (e.g. an inserted image node), so neither case is wrongly deleted
+    // here.
+    if (tiptapEditor.isEmpty) {
+      tldrawEditor.deleteShapes([shape.id]);
+    }
+  }, [isEditing, tiptapEditor, tldrawEditor, shape.id]);
 
   // Keep the Tiptap instance in sync with externally-changed content (e.g. a
   // fresh `loadSnapshot()` on note load) - mirrors
