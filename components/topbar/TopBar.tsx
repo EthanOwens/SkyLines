@@ -30,12 +30,16 @@ import { AccountMenu } from "./AccountMenu";
 // planning.md's "on the very top should be some customizable quick access
 // options" description. Back/Forward (spec.md subtask 14) are wired to the
 // note-visit history stack in stores/appStore.ts. Undo/Redo (spec.md
-// subtask 15, "Undo/redo wiring") act on whichever editor is currently
-// mounted - Tiptap's `activeEditor` if a note is open, else tldraw's
-// `activeCanvasEditor` if a canvas is open (the two are mutually exclusive,
-// since /note and /canvas are separate routes) - rather than being two
-// competing buttons. The settings popover's show/hide toggling and its
-// localStorage persistence (lib/quickAccessPrefs.ts) is fully real/
+// subtask 15, updated by subtask 7 of the merged note/canvas spec) act on
+// whichever "layer" actually has focus, not on route: `activeCanvasEditor`
+// (tldraw) is set whenever any canvas note is open at all, while
+// `activeEditor` (Tiptap) is set only while a specific text-box shape has
+// genuine editing focus within that canvas - so both CAN be non-null at
+// once. Undo/Redo prioritize `activeEditor` (undo the focused shape's text
+// edit) when it's set, falling back to `activeCanvasEditor` (undo the last
+// tldraw-level action - shape move/ink stroke/shape creation) otherwise -
+// rather than being two competing buttons. The settings popover's show/hide
+// toggling and its localStorage persistence (lib/quickAccessPrefs.ts) is fully real/
 // functional.
 //
 // The right side of the `justify-between` split renders AccountMenu.tsx
@@ -143,10 +147,12 @@ export function TopBar() {
     if (entry) navigateToEntry(entry);
   }
 
-  // Acts on "whichever editor is currently focused" (spec.md subtask 15) -
-  // since /note and /canvas are mutually exclusive routes, this reduces to
-  // checking `activeEditor` (Tiptap) first, then `activeCanvasEditor`
-  // (tldraw). Reuses formatActions.ts's exact Tiptap undo/redo command.
+  // Acts on "whichever editor is currently focused" (spec.md subtask 15,
+  // updated by subtask 7): checks `activeEditor` (Tiptap - only set while a
+  // specific shape has real editing focus) first, falling back to
+  // `activeCanvasEditor` (tldraw - set whenever any canvas note is open) so
+  // undo/redo affects the last tldraw-level action once no shape is
+  // focused. Reuses formatActions.ts's exact Tiptap undo/redo command.
   function handleUndo() {
     if (activeEditor) {
       activeEditor.chain().focus().undo().run();

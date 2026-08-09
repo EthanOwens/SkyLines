@@ -68,7 +68,7 @@ function CanvasPageInner() {
           if (useAppStore.getState().isHistoryNavigation) {
             useAppStore.getState().setIsHistoryNavigation(false);
           } else {
-            visitNote({ noteId: n.id, type: n.type });
+            visitNote({ noteId: n.id });
           }
         }
       })
