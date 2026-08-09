@@ -130,8 +130,7 @@ export function TopBar() {
   // goBack()/goForward() already moved `historyIndex` to the right place.
   function navigateToEntry(entry: NoteHistoryEntry) {
     setIsHistoryNavigation(true);
-    const dest = entry.type === "canvas" ? "/canvas" : "/note";
-    router.push(`${dest}?id=${entry.noteId}`);
+    router.push(`/canvas?id=${entry.noteId}`);
   }
 
   function handleBack() {

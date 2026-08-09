@@ -35,7 +35,15 @@ export function NoteItem({ note, depth }: Props) {
   const [title, setTitle] = useState(note.title || "Untitled");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const href = note.type === "canvas" ? `/canvas?id=${note.id}` : `/note?id=${note.id}`;
+  // spec.md subtask 6 ("Merge note creation UI"): every note - old
+  // `type: "note"` rows included - now opens through the merged free-form-
+  // canvas editor at /canvas?id=... . An old-format note (real Tiptap
+  // `content`, no `canvasData` yet) is safely, minimally, idempotently
+  // migrated to a single RichTextShape inline the moment it's opened there
+  // (see components/canvas/CanvasEditor.tsx), so this never renders as a
+  // blank canvas - see this repo's spec.md subtask 6/8 notes for the full
+  // data-safety reasoning.
+  const href = `/canvas?id=${note.id}`;
   const isActive = pathname === href;
   const paddingLeft = depth * 12 + 20;
 

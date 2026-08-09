@@ -22,7 +22,7 @@ import "@tldraw/tldraw/tldraw.css";
 import { updateNote } from "@/lib/db/notes";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
-import { RichTextShapeUtil } from "./RichTextShape";
+import { RichTextShapeUtil, type RichTextShape } from "./RichTextShape";
 import { RichTextTool, installRichTextToolAutoReturn } from "./RichTextTool";
 
 // spec.md subtask 1 ("RichTextShape") - registers the custom shape type via
@@ -90,6 +90,30 @@ export function CanvasEditor({ note }: Props) {
         } catch {
           // Snapshot incompatible — start fresh
         }
+      } else if (note.content) {
+        // spec.md subtask 6 data-safety requirement: an old-format note
+        // (`type: "note"`, real Tiptap `content` from the retired full-page
+        // linear editor, no `canvasData` yet - subtask 8's full migration
+        // hasn't run) must never render as an apparently-blank canvas just
+        // because `canvasData` happens to be null. This performs a minimal,
+        // safe, idempotent inline migration the moment such a note is
+        // opened here: wrap the existing `content` into a single
+        // RichTextShape at a default top-left position, then persist that
+        // as this note's `canvasData` via the exact same save path below -
+        // so the old content becomes visible immediately, and every
+        // subsequent open of this note takes the `note.canvasData` branch
+        // above instead (idempotent - this branch never runs twice for the
+        // same note). This is intentionally the minimal, per-note version;
+        // a startup/backfill pass over notes that are never individually
+        // opened this way is still spec.md subtask 8's job.
+        editor.createShape<RichTextShape>({
+          type: "rich-text",
+          x: 40,
+          y: 40,
+          props: { w: 480, h: 320, content: note.content as object },
+        });
+        const snapshot = editor.getSnapshot();
+        void updateNote(note.id, { canvasData: snapshot as unknown as object });
       }
 
       // Listen for changes and auto-save
@@ -120,7 +144,7 @@ export function CanvasEditor({ note }: Props) {
         }
       };
     },
-    [note.id, note.canvasData, setActiveCanvasEditor],
+    [note.id, note.canvasData, note.content, setActiveCanvasEditor],
   );
 
   return (

@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Folder, FolderOpen, FilePlus, LayoutDashboard, FolderPlus, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, FilePlus, FolderPlus, Pencil, Trash2 } from "lucide-react";
 import { createNote } from "@/lib/db/notes";
 import { createFolder, updateFolder, deleteFolder } from "@/lib/db/folders";
 import {
@@ -71,13 +71,10 @@ export function FolderItem({ folder, allFolders, allNotes, userId, depth }: Prop
     // A note created inside this folder inherits the folder's notebook -
     // `folder.notebookId` is guaranteed non-null in practice, see the
     // notebookId comment on the `Folder` type in types/index.ts (same
-    // reasoning `addSubfolder` below already relies on).
-    const id = await createNote(userId, "note", folder.notebookId as string, folder.id);
-    setOpen(true);
-    router.push(`/note?id=${id}`);
-  }
-
-  async function addCanvas() {
+    // reasoning `addSubfolder` below already relies on). spec.md subtask 6
+    // ("Merge note creation UI"): every note is now the merged free-form-
+    // canvas editor, so this always creates `type: "canvas"` and routes to
+    // /canvas?id=... - there's no longer a separate "New canvas" action.
     const id = await createNote(userId, "canvas", folder.notebookId as string, folder.id);
     setOpen(true);
     router.push(`/canvas?id=${id}`);
@@ -147,9 +144,6 @@ export function FolderItem({ folder, allFolders, allNotes, userId, depth }: Prop
         <DropdownMenuContent align="start" className="w-44">
           <DropdownMenuItem onClick={addNote}>
             <FilePlus className="mr-2 h-4 w-4" /> New note
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={addCanvas}>
-            <LayoutDashboard className="mr-2 h-4 w-4" /> New canvas
           </DropdownMenuItem>
           <DropdownMenuItem onClick={addSubfolder}>
             <FolderPlus className="mr-2 h-4 w-4" /> New subfolder
