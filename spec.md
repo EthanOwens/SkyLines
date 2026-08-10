@@ -1,185 +1,294 @@
-# Skylines — Free-form canvas notes (merge note/canvas into one OneNote-style page)
+# Skylines — Canvas polish, sidebar management, theming, and Pages
 
 ## Goal
 
-Replace the current "note" (linear Tiptap document) vs "canvas" (tldraw
-drawing page) split with a single note type: every note is a free-form,
-pannable canvas. Clicking anywhere on empty canvas creates a text box at
-that point; typing into it uses the existing full Tiptap rich-text editor
-(all formatting built in the prior spec — bold/italic/headings/lists/font/
-color, the Format tab, the bubble menu). Ink/drawing tools remain available
-on the same canvas (tldraw's existing toolbar). An empty text box
-disappears when it loses focus. Middle-mouse-drag pans the canvas.
+A broad batch of UI/UX improvements to the free-form canvas notes shipped in
+the prior spec, plus two structural additions: full drag-and-drop + cut/
+copy/paste sidebar management, and a new **Page** sub-entity underneath
+Note — a single note ("notesheet") can now contain multiple independent
+canvas pages, each with its own content, switchable via a dedicated page
+sidebar (mirroring OneNote's actual Section→Page structure one level
+deeper than this app currently goes).
 
-This is architecturally a merge, not a bolt-on: it reconciles "keep full
-Tiptap formatting" with "ink and text coexist on one page" by building a
-**custom tldraw shape that hosts a real Tiptap editor instance inside it**,
-rather than either (a) rebuilding a bespoke canvas from scratch, or (b)
-downgrading to tldraw's own plain-text shapes. tldraw's shape system
-supports arbitrary React content per shape via a `ShapeUtil`, which is the
-mechanism this relies on.
+Also included: several theming changes (a new off-white theme, removing
+tldraw's built-in opacity slider, a "System" theme that follows the OS
+light/dark preference), and two bug fixes (canvas background not following
+the active theme; getting stuck in a tldraw drawing tool with no way back
+to the click-to-create text tool).
 
 ## Non-Goals
 
-- **No changes to the notebook/section/sidebar hierarchy, ribbon shell,
-  quick-access bar, account menu, or theme engine** built in the prior
-  spec. This spec only changes what happens *inside* a single note's
-  content area.
-- **No multi-user real-time collaboration** on a single canvas (cursors,
-  presence, etc.) — out of scope, unrelated to this request.
-- **No text-box resize/rotate handle redesign beyond whatever tldraw's
-  shape framework provides by default** — use the standard selection/resize
-  UI tldraw already gives every shape, don't build custom resize handles.
-- **No changes to the sync engine's core LWW/conflict-resolution logic**
-  (`lib/sync/push.ts`/`pull.ts`/`cleanup.ts`) — the merged note's content
-  keeps going through the exact same `canvasData` snapshot field and
-  debounced-save path `components/canvas/CanvasEditor.tsx` already uses;
-  this spec only changes what's *inside* that snapshot (shape types), not
-  how it's synced.
-- **Don't touch** notebook/folder CRUD, auth, `../note_taking_app`.
+- **Don't rebuild `RichTextShape`'s core Tiptap-hosting mechanism**
+  (subtask 1 of the prior spec — the custom tldraw `ShapeUtil`, its
+  pointer-event drag-vs-edit handling, empty-shape auto-delete, focus
+  wiring). This spec only changes its visual styling and click-to-cursor
+  behavior, not its underlying architecture.
+- **Don't touch the sync engine's core LWW/conflict-resolution logic**
+  (`lib/sync/push.ts`/`pull.ts`/`cleanup.ts`) — the new `pages` table gets
+  wired into it using the exact same established pattern already used for
+  notebooks/folders/notes, not new sync design.
+- **Don't change back/forward history to track at the Page level.** See Key
+  Decisions — switching pages within an open note stays a local,
+  note-scoped concern, not a global navigation event. `NoteHistoryEntry`
+  and the back/forward stack built in the prior spec are untouched.
+- **Don't remove or repurpose `notes.content`/`notes.canvas_data`
+  columns.** Once the Pages migration wraps a note's existing content into
+  its first page, these columns become vestigial (same as `notes.content`
+  became after the prior spec's note/canvas merge) but are left in place,
+  untouched, non-destructively — matching this project's established
+  migration precedent.
+- **Don't touch notebook-level CRUD, auth, the ribbon's File tab, quick-access
+  bar, undo/redo focus logic, or the theme engine's loader/apply
+  foundation** (`lib/themes/{types,loader,apply}.ts`) beyond adding one new
+  built-in theme and a "System" special case — the engine itself is already
+  built and working.
+- **Don't modify `../note_taking_app`.**
 
 ## Subtasks
 
-Sequenced by dependency — the custom shape and tool come first since
-everything else builds on them.
+Organized into milestones by dependency — sidebar drag-and-drop and the
+context-menu/clipboard mechanism (M4) are built generically enough that the
+new Page sidebar (M6) reuses them directly, so M4 comes well before M6.
 
-1. **`RichTextShape` — a custom tldraw shape hosting a Tiptap editor.**
-   Define a tldraw `ShapeUtil` subclass (geometry: a resizable rectangular
-   bounding box, like tldraw's own built-in text/note shapes) whose
-   `component()` renders a `RichTextEditor`-equivalent Tiptap instance
-   inside the shape's bounds, and whose `props` store that instance's
-   content (Tiptap JSON), persisted as part of the shape the same way any
-   other tldraw shape's props are — meaning it round-trips through
-   `editor.getSnapshot()`/`loadSnapshot()` and the existing `canvasData`
-   save path in `components/canvas/CanvasEditor.tsx` with no changes to
-   that persistence mechanism. Register the shape with tldraw's
-   `shapeUtils` config. No click-to-create interaction yet (subtask 2) —
-   this subtask is just "the shape type exists, can be manually
-   instantiated (e.g. via a test/spike route), renders/edits Tiptap
-   content correctly, and survives a save/reload round-trip."
-2. **Click-to-create tool.** A custom tldraw `StateNode`/tool (mirroring
-   how tldraw's own built-in text tool works) that, on pointer-down over
-   empty canvas, creates a `RichTextShape` at that point and immediately
-   enters edit/focus mode on its Tiptap instance, ready for typing. Wire
-   this as the default/primary interaction so clicking empty canvas "just
-   works" without the user needing to explicitly select a tool first
-   (check whether this should replace tldraw's default select-tool
-   click-on-empty behavior, or coexist as a separate selectable tool —
-   pick whichever reads more naturally given tldraw's existing toolbar
-   still needs to expose ink/shape/select tools too).
-3. **Empty-shape auto-delete on blur.** When a `RichTextShape`'s Tiptap
-   editor loses focus (blur) and its content is empty (no text typed),
-   delete the shape from the tldraw store. Verify this doesn't fire
-   spuriously (e.g. a shape that already has real content, or one that's
-   mid-creation, must never be deleted just because focus briefly moves
-   elsewhere).
-4. **Wire the existing Format tab / bubble menu to the focused shape's
-   Tiptap instance.** The prior spec's `activeEditor` store field
-   (`stores/appStore.ts`, set by `components/editor/RichTextEditor.tsx` on
-   mount/unmount) assumed exactly one Tiptap instance per note. Now there
-   can be many (one per `RichTextShape`), only one editable at a time.
-   Update whichever shape currently has editing focus to be the one that
-   sets `activeEditor`, and clear it when that shape loses focus (not on
-   unmount, since shapes aren't mounted/unmounted the way page components
-   are) — so the Format tab and bubble menu keep working exactly as before,
-   now correctly targeting "whichever text box you're currently typing
-   in."
-5. **Verify middle-mouse-drag panning.** tldraw supports this by default;
-   confirm it isn't disabled or conflicting with anything already
-   customized in `components/canvas/CanvasEditor.tsx` (e.g. its own
-   `editor.store.listen` autosave wiring, or the new click-to-create tool
-   from subtask 2 potentially intercepting middle-clicks). Fix only if a
-   real conflict is found — otherwise this subtask is verification, not
-   new code.
-6. **Merge note creation UI: retire the separate "New canvas" action.**
-   `components/sidebar/Sidebar.tsx` and `FolderItem.tsx` currently have
-   separate "New note" (Tiptap) and "New canvas" (tldraw) actions/icons.
-   Collapse to one "New note" action that creates a note using the merged
-   free-form-canvas editor. Retire `app/note/page.tsx` as a distinct
-   full-page linear editor — all notes now route through (what is
-   currently) `app/canvas/page.tsx`'s editor. Decide and implement whether
-   `/note?id=...` redirects to `/canvas?id=...` for old bookmarks/links, or
-   is removed outright (bias toward a redirect, cheap and avoids dead
-   links from the note-history stack).
-7. **Reconcile back/forward history and undo/redo with the merged model.**
-   `stores/appStore.ts`'s `NoteHistoryEntry.type` (`"note" | "canvas"`,
-   subtask 14 of the prior spec) and `components/topbar/TopBar.tsx`'s
-   undo/redo (subtask 15, which assumed `activeEditor`/`activeCanvasEditor`
-   were mutually exclusive *by route*) both need updating: with one merged
-   note type, undo/redo must decide between "undo the focused text box's
-   Tiptap edit" and "undo the last tldraw-level action (shape
-   move/ink stroke/shape creation)" based on **actual focus state**, not
-   route — building directly on subtask 4's focus-tracking. Update
-   `NoteHistoryEntry`/back-forward routing accordingly now that there's
-   only one destination route per note.
-8. **Migrate existing linear-Tiptap notes into the merged format.** Any
-   existing note with `type = "note"` and real `content` (Tiptap JSON) —
-   convert it into `canvasData` containing exactly one `RichTextShape`
-   (placed at a sensible default position, e.g. top-left) whose content is
-   that note's original Tiptap document, then treat it as the merged type
-   going forward. Run this as a one-time, idempotent migration (e.g.
-   triggered lazily the first time an old-format note is opened, or as a
-   startup pass over all of a user's notes — pick whichever is simpler and
-   safer against partial-failure/interruption; must not lose data if
-   interrupted partway through).
+### M1 — Text box visual/interaction polish
+
+1. **`RichTextShape` visual redesign.** Transparent background by default
+   (no visible fill/border when idle). On hover OR while editing: show a
+   dotted border around the shape, plus a thin drag-handle bar along the
+   top edge (dragging that bar moves the shape — tldraw's own shape-drag
+   mechanics already handle the actual move once pointer events reach the
+   canvas correctly positioned; this subtask only needs to render the bar
+   and route drag gestures on it through tldraw's normal shape-translate
+   behavior, not build new drag physics).
+2. **Click-to-cursor, no double-click required.** Clicking directly on a
+   line of text inside a `RichTextShape` should place the text cursor at
+   that exact point and enter edit mode immediately — no double-click.
+   Requires reworking `RichTextShape`'s `canEdit()`/edit-mode-entry (from
+   the prior spec, currently keyed to tldraw's own default double-click
+   only) to also enter edit mode on a single click, while a genuinely EMPTY
+   area of canvas still needs the click-to-CREATE-a-new-shape behavior
+   (`RichTextTool`, subtask 2 below) — these two must not conflict for a
+   click that lands on an existing shape's text vs. one that lands on
+   empty canvas.
+3. **Click vs. click-drag distinction in `RichTextTool`.** Currently every
+   pointer-down on empty canvas immediately creates a shape
+   (`components/canvas/RichTextTool.tsx`'s `Idle.onPointerDown`). Rework
+   so: a plain click (pointer down, minimal movement, pointer up) still
+   creates a shape as today; a click-and-drag (pointer down, then real
+   movement before release) instead performs a marquee/rubber-band
+   selection over whatever's under the drag area (text boxes, ink strokes,
+   any shape) — mirror tldraw's own Select tool's click-vs-drag state
+   machine (`Idle` → a `Pointing`-style intermediate state that watches
+   drag distance → transitions to either "create" or tldraw's own
+   brush/marquee-select behavior) rather than inventing a new one.
+
+### M2 — Draw tab rebuild (bug fix + real functionality)
+
+4. **Rebuild the Draw tab into the sole tool-switcher; fix the "stuck in
+   drawing mode" bug.** Currently tldraw's own native bottom toolbar
+   (Select/Draw/Eraser/shapes/etc., enabled by default alongside the
+   custom `rich-text` tool) is fully visible, and switching to one of
+   tldraw's own tools via it has no ribbon-level way back to the
+   click-to-create text tool. Hide tldraw's own native toolbar
+   entirely (`<Tldraw>`'s `hideUi`/`components` override — verify the
+   exact current API against the installed tldraw version). Build real
+   pencil/shape/eraser buttons into the ribbon's Draw tab
+   (`components/ribbon/Ribbon.tsx`) that call `editor.setCurrentTool(...)`
+   for tldraw's real built-in tools. Switching to the File or Format tab
+   (or a dedicated "back to text" button in the Draw tab itself) always
+   returns the canvas to the `rich-text` tool. The Draw tab itself should
+   only ever be reachable/relevant on a note that's open (matches existing
+   Draw-tab-only-when-canvas-open gating from the prior spec, now simply
+   "the canvas is always open" since notes and canvases are merged).
+
+### M3 — Format tab & bubble menu improvements
+
+5. **Format tab: show disabled controls instead of hiding them.**
+   `components/ribbon/Ribbon.tsx`'s `FormatTab` currently renders a plain
+   "No formatting available." message and hides every control when
+   `activeEditor` is null. Change it to always render the full control set
+   (bold/italic/headings/lists/font/color/etc.), with every control
+   disabled (grayed out, non-interactive) when there's no focused text box
+   to apply them to, and enabled/interactive/reflecting real state exactly
+   as today once a shape is focused.
+6. **Bubble menu: add font family, font size, highlight, text color,
+   bullet/numbered toggles.** Currently
+   `components/canvas/RichTextShape.tsx`'s bubble menu
+   (`BUBBLE_MENU_ACTION_IDS`) only has bold/italic/strike/code plus a
+   separate link button. Add: font family select, font size select (reuse
+   `formatActions.ts`'s existing constants/logic where possible, same as
+   the Format tab already does), a highlight toggle + color swatch picker
+   (new `@tiptap/extension-highlight` dependency — not currently
+   installed), a text color swatch picker (reuse the Format tab's existing
+   color-swatch pattern), and bullet-list/numbered-list toggle buttons.
+   Keep the popover reasonably compact given it renders over a small
+   shape (subtask 4 of the prior spec already handles portaling it to
+   `document.body` to avoid clipping — build on that, don't rebuild it).
+
+### M4 — Sidebar drag-and-drop + context menu (cut/copy/paste)
+
+7. **Drag-and-drop reordering in the sidebar.** Notes and folders in
+   `components/sidebar/{FolderTree,FolderItem,NoteItem}.tsx` become
+   draggable: reorder siblings, drag a note into a different folder, drag
+   a folder into a different folder (re-parenting), matching standard
+   file-explorer drag-and-drop conventions (drop indicator between items
+   for reordering, drop-onto-a-folder highlight for moving inside it).
+   Persist the result via the existing `updateFolder`/`updateNote`
+   functions (`parentId`/`folderId`/`order` fields already exist — this is
+   UI + drop-target logic, not new data-layer work, unless ordering
+   persistence needs a dedicated `order` field bump you discover is
+   missing).
+8. **Right-click context menu with delete/rename/cut/copy/paste.** Add a
+   real `onContextMenu`-triggered menu (not just the existing "···"
+   dropdown-button trigger — both should keep working, this is an
+   additional entry point) to `FolderItem.tsx`/`NoteItem.tsx`, with
+   Delete/Rename (already exist, wire into this menu too) plus new
+   Cut/Copy/Paste: a small in-app clipboard (e.g. a
+   `stores/appStore.ts` field or a dedicated tiny module, holding
+   `{ kind: "cut" | "copy", type: "note" | "folder", id: string }` or
+   similar) that "Cut"/"Copy" populate, and a "Paste" menu item that only
+   appears on a folder's (or the notebook root's) context menu when the
+   clipboard is non-empty — pasting a Cut moves the item (update its
+   `parentId`/`folderId`), pasting a Copy duplicates it (a real new
+   row/id, recursively duplicating a folder's contents if a folder was
+   copied). Build this as a genuinely reusable mechanism (not
+   folder/note-specific internals baked into the UI components) since M6's
+   new Page sidebar needs the identical cut/copy/paste/delete/rename
+   affordances for pages.
+
+### M5 — Theming
+
+9. **New "Off-white" built-in theme.** Add a fourth entry to
+   `lib/themes/builtin.ts`'s `BUILTIN_THEMES`, using soft, varying shades
+   of gray/cream/beige (not a single flat off-white — real tonal
+   variation across the palette's background/card/popover/sidebar/etc.
+   slots, mirroring how `GRUVBOX_DARK_THEME` varies its own tones rather
+   than reusing one color everywhere). Cover all 30 `ThemeVariableKey`s,
+   same as every other built-in theme.
+10. **Remove tldraw's built-in opacity slider.** tldraw's own default style
+    panel (shown when a shape is selected) includes a built-in
+    transparency/opacity slider — remove or hide just that control (not
+    the whole style panel) via tldraw's `components`/`overrides` UI
+    customization API (verify the exact current mechanism against the
+    installed tldraw version's actual API surface — this needs precision,
+    don't guess at a component name).
+11. **Rename "Default" theme to "System"; make it follow the OS light/dark
+    preference.** `components/topbar/AccountMenu.tsx`'s
+    `DEFAULT_THEME_VALUE`/"Default" radio option becomes "System": instead
+    of just clearing theme overrides (today's behavior), it should apply
+    `LIGHT_THEME` or `DARK_THEME` (`lib/themes/builtin.ts`) based on the
+    OS's current preference (`window.matchMedia("(prefers-color-scheme:
+    dark)")` — no existing OS-theme-detection code exists anywhere in this
+    codebase, confirmed via search, so this is new), and stay dynamically
+    in sync if the OS preference changes while the app is running
+    (a `matchMedia` change listener, not a one-time read at launch).
+12. **Bug fix: canvas background doesn't follow the active theme.**
+    tldraw's own canvas background is currently left entirely at tldraw's
+    shipped default (a light/white value from `tldraw.css`, imported
+    unmodified in `components/canvas/CanvasEditor.tsx`) — it never reads
+    this app's own theme CSS variables, so it stays white regardless of
+    which theme (including Dark/Gruvbox Dark) is active. Wire tldraw's own
+    background CSS custom property to this app's `--background`/`--card`
+    theme variables (verify tldraw's exact variable name/override
+    mechanism against its actual shipped CSS, don't guess).
+
+### M6 — Pages (new sub-entity under Note)
+
+A real new structural entity: a Note ("notesheet") becomes a lightweight
+container that groups one or more **Pages**, each an independent canvas
+(its own `RichTextShape`s, ink, etc.) — the actual editable content moves
+down one level, from Note to Page.
+
+13. **`pages` SQLite schema + `Page` type.** A new migration (next version
+    after whatever's currently latest in `src-tauri/src/lib.rs`) adding a
+    `pages` table mirroring `notebooks`/`folders`/`notes`' exact
+    sync-bookkeeping column shape (`id`, `note_id` FK, `title`,
+    `order_index`, `canvas_data`, `created_at`, `updated_at`,
+    `deleted_at`, `dirty`, `synced_at`). Add a `Page` type to
+    `types/index.ts` mirroring `Note`'s shape (minus the notebook/folder
+    fields, plus `noteId`).
+14. **`lib/db/pages.ts` data-access layer.** CRUD + soft-delete, mirroring
+    `lib/db/notes.ts`'s exact pattern (`getPages(noteId)`,
+    `createPage(noteId, title?, order?)`, `updatePage`, `deletePage`,
+    `getDirtyPages`, `markPageSynced`, `upsertPageFromRemote` +
+    `RemotePageData` type, tombstone helpers). Update note-creation
+    (`lib/db/notes.ts`'s `createNote` or its callers) so a newly-created
+    note ALWAYS gets a default first page atomically — a note with zero
+    pages should never be a reachable state.
+15. **Pages sync (push/pull/cleanup).** Extend
+    `lib/sync/{push,pull,cleanup}.ts` to cover the `pages` table using the
+    exact same LWW/conflict-backup/tombstone patterns already proven for
+    notebooks/folders/notes/(now) pages — a fourth application of an
+    already-established pattern, not new sync design.
+16. **Rewire the canvas editor to operate on a Page, not a Note.**
+    `/canvas?id=...` keeps navigating by NOTE id (see Key Decisions below —
+    back/forward history stays note-scoped). `CanvasEditor.tsx` gains a
+    concept of "the note's pages" + "the currently selected page" (default:
+    the first page, or a remembered last-open page for that note —
+    session/local state, not part of the global back/forward stack) and
+    renders/saves the SELECTED PAGE's `canvasData`, not the note's own.
+17. **Page sidebar.** A new, dedicated sidebar (distinct from the
+    notebook/folder tree sidebar) that appears once a note is open, listing
+    that note's pages: an "Add Page" button at the top, a collapse button,
+    and the same drag-and-drop reordering + right-click
+    cut/copy/paste/rename/delete context menu built in M4 (reused, not
+    reimplemented).
+18. **Migrate existing notes' content into a first Page.** Any note whose
+    `canvas_data`/`content` already has real data (from the prior spec's
+    note/canvas merge, including its own lazy migration path) gets that
+    content wrapped into a newly-created single Page the first time the
+    note is opened after this ships — mirroring the prior spec's exact
+    lazy-migration approach (and its hard-won idempotency lesson: the
+    guard must check live state, e.g. "does this note already have any
+    pages," not a possibly-stale prop, to survive React Strict Mode's
+    double-mount cleanly).
 
 ## Key Decisions
 
-- **Built on a custom tldraw `ShapeUtil` hosting a real Tiptap instance**,
-  not a bespoke free-form canvas and not a downgrade to tldraw's plain-text
-  shapes. This is the reconciliation of two things the user wants
-  simultaneously: full existing rich-text formatting fidelity, and ink/
-  drawing tools coexisting on the same page. tldraw already solves pan/
-  zoom/middle-mouse-drag/click-placement/selection/resize generically for
-  any shape type; this spec adds one new shape type rather than
-  reimplementing all of that from scratch.
-- **One merged note type going forward** — the separate "canvas" note type
-  (and its "New canvas" UI, its own Draw-tab-only-on-`/canvas`-route
-  gating) goes away. The user was explicit that "canvas" was never meant
-  to be a distinct note type, only a description of the free-form page
-  behavior every note should have.
-- **Existing notes are migrated, not left behind** — an old linear-Tiptap
-  note becomes a canvas with one `RichTextShape` holding its original
-  content, so no user data becomes inaccessible or second-class after this
-  ships.
-- **Undo/redo and back/forward history move from route-based to
-  focus-based reasoning** — a necessary consequence of merging routes;
-  built directly on the same focus-tracking subtask 4 already needs for
-  the Format tab, rather than as separate new machinery.
-- **Reuses the exact existing `canvasData` snapshot persistence/sync
-  path** — no sync-engine or schema changes; the merged shape type is just
-  new content inside a mechanism that's already proven and unchanged.
+- **Back/forward history stays note-scoped, not page-scoped.** Switching
+  between pages within an open note is treated as local UI state (like
+  OneNote itself, where clicking between pages in a section isn't a
+  browser-history-style navigation event), not a new entry in the global
+  `noteHistory` stack built in the prior spec. This avoids reopening that
+  already-reviewed subtask and keeps `/canvas?id=...` routing by note id
+  unchanged.
+- **Pages are a real new entity (new table + full sync layer), not a
+  reinterpretation of existing note content** — same reasoning as the
+  prior spec's Notebook decision: more faithful to the actual desired
+  model, and this project has a proven, repeatable pattern for adding a
+  new synced entity by now (this is the fourth time).
+- **The cut/copy/paste clipboard mechanism (M4) is built generically so
+  M6's Page sidebar can reuse it directly** — avoids building the same
+  interaction twice.
+- **A new note always gets a default first page atomically** — avoids ever
+  needing to handle a "note with zero pages" state anywhere in the canvas
+  view or page sidebar.
+- **"System" theme is dynamic**, following live OS preference changes via
+  a `matchMedia` listener, not a one-time read at app launch — matches
+  what a user would actually expect from an option named "System."
+- **Existing `notes.content`/`notes.canvas_data` columns are left in place,
+  untouched, after the Pages migration** — consistent with this project's
+  established non-destructive-migration precedent from the prior spec.
 
 ## Open Questions
 
-- Exact undo/redo focus-detection heuristic (subtask 7) — e.g. does
-  clicking away from a text box mid-edit but before any tldraw-level
-  action count as "tldraw is now focused," or does undo/redo need a short
-  grace period / last-known-focus memory to feel natural? Left to
-  implementation-time judgment and manual testing, since this is a feel/UX
-  question hard to fully resolve on paper.
-- Whether `RichTextShape`'s default size/position on creation (subtask 2)
-  should auto-grow with typed content (like OneNote's actual text boxes,
-  which expand as you type) or stay at a fixed initial size requiring
-  manual resize — auto-grow is closer to OneNote's real behavior and
-  probably expected, but left as an implementation-time call informed by
-  what tldraw's shape framework makes easy/idiomatic.
-- Whether the one-time migration (subtask 8) should run automatically and
-  silently, or surface any UI/confirmation to the user before converting
-  their existing notes — leaning toward silent/automatic (consistent with
-  how every other migration in this project has worked so far), but
-  flagging since it's a real, irreversible-in-place data transformation
-  worth a deliberate choice rather than an assumption.
+- Exact tldraw API for hiding the native toolbar and removing just the
+  opacity slider from the style panel (subtasks 4 and 10) should be
+  verified against the actually-installed tldraw version at
+  implementation time, not assumed — tldraw's UI-customization surface
+  (`components`/`overrides` props) has had naming/shape changes across
+  versions.
+- Whether "Paste" on the notebook root (not just a folder) should be
+  offered for cut/copy of a top-level folder — left to implementation-time
+  judgment, reasonable either way.
+- Whether copying a folder should deep-copy every note (and, after M6, every
+  page) inside it, including their canvas content — assumed yes (a "Copy"
+  that silently produces empty folders would be surprising) but worth a
+  sanity check during implementation given the potential size of a deep
+  copy.
+- Exact visual treatment of the drag-handle bar (subtask 1) and the
+  drop-indicator/highlight styling for sidebar drag-and-drop (subtask 7)
+  are left to implementation-time visual judgment, following this app's
+  existing shadcn/Tailwind design tokens.
 
 ## Progress
-
-- Subtask 1 (RichTextShape — custom tldraw shape hosting Tiptap) — done. Added `components/canvas/RichTextShape.tsx`: a `BaseBoxShapeUtil` subclass whose `component()` hosts a real Tiptap editor with the exact same extensions list as `components/editor/RichTextEditor.tsx`. Content lives in `shape.props.content` and rides through tldraw's existing snapshot/persistence mechanism unchanged — `CanvasEditor.tsx` only gained a one-line `shapeUtils={[RichTextShapeUtil]}` registration. Uses tldraw's default double-click-to-edit (`canEdit()`) for now; no custom click-to-create tool yet (subtask 2). Drag-vs-edit-mode pointer-event conflict resolved via the same `pointer-events`-toggle + `stopEventPropagation` pattern tldraw's own built-in embed/video/text shapes use. Verified via a throwaway `app/spike-richtext-shape` harness: shape creation, typing + formatting marks, drag-without-typing and edit-without-dragging both confirmed independent, and a genuine save/reload round-trip through real SQLite. Reviewer did deep source-level verification against the actual installed `tldraw`/`@tiptap/react` packages (not just trusting comments) on every risky claim — the `declare module "@tldraw/tlschema"` type-augmentation pattern, the prop-validator cast's runtime safety, closure-staleness in the `useEditor` deps array, Tiptap instance cleanup on unmount, and fidelity to tldraw's own drag-vs-edit pattern — and found no bugs. **Remaining concern (non-blocking)**: the prop validator's `T.jsonValue.nullable() as unknown as T.Validatable<object | null>` cast is technically wider at runtime (`JsonValue | null`) than the TypeScript type it's cast to, so TypeScript wouldn't catch an accidental bare string/number/array being written to `content` elsewhere — not a bug today, just worth remembering if this validator is reused.
-- Subtask 2 (Click-to-create tool) — done. Added `components/canvas/RichTextTool.tsx`: a genuine separate tldraw `StateNode` tool (Select/Draw/etc. stay fully intact and available) that creates a `RichTextShape` on empty-canvas pointer-down and immediately enters edit mode, set as the default active tool on note mount so "clicking empty canvas just works." Includes a workaround (`installRichTextToolAutoReturn`) for a real, non-obvious tldraw framework quirk — the editor unconditionally force-switches to `select` whenever a shape enters edit mode, which would otherwise defeat repeated click-to-create. Reviewer traced the actual bundled tldraw source and caught two real bugs: (1) High — the tool tagged created shapes with a *permanent* `meta` flag to know when to auto-return to itself, but the flag persisted forever, so later re-editing that same shape via the ordinary Select tool (double-click) would incorrectly hijack the user back into the rich-text tool afterward — fixed by replacing it with a transient, session-scoped `Set<TLShapeId>` consumed exactly once per edit session; (2) Moderate — missing the `isLocked` check tldraw's own Select tool applies before selecting a hit shape, so clicking a locked note would silently select it and do nothing, rather than falling through to shape-creation like tldraw's own semantics — fixed. **Process note**: this fix was verified via `tsc`/code reading rather than live re-verification — subtask 3 (empty-shape auto-delete on blur) exercises this exact edit-session-lifecycle code next, a natural place to confirm it live. Also: several earlier debug sessions left ~10 orphaned test notes in Firestore under a since-deleted throwaway account (not a code bug) — worth a manual cleanup in the Firebase console at your convenience.
-- Subtask 3 (Empty-shape auto-delete on blur) — done. Extended `RichTextShape.tsx`'s `isEditing` effect: on a genuine edit-session-ending transition (tracked via a `wasEditingRef`, driven by tldraw's stable `useIsEditing`, not a raw DOM blur event), an empty Tiptap document triggers `tldrawEditor.deleteShapes`. Applies to any empty shape regardless of how it entered edit mode. Subtask 2's tool-auto-return concern confirmed to coexist correctly (verified live). Reviewer caught one real, low-severity, fails-safe gap: the transition-tracking ref's bookkeeping was gated behind a `!tiptapEditor` null-check, but this app's Tiptap instance isn't created synchronously (Next.js auto-detection defers it), so a transition occurring before Tiptap was ready could leave the ref stale and silently miss a legitimate deletion in a narrow race window — fixed by moving the ref bookkeeping to run unconditionally. All other scrutinized concerns (first-render race with subtask 2, ordering against the tool's separate side-effect mechanism, deleting a shape from within its own React effect, stale-editor-reference risk) confirmed to be non-issues. Thoroughly live-verified, including the specific coexistence check and the emptied-out-shape-still-gets-deleted case.
-- Subtask 4 (Wire Format tab/bubble menu to focused shape) — done. `RichTextShape.tsx` now sets `activeEditor` on entering edit mode and clears it on a race-guarded genuine blur (only clearing if the store still points at this shape's own editor, protecting against rapid shape-to-shape focus switches). Added a `BubbleMenu` mirroring the old full-page editor's implementation, scaled down for a shape's smaller bounding box. Reviewer caught two real issues: (1) High — the blur-based clear had no corresponding unmount-cleanup path, so navigating away from a note while a shape was mid-edit could leave `activeEditor` pointing at an already-destroyed Tiptap instance that `Ribbon.tsx`/`TopBar.tsx` call methods on with no `isDestroyed` guard — fixed with a separate unmount effect using the same race-guard; (2) Medium — the bubble menu defaults to appending inside its own DOM parent, which here is the shape's small `overflow: auto` box, so a selection near a shape's edge would render clipped/invisible — fixed with `appendTo={() => document.body}`. **Process note**: this fix was verified via `tsc`/code reading rather than live re-verification. Multi-shape focus-following and the rapid-switch race-guard were thoroughly live-verified by the implementor before the fixer round. One more orphaned test note left in Firestore (title "Spike Editor Note") — same manual-cleanup note as subtask 2.
-- Subtask 5 (Verify middle-mouse-drag panning) — done, no code changes. Verified panning works correctly in every scenario (empty canvas, over an existing shape, rich-text tool active, Select tool active) with real camera-position deltas, and doesn't spuriously interfere with the autosave listener, tool auto-return, or an in-progress edit elsewhere on the canvas. The specific concern investigated before dispatch — `RichTextTool.tsx`'s `onPointerDown` never checking `info.button` — turned out to be a non-issue: traced at the source level that tldraw's own `Editor.dispatch()` intercepts a middle-click for panning and returns before the event ever reaches any tool's `onPointerDown`, confirmed empirically via live testing.
-- Subtask 6 (Merge note creation UI, retire /note route) — done. Collapsed "New note"/"New canvas" into a single "New note" action (always creates `type: "canvas"` going forward). `app/note/page.tsx` is now a pure redirect to `/canvas?id=...`. `CanvasEditor.tsx` gained a minimal, idempotent inline migration: an old-format note (`type: "note"`, real `content`, no `canvasData` yet) is wrapped into a single `RichTextShape` and saved as `canvasData` the moment it's opened, so old content becomes visible instead of appearing to vanish — verified with real SQLite-level evidence that the old `content` column stays byte-identical/untouched while `canvasData` gets populated. Reviewer traced through several trickier concerns (double-migration risk on remount, `createShape` without an explicit id, autosave-listener race against the migration's own write) against tldraw's actual source and found all to be non-issues. One real, minor inconsistency: `TopBar.tsx`'s Back/Forward navigation still had the old `note.type === "canvas" ? "/canvas" : "/note"` branching, missed by the other three call sites this diff updated (not a data bug, just an extra redirect hop for old-format notes) — fixed to route directly. **Still pending** (explicitly deferred to subtask 8): a startup/backfill migration pass for notes that are never individually opened.
-- Subtask 7 (Reconcile back/forward + undo/redo with merged model) — done. Corrected stale comments in `TopBar.tsx`/`appStore.ts` describing an outdated "mutually exclusive by route" invariant for `activeEditor`/`activeCanvasEditor` — live testing found the existing undo/redo branching logic (built in a prior subtask) was already correct for the merged model, no logic change needed. Removed the now-dead `NoteHistoryEntry.type` field and its one call site, confirmed fully unused via independent grep. Reviewer independently traced the specific empty-shape-auto-delete race (does `activeEditor` ever briefly point at an already-deleted shape's orphaned editor?) and confirmed it's cleared synchronously before deletion, never dangling. Thoroughly live-verified (focused-shape undo, canvas-level undo after unfocusing, interleaved sequences, redo, Back/Forward regression).
-- Subtask 8 (Migrate existing linear-Tiptap notes) — done. Scoped down to a verification pass per an explicit decision with the user: subtask 6's lazy on-open migration is the complete solution (a note nobody opens doesn't need migrating), no proactive startup/backfill pass was built (would have required either risky hand-crafted tldraw snapshot JSON or a meaningfully heavier hidden-editor-per-note mechanism, for a benefit judged not worth it). Verification found one real bug: the migration's idempotency guard only checked the (possibly stale) `note.canvasData` prop, not the live editor's actual state — a second `onMount` invocation for the same underlying tldraw store (reproducible via React Strict Mode's dev-mode mount/cleanup/mount replay) would re-run the migration and create a duplicate, overlapping shape. Fixed by also checking `editor.getCurrentPageShapes().length === 0`. Reviewer traced tldraw's actual mount lifecycle source and confirmed the fix fully closes the race (synchronous, not just narrowed), doesn't risk false-skipping a genuinely unmigrated note, and doesn't interact badly with the empty-shape-auto-delete logic. Also verified: idempotency across a genuine second open (not just same-session remount), interruption safety (reasoned through the actual code path — nothing observable persists until the async `updateNote` write lands), degenerate content (empty and richly-formatted notes both migrate cleanly), and that `content` is never touched by anything else once migrated.
-
-All 8 subtasks complete. This spec (free-form canvas notes, merging note/canvas into one OneNote-style page) is done.
