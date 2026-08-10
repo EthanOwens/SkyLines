@@ -1,15 +1,26 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEditorState } from "@tiptap/react";
+import { GeoShapeGeoStyle, react, useValue, type Editor } from "@tldraw/tldraw";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
 import { setLastOpen } from "@/lib/lastOpen";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Image as ImageIcon, Link as LinkIcon } from "lucide-react";
+import {
+  Image as ImageIcon,
+  Link as LinkIcon,
+  MousePointer2,
+  Pencil,
+  Eraser,
+  Square,
+  Circle,
+  ArrowUpRight,
+  Type,
+} from "lucide-react";
 import {
   FONT_FAMILIES,
   FONT_SIZES,
@@ -211,10 +222,120 @@ function FormatTab() {
   );
 }
 
+// Draw tab's real content (spec.md M2 subtask 4, "Draw tab rebuild"). Now
+// that CanvasEditor.tsx's `<Tldraw>` `components` override suppresses
+// tldraw's own native toolbar/menu/zoom/etc. chrome (but deliberately keeps
+// its `StylePanel`, so shape color/fill/stroke controls stay available -
+// see that file's comment), this ribbon tab is the ONLY way to switch
+// tldraw's active tool - reuses `activeCanvasEditor` from
+// stores/appStore.ts (the same store field TopBar.tsx's undo/redo already
+// reads the live tldraw `Editor` instance from) rather than threading a new
+// prop down from CanvasEditor.tsx, matching this project's established
+// pattern for reaching the live tldraw editor from a ribbon-level sibling
+// component.
+//
+// Tool ids below (`select`/`draw`/`eraser`/`geo`/`arrow`/`rich-text`) were
+// verified against the installed tldraw 4.5.12 (`node_modules/tldraw/
+// dist-esm/lib/...ShapeTool.mjs`'s `static id = "..."` fields, and
+// `node_modules/tldraw/dist-esm/lib/tools/EraserTool/EraserTool.mjs` /
+// `SelectTool.mjs`), not guessed. The two "geo" shape buttons (rectangle/
+// ellipse) additionally set `GeoShapeGeoStyle` before activating the `geo`
+// tool, mirroring tldraw's own toolbar implementation
+// (node_modules/tldraw/dist-esm/lib/ui/hooks/useTools.mjs's
+// `editor.run(() => { editor.setStyleForNextShapes(GeoShapeGeoStyle, geo);
+// editor.setCurrentTool("geo"); })`) - `geo` alone is not a distinct
+// rectangle/ellipse tool id, it's one tool whose shape is chosen by that
+// style.
+function DrawTab() {
+  const activeCanvasEditor = useAppStore((s) => s.activeCanvasEditor);
+
+  // Keep this tab's active-button highlighting in sync with the live tldraw
+  // tool, including tool changes that happen OUTSIDE this tab (e.g. the
+  // click-to-create rich-text tool's own auto-return-to-`rich-text`
+  // mechanisms in RichTextTool.tsx, or a keyboard shortcut). `editor.store`
+  // does NOT emit for tool-chart changes (see RichTextTool.tsx's header
+  // comment on why tool-chart transitions aren't document/session-store
+  // events - they're pure in-memory `StateNode` state), but
+  // `getCurrentToolId()` IS a tldraw `@computed` signal (see
+  // node_modules/@tldraw/editor/dist-esm/lib/editor/Editor.mjs's
+  // `_getCurrentToolId_dec` decorator on it), so tldraw's own `useValue`
+  // React hook (re-exported from `@tldraw/state-react` all the way through
+  // `@tldraw/tldraw`, same as `react()` in RichTextTool.tsx uses the
+  // non-React form of the same reactivity system) is the correct way to
+  // subscribe to it here - mirroring RichTextTool.tsx's own established
+  // preference for tldraw's fine-grained reactivity over store listeners for
+  // this exact kind of state.
+  const liveToolId = useValue(
+    "ribbon draw tab: current tool id",
+    () => activeCanvasEditor?.getCurrentToolId() ?? null,
+    [activeCanvasEditor],
+  );
+  const geoStyle = useValue(
+    "ribbon draw tab: current geo style",
+    () => activeCanvasEditor?.getSharedStyles().getAsKnownValue(GeoShapeGeoStyle) ?? null,
+    [activeCanvasEditor],
+  );
+
+  if (!activeCanvasEditor) {
+    return <div className="flex items-center text-muted-foreground">No canvas available.</div>;
+  }
+
+  function setTool(id: string) {
+    activeCanvasEditor?.setCurrentTool(id);
+  }
+
+  function setGeoTool(geo: "rectangle" | "ellipse") {
+    if (!activeCanvasEditor) return;
+    activeCanvasEditor.run(() => {
+      activeCanvasEditor.setStyleForNextShapes(GeoShapeGeoStyle, geo);
+      activeCanvasEditor.setCurrentTool("geo");
+    });
+  }
+
+  const isGeo = (geo: "rectangle" | "ellipse") => liveToolId === "geo" && geoStyle === geo;
+
+  return (
+    <div className="flex items-center gap-0.5">
+      <FormatBtn tip="Select" active={liveToolId === "select"} onClick={() => setTool("select")}>
+        <MousePointer2 className="h-3.5 w-3.5" />
+      </FormatBtn>
+      <FormatBtn tip="Pencil" active={liveToolId === "draw"} onClick={() => setTool("draw")}>
+        <Pencil className="h-3.5 w-3.5" />
+      </FormatBtn>
+      <FormatBtn tip="Eraser" active={liveToolId === "eraser"} onClick={() => setTool("eraser")}>
+        <Eraser className="h-3.5 w-3.5" />
+      </FormatBtn>
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      <FormatBtn tip="Rectangle" active={isGeo("rectangle")} onClick={() => setGeoTool("rectangle")}>
+        <Square className="h-3.5 w-3.5" />
+      </FormatBtn>
+      <FormatBtn tip="Ellipse" active={isGeo("ellipse")} onClick={() => setGeoTool("ellipse")}>
+        <Circle className="h-3.5 w-3.5" />
+      </FormatBtn>
+      <FormatBtn tip="Arrow" active={liveToolId === "arrow"} onClick={() => setTool("arrow")}>
+        <ArrowUpRight className="h-3.5 w-3.5" />
+      </FormatBtn>
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      <FormatBtn
+        tip="Back to text"
+        active={liveToolId === "rich-text"}
+        onClick={() => setTool("rich-text")}
+      >
+        <Type className="h-3.5 w-3.5" />
+      </FormatBtn>
+    </div>
+  );
+}
+
 export function Ribbon() {
   const pathname = usePathname();
   const router = useRouter();
   const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
+  const activeCanvasEditor = useAppStore((s) => s.activeCanvasEditor);
   const normalizedPathname = normalizePathname(pathname);
   const isCanvasRoute = normalizedPathname === "/canvas";
 
@@ -245,6 +366,59 @@ export function Ribbon() {
     { id: "format", label: "Format" },
     ...(isCanvasRoute ? ([{ id: "draw", label: "Draw" }] as const) : []),
   ];
+
+  // spec.md M2 subtask 4 ("Draw tab rebuild") - "Switching to the File or
+  // Format tab ... always returns the canvas to the `rich-text` tool."
+  // Runs whenever the effective (i.e. actually-displayed) tab settles on
+  // something other than Draw - covers both an explicit File/Format click
+  // AND the route-navigated-away-from-canvas fallback above, and re-checks
+  // `activeCanvasEditor` too (a canvas can mount/unmount independently of
+  // tab clicks). Deliberately does nothing while `effectiveTab === "draw"` -
+  // that tab's own buttons (including its "Back to text" button) are what
+  // drive `setCurrentTool` while Draw itself is active.
+  //
+  // Guarded against interrupting an in-flight tldraw drag gesture (marquee-
+  // select/shape-translate/resize/rotate, including gestures RichTextTool.tsx
+  // hands off to real `select` states via `handOffToBrushing`/
+  // `handOffToTranslating`) - same reasoning/mechanism as that file's own
+  // `watchForReturnToSelectIdle`/`installRichTextToolAutoReturn`: forcing a
+  // tool switch mid-gesture is destructive/jarring, so if the user switches
+  // to File/Format while mid-drag, this waits (via tldraw's own `react()`
+  // fine-grained reactivity, not a store listener - tool-chart transitions
+  // aren't document/session-store events) for the gesture to genuinely
+  // settle before actually calling `setCurrentTool("rich-text")`.
+  useEffect(() => {
+    if (effectiveTab === "draw") return;
+    if (!activeCanvasEditor) return;
+
+    const isMidGesture = (editor: Editor) =>
+      editor.inputs.getIsPointing() ||
+      editor.inputs.getIsDragging() ||
+      editor.isInAny(
+        "select.translating",
+        "select.brushing",
+        "select.resizing",
+        "select.rotating",
+      );
+
+    if (!isMidGesture(activeCanvasEditor)) {
+      activeCanvasEditor.setCurrentTool("rich-text");
+      return;
+    }
+
+    const stop = react("ribbon: deferred return to rich-text after in-flight gesture", () => {
+      if (isMidGesture(activeCanvasEditor)) return;
+      stop();
+      activeCanvasEditor.disposables.delete(stop);
+      activeCanvasEditor.setCurrentTool("rich-text");
+    });
+    activeCanvasEditor.disposables.add(stop);
+
+    return () => {
+      stop();
+      activeCanvasEditor.disposables.delete(stop);
+    };
+  }, [effectiveTab, activeCanvasEditor]);
 
   return (
     <div className="flex h-24 flex-col border-b border-border bg-background">
@@ -277,11 +451,7 @@ export function Ribbon() {
           </div>
         )}
         {effectiveTab === "format" && <FormatTab />}
-        {effectiveTab === "draw" && (
-          <div className="flex items-center">
-            Drawing tools are available directly on the canvas below.
-          </div>
-        )}
+        {effectiveTab === "draw" && <DrawTab />}
       </div>
     </div>
   );

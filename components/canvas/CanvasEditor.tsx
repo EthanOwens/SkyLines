@@ -168,7 +168,39 @@ export function CanvasEditor({ note }: Props) {
 
   return (
     <div className="relative flex-1 h-full w-full">
-      <Tldraw shapeUtils={shapeUtils} tools={tools} onMount={handleMount} />
+      {/* spec.md M2 subtask 4 ("Draw tab rebuild") - hides tldraw's own
+          native toolbar/menu/zoom/etc. chrome so this app's own ribbon
+          (components/ribbon/Ribbon.tsx's Draw tab) is the sole
+          tool-switcher, WITHOUT the `hideUi` prop, which suppresses tldraw's
+          ENTIRE UI including the `StylePanel` (shape stroke color/fill/
+          stroke-width/opacity/dash/arrowhead controls) - there is no
+          replacement for that UI anywhere else in this app, so `hideUi`
+          would leave users with no way to restyle a shape once created.
+          Instead, this uses tldraw's independently-swappable `components`
+          override (see node_modules/tldraw/dist-esm/lib/ui/context/
+          components.mjs's `TldrawUiComponentsProvider`, confirmed against
+          the installed tldraw 4.5.12), nulling out every chrome slot EXCEPT
+          `StylePanel`, which is left unset so it keeps rendering tldraw's
+          default `DefaultStylePanel`. The canvas itself (shapes, selection,
+          editing) is entirely unaffected either way; only the surrounding
+          native UI chrome (minus the style panel) is suppressed. */}
+      <Tldraw
+        shapeUtils={shapeUtils}
+        tools={tools}
+        onMount={handleMount}
+        components={{
+          Toolbar: null,
+          MenuPanel: null,
+          ZoomMenu: null,
+          MainMenu: null,
+          NavigationPanel: null,
+          HelpMenu: null,
+          ActionsMenu: null,
+          PageMenu: null,
+          HelperButtons: null,
+          QuickActions: null,
+        }}
+      />
     </div>
   );
 }
