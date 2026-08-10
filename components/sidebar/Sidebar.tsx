@@ -30,7 +30,6 @@ import {
   PanelLeftOpen,
   FilePlus,
   FolderPlus,
-  LayoutDashboard,
   LogOut,
   User as UserIcon,
   Cloud,
@@ -90,18 +89,11 @@ export function Sidebar({ user }: Props) {
   }
 
   async function newNote() {
-    if (creating) return;
-    setCreating(true);
-    try {
-      const notebookId = await resolveNotebookId();
-      const id = await createNote(user.uid, "note", notebookId);
-      router.push(`/note?id=${id}`);
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function newCanvas() {
+    // spec.md subtask 6 ("Merge note creation UI"): "New note" and "New
+    // canvas" collapse to one action - every note is now the merged
+    // free-form-canvas editor, so this always creates `type: "canvas"` and
+    // routes to /canvas?id=... (there's no longer a separate linear-editor
+    // note type to create going forward).
     if (creating) return;
     setCreating(true);
     try {
@@ -150,16 +142,6 @@ export function Sidebar({ user }: Props) {
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button variant="ghost" size="icon" onClick={newCanvas} className="h-8 w-8" disabled={creating}>
-                <LayoutDashboard className="h-4 w-4" />
-              </Button>
-            }
-          />
-          <TooltipContent side="right">New canvas</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
               <Button variant="ghost" size="icon" onClick={newFolder} className="h-8 w-8">
                 <FolderPlus className="h-4 w-4" />
               </Button>
@@ -200,16 +182,6 @@ export function Sidebar({ user }: Props) {
             }
           />
           <TooltipContent>New note</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={newCanvas} disabled={creating}>
-                <LayoutDashboard className="h-4 w-4" />
-              </Button>
-            }
-          />
-          <TooltipContent>New canvas</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger

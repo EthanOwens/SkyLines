@@ -13,7 +13,6 @@ import { BUILTIN_THEMES } from "@/lib/themes/builtin";
 // ribbon tab switching, etc.) never count as a "page" to go back through.
 export interface NoteHistoryEntry {
   noteId: string;
-  type: "note" | "canvas";
 }
 
 // Ported unchanged from ../note_taking_app/stores/appStore.ts (spec.md
@@ -60,10 +59,14 @@ interface AppState {
   // of `activeEditor` above, kept as a separate field (rather than reused)
   // since tldraw's `Editor` type is unrelated to Tiptap's. Set/cleared by
   // CanvasEditor.tsx's `handleMount` on mount/unmount, same lifecycle as
-  // `activeEditor`. Consumed by TopBar.tsx's top-bar-level Undo/Redo to act
-  // on "whichever editor is currently focused" - since /note and /canvas are
-  // mutually exclusive routes, at most one of `activeEditor`/
-  // `activeCanvasEditor` is ever non-null at a time.
+  // `activeEditor`. Unlike `activeEditor` (which is only non-null while a
+  // specific RichTextShape has genuine Tiptap editing focus - see
+  // RichTextShape.tsx), `activeCanvasEditor` is non-null whenever ANY canvas
+  // note is open at all, regardless of shape focus - so the two CAN be
+  // simultaneously non-null (a canvas note open with no shape focused still
+  // has both set). Consumed by TopBar.tsx's top-bar-level Undo/Redo, which
+  // prioritizes `activeEditor` (the focused shape's Tiptap history) over
+  // `activeCanvasEditor` (tldraw's canvas-level history) when both are set.
   activeCanvasEditor: TldrawEditor | null;
 
   // The note-visit history stack itself, plus a pointer into it (spec.md
@@ -167,7 +170,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   visitNote: (entry) => {
     const { noteHistory, historyIndex } = get();
     const current = historyIndex >= 0 ? noteHistory[historyIndex] : undefined;
-    if (current && current.noteId === entry.noteId && current.type === entry.type) {
+    if (current && current.noteId === entry.noteId) {
       return;
     }
     const truncated = noteHistory.slice(0, historyIndex + 1);

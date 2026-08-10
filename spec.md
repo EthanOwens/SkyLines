@@ -1,98 +1,185 @@
-# Skylines — Login page dev/auth conveniences
+# Skylines — Free-form canvas notes (merge note/canvas into one OneNote-style page)
 
 ## Goal
 
-Add two small login-page features requested in `planning.md`: a real
-"forgot password" flow (Firebase's standard emailed reset link, not a
-passwordless bypass), and a "dev login" button that signs into (or
-auto-creates) a fixed personal testing account, separate from real user
-accounts.
+Replace the current "note" (linear Tiptap document) vs "canvas" (tldraw
+drawing page) split with a single note type: every note is a free-form,
+pannable canvas. Clicking anywhere on empty canvas creates a text box at
+that point; typing into it uses the existing full Tiptap rich-text editor
+(all formatting built in the prior spec — bold/italic/headings/lists/font/
+color, the Format tab, the bubble menu). Ink/drawing tools remain available
+on the same canvas (tldraw's existing toolbar). An empty text box
+disappears when it loses focus. Middle-mouse-drag pans the canvas.
+
+This is architecturally a merge, not a bolt-on: it reconciles "keep full
+Tiptap formatting" with "ink and text coexist on one page" by building a
+**custom tldraw shape that hosts a real Tiptap editor instance inside it**,
+rather than either (a) rebuilding a bespoke canvas from scratch, or (b)
+downgrading to tldraw's own plain-text shapes. tldraw's shape system
+supports arbitrary React content per shape via a `ShapeUtil`, which is the
+mechanism this relies on.
 
 ## Non-Goals
 
-- **No passwordless/email-free password reset.** `planning.md` originally
-  asked for a reset that skips email confirmation entirely. That's only
-  possible via the Firebase Admin SDK (a privileged, server-side
-  credential) — discussed with the user, who chose the standard
-  `sendPasswordResetEmail`/Firebase-hosted reset page flow instead. No
-  Admin SDK, no service-account key management, no custom in-app password
-  reset UI.
-- **No custom in-app reset-confirmation screen or deep-link handling for
-  password reset.** Firebase's default hosted action page (opened in the
-  system browser from the emailed link) handles the "set a new password"
-  step — this is not the same deep-link callback pattern
-  `lib/auth/googleOAuth.ts` uses for Google sign-in, and does not need to
-  be replicated here.
-- **No fix for the Google sign-in bug.** Blocked on the user creating a
-  "Desktop app" OAuth client in Google Cloud Console and setting
-  `NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_ID` — not code work, explicitly
-  left out of this spec per the user's choice. The app already shows a
-  clear "not configured" error for this case; that behavior is untouched.
-- **No production/dev-build gating on the dev-login button.** It's always
-  visible on `/login`, per the user's chosen simplicity — not hidden behind
-  an env flag or build-mode check.
-- **Don't touch** the existing Google-OAuth deep-link flow, the
-  notebook/ribbon/theme work from the prior spec, or `../note_taking_app`.
+- **No changes to the notebook/section/sidebar hierarchy, ribbon shell,
+  quick-access bar, account menu, or theme engine** built in the prior
+  spec. This spec only changes what happens *inside* a single note's
+  content area.
+- **No multi-user real-time collaboration** on a single canvas (cursors,
+  presence, etc.) — out of scope, unrelated to this request.
+- **No text-box resize/rotate handle redesign beyond whatever tldraw's
+  shape framework provides by default** — use the standard selection/resize
+  UI tldraw already gives every shape, don't build custom resize handles.
+- **No changes to the sync engine's core LWW/conflict-resolution logic**
+  (`lib/sync/push.ts`/`pull.ts`/`cleanup.ts`) — the merged note's content
+  keeps going through the exact same `canvasData` snapshot field and
+  debounced-save path `components/canvas/CanvasEditor.tsx` already uses;
+  this spec only changes what's *inside* that snapshot (shape types), not
+  how it's synced.
+- **Don't touch** notebook/folder CRUD, auth, `../note_taking_app`.
 
 ## Subtasks
 
-1. **Forgot password.** Add a "Forgot password?" link/button to
-   `app/login/page.tsx`. Clicking it takes the email already typed into the
-   form's email field (or prompts for one if empty) and calls Firebase's
-   `sendPasswordResetEmail(auth, email)`. Show a clear success message
-   ("check your email for a reset link") or a clear error if it fails
-   (e.g. `auth/user-not-found` — still show a generic-enough message to
-   avoid trivially confirming/denying account existence, matching the
-   existing login form's error-handling style). No new route, no custom
-   confirmation page — the emailed link opens Firebase's own hosted
-   password-reset page in the system browser.
-2. **Dev login button.** Add a visually-distinct "Dev Login" button to
-   `app/login/page.tsx` (separated from the real sign-in form, e.g. below a
-   divider) that signs into a fixed, hardcoded dev account — credentials
-   defined as constants directly in the page source, matching the existing
-   `TEST_EMAIL`/`TEST_PASSWORD` pattern already used throughout this
-   project's `app/spike-*/page.tsx` verification routes. On click: attempt
-   `signInWithEmailAndPassword`; if it fails because the account doesn't
-   exist yet, fall back to `createUserWithEmailAndPassword` so the button
-   is self-bootstrapping on first use, then proceed as a normal successful
-   sign-in (same post-login redirect as the real form).
+Sequenced by dependency — the custom shape and tool come first since
+everything else builds on them.
+
+1. **`RichTextShape` — a custom tldraw shape hosting a Tiptap editor.**
+   Define a tldraw `ShapeUtil` subclass (geometry: a resizable rectangular
+   bounding box, like tldraw's own built-in text/note shapes) whose
+   `component()` renders a `RichTextEditor`-equivalent Tiptap instance
+   inside the shape's bounds, and whose `props` store that instance's
+   content (Tiptap JSON), persisted as part of the shape the same way any
+   other tldraw shape's props are — meaning it round-trips through
+   `editor.getSnapshot()`/`loadSnapshot()` and the existing `canvasData`
+   save path in `components/canvas/CanvasEditor.tsx` with no changes to
+   that persistence mechanism. Register the shape with tldraw's
+   `shapeUtils` config. No click-to-create interaction yet (subtask 2) —
+   this subtask is just "the shape type exists, can be manually
+   instantiated (e.g. via a test/spike route), renders/edits Tiptap
+   content correctly, and survives a save/reload round-trip."
+2. **Click-to-create tool.** A custom tldraw `StateNode`/tool (mirroring
+   how tldraw's own built-in text tool works) that, on pointer-down over
+   empty canvas, creates a `RichTextShape` at that point and immediately
+   enters edit/focus mode on its Tiptap instance, ready for typing. Wire
+   this as the default/primary interaction so clicking empty canvas "just
+   works" without the user needing to explicitly select a tool first
+   (check whether this should replace tldraw's default select-tool
+   click-on-empty behavior, or coexist as a separate selectable tool —
+   pick whichever reads more naturally given tldraw's existing toolbar
+   still needs to expose ink/shape/select tools too).
+3. **Empty-shape auto-delete on blur.** When a `RichTextShape`'s Tiptap
+   editor loses focus (blur) and its content is empty (no text typed),
+   delete the shape from the tldraw store. Verify this doesn't fire
+   spuriously (e.g. a shape that already has real content, or one that's
+   mid-creation, must never be deleted just because focus briefly moves
+   elsewhere).
+4. **Wire the existing Format tab / bubble menu to the focused shape's
+   Tiptap instance.** The prior spec's `activeEditor` store field
+   (`stores/appStore.ts`, set by `components/editor/RichTextEditor.tsx` on
+   mount/unmount) assumed exactly one Tiptap instance per note. Now there
+   can be many (one per `RichTextShape`), only one editable at a time.
+   Update whichever shape currently has editing focus to be the one that
+   sets `activeEditor`, and clear it when that shape loses focus (not on
+   unmount, since shapes aren't mounted/unmounted the way page components
+   are) — so the Format tab and bubble menu keep working exactly as before,
+   now correctly targeting "whichever text box you're currently typing
+   in."
+5. **Verify middle-mouse-drag panning.** tldraw supports this by default;
+   confirm it isn't disabled or conflicting with anything already
+   customized in `components/canvas/CanvasEditor.tsx` (e.g. its own
+   `editor.store.listen` autosave wiring, or the new click-to-create tool
+   from subtask 2 potentially intercepting middle-clicks). Fix only if a
+   real conflict is found — otherwise this subtask is verification, not
+   new code.
+6. **Merge note creation UI: retire the separate "New canvas" action.**
+   `components/sidebar/Sidebar.tsx` and `FolderItem.tsx` currently have
+   separate "New note" (Tiptap) and "New canvas" (tldraw) actions/icons.
+   Collapse to one "New note" action that creates a note using the merged
+   free-form-canvas editor. Retire `app/note/page.tsx` as a distinct
+   full-page linear editor — all notes now route through (what is
+   currently) `app/canvas/page.tsx`'s editor. Decide and implement whether
+   `/note?id=...` redirects to `/canvas?id=...` for old bookmarks/links, or
+   is removed outright (bias toward a redirect, cheap and avoids dead
+   links from the note-history stack).
+7. **Reconcile back/forward history and undo/redo with the merged model.**
+   `stores/appStore.ts`'s `NoteHistoryEntry.type` (`"note" | "canvas"`,
+   subtask 14 of the prior spec) and `components/topbar/TopBar.tsx`'s
+   undo/redo (subtask 15, which assumed `activeEditor`/`activeCanvasEditor`
+   were mutually exclusive *by route*) both need updating: with one merged
+   note type, undo/redo must decide between "undo the focused text box's
+   Tiptap edit" and "undo the last tldraw-level action (shape
+   move/ink stroke/shape creation)" based on **actual focus state**, not
+   route — building directly on subtask 4's focus-tracking. Update
+   `NoteHistoryEntry`/back-forward routing accordingly now that there's
+   only one destination route per note.
+8. **Migrate existing linear-Tiptap notes into the merged format.** Any
+   existing note with `type = "note"` and real `content` (Tiptap JSON) —
+   convert it into `canvasData` containing exactly one `RichTextShape`
+   (placed at a sensible default position, e.g. top-left) whose content is
+   that note's original Tiptap document, then treat it as the merged type
+   going forward. Run this as a one-time, idempotent migration (e.g.
+   triggered lazily the first time an old-format note is opened, or as a
+   startup pass over all of a user's notes — pick whichever is simpler and
+   safer against partial-failure/interruption; must not lose data if
+   interrupted partway through).
 
 ## Key Decisions
 
-- **Password reset uses Firebase's standard emailed-link flow**, not an
-  Admin-SDK-backed passwordless bypass — avoids bundling a privileged
-  service-account credential into a shipped desktop app, at the cost of
-  requiring an actual email round-trip. Decided with the user directly.
-- **No custom reset-confirmation UI** — Firebase's default hosted action
-  page is sufficient and avoids replicating the deep-link callback
-  machinery already built for Google OAuth for a feature that doesn't need
-  it.
-- **Dev-login credentials are hardcoded in source**, not read from
-  `.env.local` — matches this project's existing spike-route convention
-  (committed test credentials for a throwaway, no-real-data-value account),
-  and avoids the button silently failing on a fresh clone with no local env
-  file configured.
-- **Dev-login auto-creates the account on first use** rather than requiring
-  the user to manually register it first — makes the button work
-  out-of-the-box, consistent with "personal login testing grounds" framing.
-- **Google sign-in bug excluded from this spec** — purely a manual
-  Google Cloud Console configuration step blocked on the user, not
-  implementation work; tracked separately, outside `/dev-loop`.
+- **Built on a custom tldraw `ShapeUtil` hosting a real Tiptap instance**,
+  not a bespoke free-form canvas and not a downgrade to tldraw's plain-text
+  shapes. This is the reconciliation of two things the user wants
+  simultaneously: full existing rich-text formatting fidelity, and ink/
+  drawing tools coexisting on the same page. tldraw already solves pan/
+  zoom/middle-mouse-drag/click-placement/selection/resize generically for
+  any shape type; this spec adds one new shape type rather than
+  reimplementing all of that from scratch.
+- **One merged note type going forward** — the separate "canvas" note type
+  (and its "New canvas" UI, its own Draw-tab-only-on-`/canvas`-route
+  gating) goes away. The user was explicit that "canvas" was never meant
+  to be a distinct note type, only a description of the free-form page
+  behavior every note should have.
+- **Existing notes are migrated, not left behind** — an old linear-Tiptap
+  note becomes a canvas with one `RichTextShape` holding its original
+  content, so no user data becomes inaccessible or second-class after this
+  ships.
+- **Undo/redo and back/forward history move from route-based to
+  focus-based reasoning** — a necessary consequence of merging routes;
+  built directly on the same focus-tracking subtask 4 already needs for
+  the Format tab, rather than as separate new machinery.
+- **Reuses the exact existing `canvasData` snapshot persistence/sync
+  path** — no sync-engine or schema changes; the merged shape type is just
+  new content inside a mechanism that's already proven and unchanged.
 
 ## Open Questions
 
-- Exact dev-login account email/password values are left to the
-  implementor to choose sensibly (e.g. `dev@skylines.local` / a fixed
-  placeholder password) unless the user has a specific preference — not
-  security-sensitive since this is a self-bootstrapping throwaway account.
-- Whether the "Forgot password?" affordance should be a plain link or a
-  button, and its exact placement in the existing login form layout, is
-  left to the implementor's visual judgment, following the form's existing
-  shadcn/Tailwind styling conventions.
+- Exact undo/redo focus-detection heuristic (subtask 7) — e.g. does
+  clicking away from a text box mid-edit but before any tldraw-level
+  action count as "tldraw is now focused," or does undo/redo need a short
+  grace period / last-known-focus memory to feel natural? Left to
+  implementation-time judgment and manual testing, since this is a feel/UX
+  question hard to fully resolve on paper.
+- Whether `RichTextShape`'s default size/position on creation (subtask 2)
+  should auto-grow with typed content (like OneNote's actual text boxes,
+  which expand as you type) or stay at a fixed initial size requiring
+  manual resize — auto-grow is closer to OneNote's real behavior and
+  probably expected, but left as an implementation-time call informed by
+  what tldraw's shape framework makes easy/idiomatic.
+- Whether the one-time migration (subtask 8) should run automatically and
+  silently, or surface any UI/confirmation to the user before converting
+  their existing notes — leaning toward silent/automatic (consistent with
+  how every other migration in this project has worked so far), but
+  flagging since it's a real, irreversible-in-place data transformation
+  worth a deliberate choice rather than an assumption.
 
 ## Progress
 
-- Subtask 1 (Forgot password) — done. Added a "Forgot password?" button to `app/login/page.tsx`, wired to `sendPasswordResetEmail`. Uses the current email field value or prompts via `window.prompt` if empty; shows a distinct success message, and a single generic error for any failure (doesn't distinguish "no such user" from other cases, per the spec's privacy intent). No new route — Firebase's own hosted reset page handles the rest. Reviewer caught three real issues: (1) Medium — the "Sign in" and "Forgot password?" buttons had independent disabled states, so clicking one while the other was in flight could produce contradictory/overwritten messages with no indication which action they belonged to; fixed by disabling both on the combined `loading || resetLoading` state; (2) Low — `handleGoogle` and its callback's error handler never cleared a leftover `resetMessage`, letting a stale "check your email" message linger through an unrelated Google sign-in attempt; fixed; (3) Low — the email value wasn't trimmed, so whitespace-only input could slip past the empty-check and fail ungracefully at the Firebase call instead of being caught earlier; fixed.
-- Subtask 2 (Dev login button) — done. Added a visually-distinct "Dev Login" button (dashed amber styling, below a "dev only" divider) to `app/login/page.tsx` that signs into a fixed `dev@skylines.local` account, self-bootstrapping via `createUserWithEmailAndPassword` on first use. Extended subtask 1's combined-disabled-state pattern (`anyActionInFlight`) to cover all four login-page actions (Sign in, Forgot password, Google, Dev Login). Reviewer caught two real issues: (1) High — the original fallback attempted account creation on *any* sign-in failure, not just "account doesn't exist," so a transient network error or a genuinely-wrong password on an existing account would trigger a masking creation attempt and flatten a diagnosable problem into an unhelpful generic error; fixed by inspecting the Firebase error code and only falling back to creation on `auth/user-not-found`/`auth/invalid-credential`; (2) Low — both catches discarded the underlying error with no logging; fixed with `console.error`. **Known, accepted tradeoff** (raised by reviewer, not fixed — matches the user's explicit `/plan`-time decision): the button is always visible with no build-mode gating and signs anyone who clicks it into one shared, hardcoded-password account — in production, any two real users clicking it would land in the same account and could see/overwrite each other's notes.
+- Subtask 1 (RichTextShape — custom tldraw shape hosting Tiptap) — done. Added `components/canvas/RichTextShape.tsx`: a `BaseBoxShapeUtil` subclass whose `component()` hosts a real Tiptap editor with the exact same extensions list as `components/editor/RichTextEditor.tsx`. Content lives in `shape.props.content` and rides through tldraw's existing snapshot/persistence mechanism unchanged — `CanvasEditor.tsx` only gained a one-line `shapeUtils={[RichTextShapeUtil]}` registration. Uses tldraw's default double-click-to-edit (`canEdit()`) for now; no custom click-to-create tool yet (subtask 2). Drag-vs-edit-mode pointer-event conflict resolved via the same `pointer-events`-toggle + `stopEventPropagation` pattern tldraw's own built-in embed/video/text shapes use. Verified via a throwaway `app/spike-richtext-shape` harness: shape creation, typing + formatting marks, drag-without-typing and edit-without-dragging both confirmed independent, and a genuine save/reload round-trip through real SQLite. Reviewer did deep source-level verification against the actual installed `tldraw`/`@tiptap/react` packages (not just trusting comments) on every risky claim — the `declare module "@tldraw/tlschema"` type-augmentation pattern, the prop-validator cast's runtime safety, closure-staleness in the `useEditor` deps array, Tiptap instance cleanup on unmount, and fidelity to tldraw's own drag-vs-edit pattern — and found no bugs. **Remaining concern (non-blocking)**: the prop validator's `T.jsonValue.nullable() as unknown as T.Validatable<object | null>` cast is technically wider at runtime (`JsonValue | null`) than the TypeScript type it's cast to, so TypeScript wouldn't catch an accidental bare string/number/array being written to `content` elsewhere — not a bug today, just worth remembering if this validator is reused.
+- Subtask 2 (Click-to-create tool) — done. Added `components/canvas/RichTextTool.tsx`: a genuine separate tldraw `StateNode` tool (Select/Draw/etc. stay fully intact and available) that creates a `RichTextShape` on empty-canvas pointer-down and immediately enters edit mode, set as the default active tool on note mount so "clicking empty canvas just works." Includes a workaround (`installRichTextToolAutoReturn`) for a real, non-obvious tldraw framework quirk — the editor unconditionally force-switches to `select` whenever a shape enters edit mode, which would otherwise defeat repeated click-to-create. Reviewer traced the actual bundled tldraw source and caught two real bugs: (1) High — the tool tagged created shapes with a *permanent* `meta` flag to know when to auto-return to itself, but the flag persisted forever, so later re-editing that same shape via the ordinary Select tool (double-click) would incorrectly hijack the user back into the rich-text tool afterward — fixed by replacing it with a transient, session-scoped `Set<TLShapeId>` consumed exactly once per edit session; (2) Moderate — missing the `isLocked` check tldraw's own Select tool applies before selecting a hit shape, so clicking a locked note would silently select it and do nothing, rather than falling through to shape-creation like tldraw's own semantics — fixed. **Process note**: this fix was verified via `tsc`/code reading rather than live re-verification — subtask 3 (empty-shape auto-delete on blur) exercises this exact edit-session-lifecycle code next, a natural place to confirm it live. Also: several earlier debug sessions left ~10 orphaned test notes in Firestore under a since-deleted throwaway account (not a code bug) — worth a manual cleanup in the Firebase console at your convenience.
+- Subtask 3 (Empty-shape auto-delete on blur) — done. Extended `RichTextShape.tsx`'s `isEditing` effect: on a genuine edit-session-ending transition (tracked via a `wasEditingRef`, driven by tldraw's stable `useIsEditing`, not a raw DOM blur event), an empty Tiptap document triggers `tldrawEditor.deleteShapes`. Applies to any empty shape regardless of how it entered edit mode. Subtask 2's tool-auto-return concern confirmed to coexist correctly (verified live). Reviewer caught one real, low-severity, fails-safe gap: the transition-tracking ref's bookkeeping was gated behind a `!tiptapEditor` null-check, but this app's Tiptap instance isn't created synchronously (Next.js auto-detection defers it), so a transition occurring before Tiptap was ready could leave the ref stale and silently miss a legitimate deletion in a narrow race window — fixed by moving the ref bookkeeping to run unconditionally. All other scrutinized concerns (first-render race with subtask 2, ordering against the tool's separate side-effect mechanism, deleting a shape from within its own React effect, stale-editor-reference risk) confirmed to be non-issues. Thoroughly live-verified, including the specific coexistence check and the emptied-out-shape-still-gets-deleted case.
+- Subtask 4 (Wire Format tab/bubble menu to focused shape) — done. `RichTextShape.tsx` now sets `activeEditor` on entering edit mode and clears it on a race-guarded genuine blur (only clearing if the store still points at this shape's own editor, protecting against rapid shape-to-shape focus switches). Added a `BubbleMenu` mirroring the old full-page editor's implementation, scaled down for a shape's smaller bounding box. Reviewer caught two real issues: (1) High — the blur-based clear had no corresponding unmount-cleanup path, so navigating away from a note while a shape was mid-edit could leave `activeEditor` pointing at an already-destroyed Tiptap instance that `Ribbon.tsx`/`TopBar.tsx` call methods on with no `isDestroyed` guard — fixed with a separate unmount effect using the same race-guard; (2) Medium — the bubble menu defaults to appending inside its own DOM parent, which here is the shape's small `overflow: auto` box, so a selection near a shape's edge would render clipped/invisible — fixed with `appendTo={() => document.body}`. **Process note**: this fix was verified via `tsc`/code reading rather than live re-verification. Multi-shape focus-following and the rapid-switch race-guard were thoroughly live-verified by the implementor before the fixer round. One more orphaned test note left in Firestore (title "Spike Editor Note") — same manual-cleanup note as subtask 2.
+- Subtask 5 (Verify middle-mouse-drag panning) — done, no code changes. Verified panning works correctly in every scenario (empty canvas, over an existing shape, rich-text tool active, Select tool active) with real camera-position deltas, and doesn't spuriously interfere with the autosave listener, tool auto-return, or an in-progress edit elsewhere on the canvas. The specific concern investigated before dispatch — `RichTextTool.tsx`'s `onPointerDown` never checking `info.button` — turned out to be a non-issue: traced at the source level that tldraw's own `Editor.dispatch()` intercepts a middle-click for panning and returns before the event ever reaches any tool's `onPointerDown`, confirmed empirically via live testing.
+- Subtask 6 (Merge note creation UI, retire /note route) — done. Collapsed "New note"/"New canvas" into a single "New note" action (always creates `type: "canvas"` going forward). `app/note/page.tsx` is now a pure redirect to `/canvas?id=...`. `CanvasEditor.tsx` gained a minimal, idempotent inline migration: an old-format note (`type: "note"`, real `content`, no `canvasData` yet) is wrapped into a single `RichTextShape` and saved as `canvasData` the moment it's opened, so old content becomes visible instead of appearing to vanish — verified with real SQLite-level evidence that the old `content` column stays byte-identical/untouched while `canvasData` gets populated. Reviewer traced through several trickier concerns (double-migration risk on remount, `createShape` without an explicit id, autosave-listener race against the migration's own write) against tldraw's actual source and found all to be non-issues. One real, minor inconsistency: `TopBar.tsx`'s Back/Forward navigation still had the old `note.type === "canvas" ? "/canvas" : "/note"` branching, missed by the other three call sites this diff updated (not a data bug, just an extra redirect hop for old-format notes) — fixed to route directly. **Still pending** (explicitly deferred to subtask 8): a startup/backfill migration pass for notes that are never individually opened.
+- Subtask 7 (Reconcile back/forward + undo/redo with merged model) — done. Corrected stale comments in `TopBar.tsx`/`appStore.ts` describing an outdated "mutually exclusive by route" invariant for `activeEditor`/`activeCanvasEditor` — live testing found the existing undo/redo branching logic (built in a prior subtask) was already correct for the merged model, no logic change needed. Removed the now-dead `NoteHistoryEntry.type` field and its one call site, confirmed fully unused via independent grep. Reviewer independently traced the specific empty-shape-auto-delete race (does `activeEditor` ever briefly point at an already-deleted shape's orphaned editor?) and confirmed it's cleared synchronously before deletion, never dangling. Thoroughly live-verified (focused-shape undo, canvas-level undo after unfocusing, interleaved sequences, redo, Back/Forward regression).
+- Subtask 8 (Migrate existing linear-Tiptap notes) — done. Scoped down to a verification pass per an explicit decision with the user: subtask 6's lazy on-open migration is the complete solution (a note nobody opens doesn't need migrating), no proactive startup/backfill pass was built (would have required either risky hand-crafted tldraw snapshot JSON or a meaningfully heavier hidden-editor-per-note mechanism, for a benefit judged not worth it). Verification found one real bug: the migration's idempotency guard only checked the (possibly stale) `note.canvasData` prop, not the live editor's actual state — a second `onMount` invocation for the same underlying tldraw store (reproducible via React Strict Mode's dev-mode mount/cleanup/mount replay) would re-run the migration and create a duplicate, overlapping shape. Fixed by also checking `editor.getCurrentPageShapes().length === 0`. Reviewer traced tldraw's actual mount lifecycle source and confirmed the fix fully closes the race (synchronous, not just narrowed), doesn't risk false-skipping a genuinely unmigrated note, and doesn't interact badly with the empty-shape-auto-delete logic. Also verified: idempotency across a genuine second open (not just same-session remount), interruption safety (reasoned through the actual code path — nothing observable persists until the async `updateNote` write lands), degenerate content (empty and richly-formatted notes both migrate cleanly), and that `content` is never touched by anything else once migrated.
 
-All subtasks complete. This spec (login page dev/auth conveniences) is done.
+All 8 subtasks complete. This spec (free-form canvas notes, merging note/canvas into one OneNote-style page) is done.

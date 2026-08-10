@@ -218,8 +218,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         !notebooksLoaded ||
         notebooks.some((n) => n.id === note.notebookId);
       setSelectedNotebook(notebookIsValid ? note.notebookId : null);
-      const dest = note.type === "canvas" ? "/canvas" : "/note";
-      router.replace(`${dest}?id=${note.id}`);
+      // spec.md subtask 6: every note - regardless of `type` - now opens
+      // through the merged free-form-canvas editor (old-format notes are
+      // safely inline-migrated there, see CanvasEditor.tsx's header
+      // comment), so the last-open-note restore always routes to /canvas.
+      router.replace(`/canvas?id=${note.id}`);
     });
 
     return () => {

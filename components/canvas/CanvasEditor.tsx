@@ -22,6 +22,22 @@ import "@tldraw/tldraw/tldraw.css";
 import { updateNote } from "@/lib/db/notes";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
+import { RichTextShapeUtil, type RichTextShape } from "./RichTextShape";
+import { RichTextTool, installRichTextToolAutoReturn } from "./RichTextTool";
+
+// spec.md subtask 1 ("RichTextShape") - registers the custom shape type via
+// tldraw's `shapeUtils` prop. Defined as a module-level constant (rather
+// than inline in the JSX below) so it's referentially stable across
+// re-renders - <Tldraw> re-creates its internal shape registry if this
+// array's identity changes.
+const shapeUtils = [RichTextShapeUtil];
+
+// spec.md subtask 2 ("Click-to-create tool") - registers the custom
+// click-to-create tool via tldraw's `tools` prop (see Tldraw.tsx's
+// `mergeArraysAndReplaceDefaults('id', tools, allDefaultTools)`, which adds
+// this alongside - not instead of - tldraw's own select/draw/etc. tools).
+// Same referential-stability reasoning as `shapeUtils` above.
+const tools = [RichTextTool];
 
 interface Props {
   note: Note;
@@ -47,6 +63,26 @@ export function CanvasEditor({ note }: Props) {
       // falls back to a neutral/disabled state once this canvas unmounts.
       setActiveCanvasEditor(editor);
 
+      // spec.md subtask 2 ("Click-to-create tool") - makes the rich-text
+      // tool the default/primary interaction on mount (design guidance:
+      // "set this new tool as the DEFAULT active tool when a canvas note
+      // first mounts"), instead of leaving tldraw's own `select` as the
+      // default. tldraw's `<TldrawEditor>` hardcodes `initialState="select"`
+      // internally (see Tldraw.tsx) with no prop to override it, so this is
+      // switched right after mount instead - the same place/pattern
+      // `editor.loadSnapshot` below already uses for other one-time
+      // post-mount setup. Users can still switch to `select`/`draw`/etc. via
+      // the toolbar (or `editor.setCurrentTool(...)`) exactly like any other
+      // tldraw tool - this only changes what's active by default.
+      editor.setCurrentTool("rich-text");
+
+      // See RichTextTool.tsx's header comment for why this is needed
+      // (tldraw's own framework force-switches `currentTool` to `select`
+      // any time a shape enters edit mode - this keeps the rich-text tool
+      // "sticky" across repeated click-to-create actions the way spec.md's
+      // "just works, no reselecting a tool" requirement needs).
+      const uninstallRichTextToolAutoReturn = installRichTextToolAutoReturn(editor);
+
       // Load persisted snapshot
       if (note.canvasData) {
         try {
@@ -54,6 +90,49 @@ export function CanvasEditor({ note }: Props) {
         } catch {
           // Snapshot incompatible — start fresh
         }
+      } else if (note.content && editor.getCurrentPageShapes().length === 0) {
+        // spec.md subtask 6 data-safety requirement: an old-format note
+        // (`type: "note"`, real Tiptap `content` from the retired full-page
+        // linear editor, no `canvasData` yet - subtask 8's full migration
+        // hasn't run) must never render as an apparently-blank canvas just
+        // because `canvasData` happens to be null. This performs a minimal,
+        // safe, idempotent inline migration the moment such a note is
+        // opened here: wrap the existing `content` into a single
+        // RichTextShape at a default top-left position, then persist that
+        // as this note's `canvasData` via the exact same save path below -
+        // so the old content becomes visible immediately, and every
+        // subsequent open of this note takes the `note.canvasData` branch
+        // above instead (idempotent - this branch never runs twice for the
+        // same note). This is intentionally the minimal, per-note version;
+        // a startup/backfill pass over notes that are never individually
+        // opened this way is still spec.md subtask 8's job.
+        //
+        // spec.md subtask 8 verification finding: `note.canvasData` alone
+        // is NOT a reliable idempotency guard against a second `onMount`
+        // firing for the SAME already-migrated editor/store instance within
+        // one component lifetime - `note` is a React prop captured in this
+        // callback's closure, so it stays stale (still reflecting
+        // `canvasData: null`) even after the migration below has already
+        // written a shape into this live editor and persisted it, until a
+        // fresh mount re-reads the note from the DB. This is exactly what
+        // React's dev-mode Strict Mode double-invocation of `onMount`
+        // exercises (mount -> cleanup -> mount again, reusing the same
+        // underlying editor/store) - confirmed live via CDP: without this
+        // second check, that double-invocation created two overlapping
+        // RichTextShapes from the same note content in a single session.
+        // Checking the live editor's own current shape count instead - not
+        // just the stale prop - makes the guard correct regardless of *why*
+        // `onMount` fires twice for the same store (Strict Mode today, but
+        // also any other real remount-with-shared-store scenario): a
+        // second invocation sees a non-empty page and skips.
+        editor.createShape<RichTextShape>({
+          type: "rich-text",
+          x: 40,
+          y: 40,
+          props: { w: 480, h: 320, content: note.content as object },
+        });
+        const snapshot = editor.getSnapshot();
+        void updateNote(note.id, { canvasData: snapshot as unknown as object });
       }
 
       // Listen for changes and auto-save
@@ -74,6 +153,7 @@ export function CanvasEditor({ note }: Props) {
         setActiveCanvasEditor(null);
         if (saveTimer.current) clearTimeout(saveTimer.current);
         unlisten();
+        uninstallRichTextToolAutoReturn();
         // Flush any pending debounced save on unmount, so navigating away
         // within the 800ms debounce window doesn't silently drop the edit.
         if (pendingSaveRef.current) {
@@ -83,12 +163,12 @@ export function CanvasEditor({ note }: Props) {
         }
       };
     },
-    [note.id, note.canvasData, setActiveCanvasEditor],
+    [note.id, note.canvasData, note.content, setActiveCanvasEditor],
   );
 
   return (
     <div className="relative flex-1 h-full w-full">
-      <Tldraw onMount={handleMount} />
+      <Tldraw shapeUtils={shapeUtils} tools={tools} onMount={handleMount} />
     </div>
   );
 }
