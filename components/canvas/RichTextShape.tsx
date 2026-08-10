@@ -167,6 +167,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   // 1's exact condition).
   const showChrome = isHovered || isEditing;
   const setActiveEditor = useAppStore((s) => s.setActiveEditor);
+  const setPendingEditClickPoint = useAppStore((s) => s.setPendingEditClickPoint);
 
   const tiptapEditor = useTiptapEditor(
     {
@@ -255,7 +256,41 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
       // toggles `contenteditable` but leaves real keyboard focus on
       // tldraw's own container, so typed keystrokes never reach the
       // editor.
-      tiptapEditor.commands.focus("end");
+      //
+      // spec.md subtask 2 ("Click-to-cursor, no double-click required").
+      // RichTextTool.tsx's `Idle.onPointerDown` records exactly where a
+      // click on THIS shape landed (client/viewport coordinates) right
+      // before it called `editor.setEditingShape()` - a one-shot,
+      // read-then-cleared signal, since this is a transient "where did the
+      // triggering click land" fact, not persisted document data (see
+      // `pendingEditClickPoint`'s own comment in stores/appStore.ts). If
+      // present and it's for this shape, resolve it to a ProseMirror
+      // document position via Tiptap/ProseMirror's own
+      // `EditorView.posAtCoords()` (expects client coordinates, exactly
+      // what was captured) and place the cursor there. Falls back to the
+      // previous "focus at the end" behavior whenever there's no pending
+      // click to apply - e.g. a freshly-created empty shape (no meaningful
+      // "click position" for a shape that didn't exist a moment ago - see
+      // RichTextTool.tsx's create-shape branch, which deliberately never
+      // sets `pendingEditClickPoint`), or `posAtCoords` failing to resolve
+      // a position (e.g. the click coordinates no longer correspond to any
+      // on-screen content by the time this effect runs).
+      const pendingClick = useAppStore.getState().pendingEditClickPoint;
+      let cursorPlaced = false;
+      if (pendingClick && pendingClick.shapeId === shape.id) {
+        setPendingEditClickPoint(null);
+        const resolved = tiptapEditor.view.posAtCoords({
+          left: pendingClick.clientX,
+          top: pendingClick.clientY,
+        });
+        if (resolved) {
+          tiptapEditor.commands.focus(resolved.pos);
+          cursorPlaced = true;
+        }
+      }
+      if (!cursorPlaced) {
+        tiptapEditor.commands.focus("end");
+      }
       // spec.md subtask 4 ("Wire the Format tab / bubble menu to the
       // focused shape's Tiptap instance"). Mirrors
       // components/editor/RichTextEditor.tsx's identical `setActiveEditor`
@@ -304,7 +339,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     if (tiptapEditor.isEmpty) {
       tldrawEditor.deleteShapes([shape.id]);
     }
-  }, [isEditing, tiptapEditor, tldrawEditor, shape.id, setActiveEditor]);
+  }, [isEditing, tiptapEditor, tldrawEditor, shape.id, setActiveEditor, setPendingEditClickPoint]);
 
   // Genuine unmount-cleanup path for `activeEditor`, kept SEPARATE from the
   // `isEditing`-keyed effect above (that effect's cleanup semantics are tied

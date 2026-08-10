@@ -133,6 +133,7 @@ import {
   type TLShapeId,
   type TLStateNodeConstructor,
 } from "@tldraw/tldraw";
+import { useAppStore } from "@/stores/appStore";
 import type { RichTextShape } from "./RichTextShape";
 
 const DEFAULT_WIDTH = 320;
@@ -163,22 +164,79 @@ class Idle extends StateNode {
     // select tool does for this exact "canvas pointer-down, but was a shape
     // actually there" question.
     const hitShape = getHitShapeOnCanvasPointerDown(editor);
-    // Mirrors tldraw's own SelectTool/childStates/Idle.ts, which never
-    // selects a locked shape this way (`editor.select()` doesn't check lock
-    // state itself, unlike `editor.setEditingShape()`, which already no-ops
-    // for locked shapes internally). If the hit shape is locked, fall
-    // through to the normal "create a new shape" behavior below instead of
-    // treating the click as a no-op - the locked shape occupying that point
-    // isn't something this tool can meaningfully interact with.
-    if (hitShape && !hitShape.isLocked) {
+    if (hitShape) {
       // Clicking an existing rich-text shape edits it in place instead of
       // stamping a duplicate on top of it; clicking any other shape type
-      // (e.g. a drawn stroke) is a no-op.
+      // (e.g. a drawn stroke) is a no-op (handled in the `else` branch
+      // below) unless it's locked, in which case it falls through to the
+      // "create a new shape" behavior further down - mirrors tldraw's own
+      // SelectTool/childStates/Idle.ts, which never selects a locked shape
+      // this way (`editor.select()` doesn't check lock state itself, unlike
+      // `editor.setEditingShape()`, which already no-ops for locked shapes
+      // internally).
       if (hitShape.type === "rich-text") {
-        editor.select(hitShape.id);
-        editor.setEditingShape(hitShape.id);
+        // Gate on `editor.canEditShape()` - the exact public predicate
+        // `editor.setEditingShape()` uses internally to decide whether it
+        // will actually enter edit mode - rather than `!hitShape.isLocked`
+        // alone. `hitShape.isLocked` only reflects the shape's OWN lock
+        // flag; `canEditShape()` additionally walks up via
+        // `isShapeOrAncestorLocked()`, so a shape that isn't itself locked
+        // but sits inside a locked group/frame ancestor still correctly
+        // reads as non-editable here. Getting this wrong previously caused
+        // a real bug: `setPendingEditClickPoint()` (below) would fire based
+        // only on the shape's own lock flag, then `setEditingShape()` would
+        // silently no-op for the ancestor-locked shape (its `isEditing`
+        // never flips to true), so RichTextShape.tsx's edit-mode-entry
+        // effect - the only place that reads-and-clears
+        // `pendingEditClickPoint` - would never run, leaving a stale entry
+        // in the store that a LATER, unrelated edit of that same shape id
+        // (e.g. after the ancestor is unlocked, or via the Select tool's
+        // own double-click path) would blindly reuse, silently placing the
+        // cursor at a bogus/stale location. If the shape can't actually be
+        // edited for any lock reason (own or ancestor's), fall through to
+        // the "create a new shape" behavior below instead - same as the
+        // directly-locked case already did.
+        if (editor.canEditShape(hitShape.id)) {
+          // spec.md subtask 2 ("Click-to-cursor, no double-click required").
+          // Capture WHERE this click landed so RichTextShape.tsx's edit-mode-
+          // entry effect can place the ProseMirror cursor at that exact
+          // point, instead of always focusing at the end of the document.
+          // `info.point` here is genuinely CLIENT/viewport space, not page
+          // space, despite this being a `TLPointerEventInfo` handled deep
+          // inside tldraw's page-space-heavy event pipeline - confirmed by
+          // reading @tldraw/editor's own `getPointerInfo()` (which builds
+          // this object straight from the raw DOM PointerEvent's
+          // `clientX`/`clientY`, see node_modules/@tldraw/editor/src/lib/
+          // utils/getPointerInfo.ts) and `InputsManager.updateFromEvent()`
+          // (node_modules/@tldraw/editor/src/lib/editor/managers/
+          // InputsManager/InputsManager.ts), which derives its own page-space
+          // tracking (`_currentPagePoint`, exposed via
+          // `editor.inputs.getOriginPagePoint()` - see the "genuinely empty
+          // canvas" branch below) into SEPARATE internal signals rather than
+          // mutating `info.point` itself. So this needs no
+          // page-to-screen/viewport conversion (e.g. `editor.pageToViewport`)
+          // - `info.point.x`/`.y` ARE the client coordinates
+          // `EditorView.posAtCoords()` expects, already.
+          useAppStore.getState().setPendingEditClickPoint({
+            shapeId: hitShape.id,
+            clientX: info.point.x,
+            clientY: info.point.y,
+          });
+          editor.select(hitShape.id);
+          editor.setEditingShape(hitShape.id);
+          return;
+        }
+        // Not editable (locked, directly or via an ancestor) - fall through
+        // to the "create a new shape" behavior below.
+      } else if (!hitShape.isLocked) {
+        // Non-rich-text, unlocked shape: no-op, don't stamp a duplicate on
+        // top of it.
+        return;
       }
-      return;
+      // Non-rich-text locked shape, or non-editable rich-text shape: fall
+      // through to the "create a new shape" behavior below - the locked
+      // shape occupying that point isn't something this tool can
+      // meaningfully interact with.
     }
 
     // Genuinely empty canvas - mirrors tldraw's own text/note tools'

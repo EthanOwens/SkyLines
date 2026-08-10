@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
-import type { Editor as TldrawEditor } from "@tldraw/tldraw";
+import type { Editor as TldrawEditor, TLShapeId } from "@tldraw/tldraw";
 import type { Folder, Note, Notebook, SyncStatus } from "@/types";
 import type { Theme } from "@/lib/themes/types";
 import { BUILTIN_THEMES } from "@/lib/themes/builtin";
@@ -69,6 +69,21 @@ interface AppState {
   // `activeCanvasEditor` (tldraw's canvas-level history) when both are set.
   activeCanvasEditor: TldrawEditor | null;
 
+  // spec.md subtask 2 ("Click-to-cursor, no double-click required"). A
+  // transient, one-shot signal from RichTextTool.tsx's `Idle.onPointerDown`
+  // (the moment it decides an existing rich-text shape was clicked and calls
+  // `editor.setEditingShape(hitShape.id)`) to RichTextShape.tsx's edit-mode-
+  // entry effect (which runs on a LATER render, once `isEditing` flips true
+  // for that shape) - carries the click's raw client (viewport) coordinates
+  // so that effect can resolve a precise ProseMirror cursor position via
+  // Tiptap's `view.posAtCoords()` instead of unconditionally focusing at the
+  // end of the document. Deliberately NOT persisted document data - it's
+  // read once and cleared by the consuming effect (or ignored/overwritten by
+  // the next click), not part of the tldraw shape/store snapshot. `null`
+  // when there's no pending click to apply (e.g. a freshly-created empty
+  // shape, which intentionally never sets this - see RichTextTool.tsx).
+  pendingEditClickPoint: { shapeId: TLShapeId; clientX: number; clientY: number } | null;
+
   // The note-visit history stack itself, plus a pointer into it (spec.md
   // subtask 14). `historyIndex` is `-1` when the stack is empty, and
   // otherwise points at the entry currently being viewed.
@@ -111,6 +126,7 @@ interface AppState {
   setSyncStatus: (status: SyncStatus) => void;
   setActiveEditor: (editor: Editor | null) => void;
   setActiveCanvasEditor: (editor: TldrawEditor | null) => void;
+  setPendingEditClickPoint: (point: AppState["pendingEditClickPoint"]) => void;
   setIsHistoryNavigation: (value: boolean) => void;
   setAvailableThemes: (themes: Theme[]) => void;
   setUserThemesLoaded: (loaded: boolean) => void;
@@ -143,6 +159,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   syncStatus: "saved",
   activeEditor: null,
   activeCanvasEditor: null,
+  pendingEditClickPoint: null,
   noteHistory: [],
   historyIndex: -1,
   isHistoryNavigation: false,
@@ -162,6 +179,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSyncStatus: (syncStatus) => set({ syncStatus }),
   setActiveEditor: (activeEditor) => set({ activeEditor }),
   setActiveCanvasEditor: (activeCanvasEditor) => set({ activeCanvasEditor }),
+  setPendingEditClickPoint: (pendingEditClickPoint) => set({ pendingEditClickPoint }),
   setIsHistoryNavigation: (value) => set({ isHistoryNavigation: value }),
   setAvailableThemes: (availableThemes) => set({ availableThemes }),
   setUserThemesLoaded: (loaded) => set({ userThemesLoaded: loaded }),
