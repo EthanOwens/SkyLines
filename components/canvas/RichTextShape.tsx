@@ -47,8 +47,10 @@ import {
   stopEventPropagation,
   useEditor as useTldrawEditor,
   useIsEditing,
+  useValue,
   type RecordProps,
   type TLBaseShape,
+  type TLShapeId,
 } from "@tldraw/tldraw";
 import { useEditor as useTiptapEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -71,6 +73,29 @@ import { Link as LinkIcon } from "lucide-react";
 import "@/components/editor/editor.css";
 
 const lowlight = createLowlight(common);
+
+// spec.md (new spec) subtask 1 ("RichTextShape visual redesign"). tldraw
+// tracks the currently-hovered shape reactively via its own geometry-based
+// pointer hit-testing (see tldraw's own
+// node_modules/tldraw/src/lib/tools/selection-logic/updateHoveredShapeId.ts
+// - it hit-tests `editor.getShapeAtPoint()` against the raw pointer
+// position on every canvas pointer move, entirely independent of this
+// shape's own DOM `pointer-events` value), exposed as
+// `editor.getHoveredShapeId()` (@tldraw/editor's Editor.ts). There's no
+// ready-made `useIsHovered`-style hook exported alongside `useIsEditing`
+// (confirmed by searching @tldraw/editor's whole public `index.ts`), so this
+// mirrors `useIsEditing`'s own implementation
+// (node_modules/@tldraw/editor/src/lib/hooks/useIsEditing.ts) exactly: a
+// `useValue` subscription (tldraw's own reactive-signal hook, from
+// @tldraw/state-react from re-exported via `@tldraw/tldraw`) over
+// `getHoveredShapeId()`. Deliberately NOT a CSS `:hover`/DOM
+// mouseenter-mouseleave handler - this shape's outer container has
+// `pointer-events: none` while not editing (see this file's header comment
+// on why), which makes it fully transparent to DOM-level hover detection.
+function useIsHoveredShape(shapeId: TLShapeId) {
+  const editor = useTldrawEditor();
+  return useValue("isHovered", () => editor.getHoveredShapeId() === shapeId, [editor, shapeId]);
+}
 
 // Same subset the full-page editor's bubble menu uses (see
 // components/editor/RichTextEditor.tsx's identical constant) - kept
@@ -137,6 +162,10 @@ export class RichTextShapeUtil extends BaseBoxShapeUtil<RichTextShape> {
 function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   const tldrawEditor = useTldrawEditor();
   const isEditing = useIsEditing(shape.id);
+  const isHovered = useIsHoveredShape(shape.id);
+  // Border/handle bar are shown on hover OR while editing (spec.md subtask
+  // 1's exact condition).
+  const showChrome = isHovered || isEditing;
   const setActiveEditor = useAppStore((s) => s.setActiveEditor);
 
   const tiptapEditor = useTiptapEditor(
@@ -341,22 +370,88 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
 
   return (
     <HTMLContainer id={shape.id}>
+      {/* spec.md subtask 1. Outer box: transparent background always (idle
+          state has NO visible fill/border/handle at all - "invisible except
+          for its actual text content"), `pointer-events: none` always (same
+          reasoning as this file's header comment - shape selection/dragging
+          for anything that ISN'T the drag-handle bar below stays driven by
+          tldraw's own geometry-based hit testing, not real DOM events; the
+          handle bar and the content area each explicitly opt back in to
+          real pointer events below, same pattern the original single-div
+          version of this component already used for the content area
+          alone). Dotted border drawn here (around the shape's FULL w x h
+          bounding box, per spec.md's exact wording) only while
+          hovered/editing, using this app's own `--border` theme CSS custom
+          property (see app/globals.css) rather than a hardcoded color, so
+          it follows the active theme like the rest of the app. */}
       <div
         style={{
           width: shape.props.w,
           height: shape.props.h,
-          pointerEvents: isEditing ? "all" : "none",
-          overflow: "auto",
-          background: "var(--color-panel, white)",
-          border: "1px solid var(--tl-color-low-border, #d0d0d0)",
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          boxSizing: "border-box",
+          pointerEvents: "none",
+          background: "transparent",
+          border: showChrome ? "1px dashed var(--border)" : "1px solid transparent",
           borderRadius: 4,
-          cursor: isEditing ? "text" : "inherit",
         }}
-        // Same technique tldraw's own Tiptap-hosting RichTextArea.tsx uses -
-        // see this file's header comment.
-        onPointerDownCapture={isEditing ? stopEventPropagation : undefined}
-        onTouchEndCapture={isEditing ? stopEventPropagation : undefined}
       >
+        {showChrome && (
+          // spec.md subtask 1's drag-handle bar. A thin strip along the top
+          // edge that opts back in to real `pointer-events` (`all`,
+          // overriding the outer box's `none` above) SPECIFICALLY on this
+          // element, and - critically - is a SIBLING of the content wrapper
+          // below, not a descendant of it, so it's never touched by that
+          // wrapper's own `onPointerDownCapture={stopEventPropagation}`
+          // (that capture listener only intercepts events targeting itself
+          // or ITS OWN descendants - a sibling's events never reach it).
+          // With no `stopPropagation` of its own, a pointer-down here simply
+          // bubbles up through the DOM to tldraw's own `tl-canvas` element,
+          // exactly like a pointer-down on any other `pointer-events: none`
+          // area of this shape - tldraw's own canvas-level pointer handling
+          // (`useCanvasEvents`) then does ITS OWN geometry-based hit test
+          // (`editor.getShapeAtPoint`, the same mechanism
+          // updateHoveredShapeId.ts above uses for hover) against the
+          // resulting page coordinates, finds this shape, and drives it
+          // through the Select tool's normal Idle -> PointingShape ->
+          // Translating state chart - tldraw's real shape-translate
+          // mechanics, not custom drag math (per spec.md's explicit
+          // instruction). A normal-flow flex child (NOT `position:
+          // absolute`) with a fixed height, so it occupies its own space at
+          // the top of the flex column instead of overlapping the content
+          // wrapper below it - the two previously shared the same y=0
+          // origin, which let this bar win hit-testing over the top strip
+          // of the content area even while editing, blocking cursor
+          // placement/selection at the very start of the text.
+          <div
+            style={{
+              flexShrink: 0,
+              height: 8,
+              pointerEvents: "all",
+              cursor: "grab",
+              background: "var(--muted-foreground)",
+              opacity: 0.4,
+              borderTopLeftRadius: 3,
+              borderTopRightRadius: 3,
+            }}
+          />
+        )}
+        <div
+          style={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            pointerEvents: isEditing ? "all" : "none",
+            overflow: "auto",
+            background: "transparent",
+            cursor: isEditing ? "text" : "inherit",
+          }}
+          // Same technique tldraw's own Tiptap-hosting RichTextArea.tsx uses -
+          // see this file's header comment.
+          onPointerDownCapture={isEditing ? stopEventPropagation : undefined}
+          onTouchEndCapture={isEditing ? stopEventPropagation : undefined}
+        >
         {tiptapEditor && (
           <BubbleMenu
             editor={tiptapEditor}
@@ -429,6 +524,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           </BubbleMenu>
         )}
         <EditorContent editor={tiptapEditor} className="h-full px-2 py-1" />
+        </div>
       </div>
     </HTMLContainer>
   );
