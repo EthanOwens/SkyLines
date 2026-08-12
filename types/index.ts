@@ -71,4 +71,30 @@ export interface Note {
   deletedAt: number | null;
 }
 
+// Page (spec.md M6 subtask 13): a Note becomes a lightweight container that
+// groups one or more Pages, each an independent canvas (its own
+// `RichTextShape`s, ink, etc.) - the actual editable content moves down one
+// level, from Note to Page. Mirrors `Note`'s shape exactly, minus the
+// notebook/folder/type fields (a page belongs to exactly one note, not a
+// folder/notebook), plus the required `noteId` FK. `userId` is kept (not
+// dropped in favor of a join through `notes`) so page queries/sync can use
+// the same flat `WHERE user_id = $1` pattern as every other synced entity.
+export interface Page {
+  id: string;
+  noteId: string;
+  title: string;
+  userId: string;
+  content?: object | null;    // TipTap JSON doc
+  canvasData?: object | null; // Tldraw snapshot
+  // Sibling display order within a note, mirroring `Note.order`.
+  order: number;
+  createdAt: number;
+  updatedAt: number;
+  // Sync bookkeeping (mirrors sqlite `pages` columns dirty/synced_at/deleted_at,
+  // added per spec.md subtask 13).
+  dirty: boolean;
+  syncedAt: number | null;
+  deletedAt: number | null;
+}
+
 export type SyncStatus = "saved" | "syncing" | "offline" | "error";

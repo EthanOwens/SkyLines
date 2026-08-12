@@ -461,6 +461,55 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
+        // M6 (spec.md subtask 13): Pages are a real new entity - a Note
+        // ("notesheet") becomes a lightweight container that groups one or
+        // more Pages, each an independent canvas (its own `RichTextShape`s,
+        // ink, etc.) - the actual editable content moves down one level,
+        // from Note to Page. This mirrors the `notes` table's exact
+        // sync-bookkeeping column shape (id, title, user_id, order_index,
+        // content, canvas_data, created_at, updated_at, deleted_at, dirty,
+        // synced_at), swapping `folder_id`/`type` for a single required
+        // `note_id` FK (a page always belongs to a note, unlike a note's
+        // nullable `folder_id`). `user_id` is kept (not dropped in favor of
+        // joining through `notes`) so that subtask 14/15's data-access and
+        // Firestore-pull code can filter/query pages with the exact same
+        // flat `WHERE user_id = $1` / `where("userId", "==", userId)`
+        // pattern already used for notebooks/folders/notes - Firestore has
+        // no server-side joins, so this column is required, not optional.
+        // Both `content` and `canvas_data`
+        // are kept (rather than just `canvas_data`) to mirror `notes`'
+        // exact shape per spec.md's literal wording for the `Page` type -
+        // `notes.content`/`notes.canvas_data` are themselves left in place,
+        // untouched, consistent with this migration list's established
+        // non-destructive precedent (migrations 1-5 above never drop or
+        // repurpose a column). No backfill is needed here: subtask 14's
+        // atomic "new note always gets a default first page" and subtask
+        // 18's migration-of-existing-content into a page are separate,
+        // later subtasks - this migration only creates the empty table.
+        tauri_plugin_sql::Migration {
+            version: 6,
+            description: "create pages table",
+            sql: "
+                CREATE TABLE pages (
+                  id          TEXT PRIMARY KEY,
+                  note_id     TEXT NOT NULL REFERENCES notes(id),
+                  title       TEXT NOT NULL DEFAULT 'Untitled',
+                  user_id     TEXT NOT NULL,
+                  order_index INTEGER NOT NULL DEFAULT 0,
+                  content     TEXT,
+                  canvas_data TEXT,
+                  created_at  INTEGER NOT NULL,
+                  updated_at  INTEGER NOT NULL,
+                  deleted_at  INTEGER,
+                  dirty       INTEGER NOT NULL DEFAULT 1,
+                  synced_at   INTEGER
+                );
+
+                CREATE INDEX idx_pages_note       ON pages(note_id);
+                CREATE INDEX idx_pages_user_dirty ON pages(user_id, dirty);
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
     ];
 
     // M5 (spec.md subtask 21): Google sign-in uses a system-browser +
