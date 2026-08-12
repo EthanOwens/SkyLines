@@ -233,11 +233,15 @@ export function FolderItem({
           parentId: folder.id,
           order: nextOrderValue(childFolders.map((f) => f.order)),
         });
-      } else {
+      } else if (payload.type === "note") {
         await updateNote(payload.id, {
           folderId: folder.id,
           order: nextOrderValue(childNotes.map((n) => n.order)),
         });
+      } else {
+        // A dragged page has no valid drop target here - folders/notebooks
+        // don't contain pages (pages only live inside a note), so ignore.
+        return;
       }
       setOpen(true);
       return;
@@ -297,7 +301,7 @@ export function FolderItem({
         <DropdownMenuItem onClick={handleCopy}>
           <Copy className="mr-2 h-4 w-4" /> Copy
         </DropdownMenuItem>
-        {clipboard && (
+        {clipboard && clipboard.type !== "page" && (
           <DropdownMenuItem onClick={handlePaste}>
             <Clipboard className="mr-2 h-4 w-4" /> Paste
           </DropdownMenuItem>

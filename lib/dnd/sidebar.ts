@@ -16,7 +16,12 @@ import type { Folder } from "@/types";
 export const SIDEBAR_DRAG_MIME = "application/x-skylines-sidebar-item";
 
 export type SidebarDragPayload = {
-  type: "folder" | "note";
+  // "page" (spec.md M6 subtask 17, "Page sidebar") reuses this same generic
+  // payload/MIME mechanism for reordering a note's Pages - pages don't nest
+  // or re-parent (isFolderOrDescendant below is folder-only and doesn't
+  // apply to them), so they only ever use the reorder ("before"/"after")
+  // half of this module, never "inside".
+  type: "folder" | "note" | "page";
   id: string;
 };
 
@@ -40,7 +45,8 @@ export function readSidebarDragPayload(e: DragEvent): SidebarDragPayload | null 
       parsed &&
       typeof parsed === "object" &&
       ((parsed as SidebarDragPayload).type === "folder" ||
-        (parsed as SidebarDragPayload).type === "note") &&
+        (parsed as SidebarDragPayload).type === "note" ||
+        (parsed as SidebarDragPayload).type === "page") &&
       typeof (parsed as SidebarDragPayload).id === "string"
     ) {
       return parsed as SidebarDragPayload;

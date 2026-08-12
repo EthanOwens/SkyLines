@@ -118,13 +118,15 @@ export function FolderTree({ userId, notebookId }: Props) {
         parentId: null,
         order: nextOrderValue(rootFolders.map((f) => f.order)),
       });
-    } else {
+    } else if (payload.type === "note") {
       if (!notes.find((n) => n.id === payload.id)?.folderId) return;
       await updateNote(payload.id, {
         folderId: null,
         order: nextOrderValue(rootNotes.map((n) => n.order)),
       });
     }
+    // A dragged page has no valid drop target here - the notebook root
+    // doesn't contain pages (pages only live inside a note) - so ignore.
   }
 
   async function handlePasteToRoot() {
@@ -184,7 +186,7 @@ export function FolderTree({ userId, notebookId }: Props) {
         }
       />
       <DropdownMenuContent align="start" className="w-44">
-        <DropdownMenuItem onClick={handlePasteToRoot} disabled={!clipboard}>
+        <DropdownMenuItem onClick={handlePasteToRoot} disabled={!clipboard || clipboard.type === "page"}>
           <Clipboard className="mr-2 h-4 w-4" /> Paste
         </DropdownMenuItem>
       </DropdownMenuContent>

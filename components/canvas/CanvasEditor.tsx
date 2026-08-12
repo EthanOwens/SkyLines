@@ -18,7 +18,7 @@
 //   very frequently during canvas interaction, so this debounce matters
 //   even more here).
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   DefaultStylePanel,
   StylePanelArrowKindPicker,
@@ -41,7 +41,7 @@ import {
 import "@tldraw/tldraw/tldraw.css";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { useAppStore } from "@/stores/appStore";
-import type { Note, Page } from "@/types";
+import type { Note } from "@/types";
 import { RichTextShapeUtil, type RichTextShape } from "./RichTextShape";
 import { RichTextTool, installRichTextToolAutoReturn } from "./RichTextTool";
 
@@ -136,17 +136,21 @@ export function CanvasEditor({ note }: Props) {
   const setActiveCanvasEditor = useAppStore((s) => s.setActiveCanvasEditor);
 
   // spec.md M6 subtask 16: the canvas editor now operates on one of the
-  // note's Pages, not on the note itself. `pages` + `selectedPageId` are
-  // deliberately plain component-local state (NOT part of
-  // stores/appStore.ts's global `noteHistory` back/forward stack, per the
-  // spec's Key Decision that page-switching stays note-scoped/local UI
-  // state) so a future page-switcher (subtask 17) can call
-  // `setSelectedPageId` directly without another rewrite. For now there's no
-  // UI to pick a page, so `selectedPageId` always ends up pointing at the
-  // first page (`order` ascending, per `getPages`'s own ordering).
-  const [pages, setPages] = useState<Page[]>([]);
-  const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
-  const [pagesLoading, setPagesLoading] = useState(true);
+  // note's Pages, not on the note itself. `pages` + `selectedPageId` used to
+  // be plain component-local state here; spec.md subtask 17 ("Page
+  // sidebar") lifted them into stores/appStore.ts instead (still NOT part
+  // of the global `noteHistory` back/forward stack, per the spec's Key
+  // Decision that page-switching stays note-scoped/local UI state), so the
+  // new `PageSidebar` component (rendered as this component's sibling in
+  // app/canvas/page.tsx) can read/write the very same "which page is
+  // selected" value - selecting a row there needs to actually change what
+  // this component renders.
+  const pages = useAppStore((s) => s.pages);
+  const setPages = useAppStore((s) => s.setPages);
+  const selectedPageId = useAppStore((s) => s.selectedPageId);
+  const setSelectedPageId = useAppStore((s) => s.setSelectedPageId);
+  const pagesLoading = useAppStore((s) => s.pagesLoading);
+  const setPagesLoading = useAppStore((s) => s.setPagesLoading);
 
   useEffect(() => {
     let cancelled = false;

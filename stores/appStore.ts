@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
 import type { Editor as TldrawEditor, TLShapeId } from "@tldraw/tldraw";
-import type { Folder, Note, Notebook, SyncStatus } from "@/types";
+import type { Folder, Note, Notebook, Page, SyncStatus } from "@/types";
 import type { Theme } from "@/lib/themes/types";
 import { BUILTIN_THEMES } from "@/lib/themes/builtin";
 import type { ClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
@@ -126,6 +126,26 @@ interface AppState {
   // field/mechanism directly.
   clipboard: ClipboardEntry | null;
 
+  // spec.md M6 subtask 17 ("Page sidebar"). Lifted out of
+  // CanvasEditor.tsx's own local `useState` (where subtask 16 first
+  // introduced it) so the new, separate `PageSidebar` component can read AND
+  // write the same "which page of the currently-open note is selected"
+  // state - selecting a row there needs to actually change what
+  // CanvasEditor renders. Deliberately kept OUT of `noteHistory` (per
+  // spec.md's Key Decision: "Back/forward history stays note-scoped, not
+  // page-scoped") - this is plain transient UI state, reset by
+  // CanvasEditor.tsx's own note-load effect exactly the way its local
+  // `useState` was reset before (on `note.id` change), NOT a new kind of
+  // history-stack entry. `pages`/`pagesLoading` mirror `notebooksLoaded`'s
+  // "loaded at least once" pattern so PageSidebar can distinguish "still
+  // loading" from "note genuinely has an empty list" (should be
+  // unreachable in practice - see CanvasEditor.tsx's self-healing default
+  // page creation - but the flag still exists so the sidebar doesn't flash
+  // a false "no pages" state during the initial async fetch).
+  pages: Page[];
+  selectedPageId: string | null;
+  pagesLoading: boolean;
+
   setFolders: (folders: Folder[]) => void;
   setNotes: (notes: Note[]) => void;
   setNotebooks: (notebooks: Notebook[]) => void;
@@ -144,6 +164,9 @@ interface AppState {
   setUserThemesLoaded: (loaded: boolean) => void;
   setSelectedThemeId: (id: string | null) => void;
   setClipboard: (entry: ClipboardEntry | null) => void;
+  setPages: (pages: Page[]) => void;
+  setSelectedPageId: (id: string | null) => void;
+  setPagesLoading: (loading: boolean) => void;
   // Records a genuine new note/canvas visit. No-ops if `entry` is identical
   // to the entry currently pointed at by `historyIndex` (avoids duplicate
   // consecutive entries from e.g. a content-only re-render re-triggering the
@@ -180,6 +203,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   userThemesLoaded: false,
   selectedThemeId: null,
   clipboard: null,
+  pages: [],
+  selectedPageId: null,
+  pagesLoading: true,
 
   setFolders: (folders) => set({ folders }),
   setNotes: (notes) => set({ notes }),
@@ -199,6 +225,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setUserThemesLoaded: (loaded) => set({ userThemesLoaded: loaded }),
   setSelectedThemeId: (selectedThemeId) => set({ selectedThemeId }),
   setClipboard: (clipboard) => set({ clipboard }),
+  setPages: (pages) => set({ pages }),
+  setSelectedPageId: (selectedPageId) => set({ selectedPageId }),
+  setPagesLoading: (pagesLoading) => set({ pagesLoading }),
 
   visitNote: (entry) => {
     const { noteHistory, historyIndex } = get();

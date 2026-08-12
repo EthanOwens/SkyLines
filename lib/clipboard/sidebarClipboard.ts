@@ -1,6 +1,7 @@
-import type { Folder, Note } from "@/types";
+import type { Folder, Note, Page } from "@/types";
 import { createFolder, getFolders, updateFolder } from "@/lib/db/folders";
 import { createNote, getNotes, updateNote } from "@/lib/db/notes";
+import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { isFolderOrDescendant, nextOrderValue } from "@/lib/dnd/sidebar";
 
 // Generic cut/copy/paste mechanism for the sidebar tree (spec.md M4 subtask
@@ -15,7 +16,12 @@ import { isFolderOrDescendant, nextOrderValue } from "@/lib/dnd/sidebar";
 
 export type ClipboardEntry = {
   kind: "cut" | "copy";
-  type: "note" | "folder";
+  // "page" (spec.md M6 subtask 17, "Page sidebar") reuses this same
+  // clipboard field/mechanism for a note's Pages - see
+  // `pastePageClipboardEntry` below, a sibling to `pasteClipboardEntry`
+  // rather than a branch inside it, since a page's paste target (a Note) is
+  // a fundamentally different kind of container than a folder/notebook.
+  type: "note" | "folder" | "page";
   id: string;
 };
 
@@ -24,6 +30,12 @@ export type ClipboardEntry = {
 export interface PasteTarget {
   notebookId: string;
   folderId: string | null;
+}
+
+/** Where a page paste lands - always a specific note (pages don't live in
+ * the folder/notebook tree at all, see `ClipboardEntry`'s comment above). */
+export interface PagePasteTarget {
+  noteId: string;
 }
 
 /**
@@ -223,5 +235,65 @@ export async function pasteClipboardEntry(
 
   const siblingOrders = await freshSiblingOrders(userId, "note", target.folderId);
   await duplicateNote(userId, note, target.notebookId, target.folderId, nextOrderValue(siblingOrders));
+  return true;
+}
+
+/**
+ * Duplicates a single page under `noteId`, copying its title/content/
+ * canvasData. Same create-then-update shape as `duplicateNote` above -
+ * `createPage` never accepts content/canvasData directly either.
+ */
+async function duplicatePage(
+  page: Page,
+  noteId: string,
+  order: number,
+): Promise<string> {
+  const id = await createPage(noteId, page.userId, page.title, order);
+  if (page.content !== null || page.canvasData !== null) {
+    await updatePage(id, { content: page.content, canvasData: page.canvasData });
+  }
+  return id;
+}
+
+/**
+ * Page analogue of `pasteClipboardEntry` above (spec.md M6 subtask 17, "Page
+ * sidebar") - kept as a sibling function rather than a branch inside
+ * `pasteClipboardEntry` since a page's target is a Note (`PagePasteTarget`),
+ * not a `PasteTarget` (folder/notebook); pages don't live in that tree at
+ * all. Same return-value contract: `true` if something was written, `false`
+ * for a no-op (source page no longer exists).
+ *
+ * Unlike folders, pages can't be re-parented onto themselves/descendants (no
+ * nesting), so there's no `isFolderOrDescendant`-style guard needed for the
+ * "cut" branch - moving a page to any note (including its own) is always
+ * safe, it just lands at the end of that note's page order.
+ */
+export async function pastePageClipboardEntry(
+  entry: ClipboardEntry,
+  target: PagePasteTarget,
+  allPages: Page[],
+): Promise<boolean> {
+  if (entry.type !== "page") return false;
+  const page = allPages.find((p) => p.id === entry.id);
+  if (!page) return false;
+
+  const siblingPages = await getPages(target.noteId);
+  const siblingOrders = siblingPages
+    .filter((p) => p.id !== entry.id)
+    .map((p) => p.order);
+
+  if (entry.kind === "cut") {
+    // Pages moving between notes isn't a feature this subtask builds -
+    // `updatePage` has no way to change which note a page belongs to (no
+    // `noteId` field in its update type), so a cross-note cut-paste would
+    // otherwise silently reorder the source page among ITS OWN note's
+    // siblings using an order value computed from an unrelated note. Reject
+    // it as a clean no-op instead, leaving the clipboard intact.
+    if (page.noteId !== target.noteId) return false;
+    await updatePage(entry.id, { order: nextOrderValue(siblingOrders) });
+    return true;
+  }
+
+  await duplicatePage(page, target.noteId, nextOrderValue(siblingOrders));
   return true;
 }
