@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
@@ -22,17 +23,22 @@ import { useAuthContext } from "@/components/AuthProvider";
 import { useAppStore } from "@/stores/appStore";
 import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
 import { setSelectedThemeId as persistSelectedThemeId } from "@/lib/themes/selection";
+import { getSystemTheme, watchSystemThemeChanges } from "@/lib/themes/system";
 import { LogOut, Palette, Cloud, CloudOff, Loader2, CheckCircle2 } from "lucide-react";
 
-// "Default" sentinel for the theme radio group - base-ui's RadioGroup value
-// must be a real string (not `null`), so the store's `selectedThemeId ===
-// null` ("no theme applied") is represented here as this sentinel and
-// translated back to `null` in the change handler below. Exported so
-// AppShell.tsx's theme-merge effect can filter out any user theme file that
-// happens to reuse this reserved id (which would otherwise collide with the
-// "Default" radio item and make the user's theme unreachable) using the
-// same single source of truth rather than a second hardcoded copy.
-export const DEFAULT_THEME_VALUE = "__default__";
+// "System" sentinel for the theme radio group (spec.md subtask 11, "Rename
+// 'Default' theme to 'System'" - formerly `DEFAULT_THEME_VALUE`/"Default",
+// which just cleared theme overrides). Selecting it now applies
+// `LIGHT_THEME`/`DARK_THEME` based on the OS's live `prefers-color-scheme`
+// setting and stores this sentinel (not `null`) as `selectedThemeId`, so a
+// dedicated effect below can tell "System is the active selection" apart
+// from "an explicit theme is active" and gate its `matchMedia` listener
+// accordingly. Exported so AppShell.tsx's theme-merge effect can filter out
+// any user theme file that happens to reuse this reserved id (which would
+// otherwise collide with the "System" radio item and make the user's theme
+// unreachable) using the same single source of truth rather than a second
+// hardcoded copy.
+export const SYSTEM_THEME_VALUE = "__system__";
 
 // Account icon + dropdown (spec.md subtask 16). Rendered into TopBar.tsx's
 // previously-empty right-side slot. This component only ever mounts inside
@@ -65,6 +71,42 @@ export function AccountMenu() {
   const selectedThemeId = useAppStore((s) => s.selectedThemeId);
   const setSelectedThemeId = useAppStore((s) => s.setSelectedThemeId);
 
+  // Keeps "System" dynamically in sync with the OS while it remains the
+  // active selection (spec.md subtask 11's key decision: a live
+  // `matchMedia` listener, not a one-time read at selection time). Gated on
+  // `selectedThemeId === SYSTEM_THEME_VALUE` so the listener is torn down
+  // (via this effect's cleanup) the moment the user switches to a different,
+  // explicit theme - re-running this effect on every `selectedThemeId`
+  // change naturally removes the old listener before any new one is
+  // attached, so there's never more than one live listener, and none at all
+  // once "System" is no longer selected or this component unmounts. Placed
+  // above the `if (!user) return null` guard below since hooks must run
+  // unconditionally on every render.
+  //
+  // `null` is also treated as "System" here (not just SYSTEM_THEME_VALUE):
+  // `null` is the store's actual initial value (stores/appStore.ts) for any
+  // user who has never touched the theme picker, and the radio group below
+  // already renders it as "System" checked (`value={selectedThemeId ??
+  // SYSTEM_THEME_VALUE}`) - without this, that visual selection would be a
+  // lie, since neither the live matchMedia listener nor the initial
+  // getSystemTheme() application would ever run for that state.
+  useEffect(() => {
+    if (selectedThemeId !== SYSTEM_THEME_VALUE && selectedThemeId !== null) return;
+
+    const mql = watchSystemThemeChanges();
+    if (!mql) return;
+
+    function handleOSPreferenceChange() {
+      clearThemeOverrides();
+      applyTheme(getSystemTheme());
+    }
+
+    mql.addEventListener("change", handleOSPreferenceChange);
+    return () => {
+      mql.removeEventListener("change", handleOSPreferenceChange);
+    };
+  }, [selectedThemeId]);
+
   if (!user) return null;
 
   const displayName = user.displayName?.trim();
@@ -84,11 +126,17 @@ export function AccountMenu() {
   // fewer variables than the last one doesn't leave stale inline properties
   // behind - see lib/themes/apply.ts's clearThemeOverrides docs) and
   // persists the choice to localStorage.
+  //
+  // "System" (spec.md subtask 11) applies whichever of LIGHT_THEME/
+  // DARK_THEME currently matches the OS's `prefers-color-scheme` setting,
+  // and persists/stores SYSTEM_THEME_VALUE itself (not `null`) so the effect
+  // below can recognize "System is active" and keep it live-synced.
   function handleThemeChange(value: string) {
-    if (value === DEFAULT_THEME_VALUE) {
+    if (value === SYSTEM_THEME_VALUE) {
       clearThemeOverrides();
-      persistSelectedThemeId(null);
-      setSelectedThemeId(null);
+      applyTheme(getSystemTheme());
+      persistSelectedThemeId(SYSTEM_THEME_VALUE);
+      setSelectedThemeId(SYSTEM_THEME_VALUE);
       return;
     }
 
@@ -136,11 +184,11 @@ export function AccountMenu() {
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
             <DropdownMenuRadioGroup
-              value={selectedThemeId ?? DEFAULT_THEME_VALUE}
+              value={selectedThemeId ?? SYSTEM_THEME_VALUE}
               onValueChange={handleThemeChange}
             >
-              <DropdownMenuRadioItem value={DEFAULT_THEME_VALUE}>
-                Default
+              <DropdownMenuRadioItem value={SYSTEM_THEME_VALUE}>
+                System
               </DropdownMenuRadioItem>
               {availableThemes.map((theme) => (
                 <DropdownMenuRadioItem key={theme.id} value={theme.id}>
