@@ -5,18 +5,20 @@
 //
 //   No manual `setSyncStatus("syncing"/"saved"/"error")` calls around the
 //   snapshot autosave. The reference toggled `syncStatus` itself because it
-//   wrote straight to Firestore. Here, saves go through lib/db/notes.ts's
-//   `updateNote`, which writes to local SQLite and (via the
-//   change-notification -> useSyncEngine.ts chain wired in subtask 15)
-//   automatically schedules a real, debounced Firestore push - the real
-//   `syncStatus` in stores/appStore.ts already reflects that actual push
-//   activity, so this component no longer needs to fake it. The 800ms
-//   debounce on the snapshot autosave is kept unchanged from the reference
-//   (distinct from the rich text editor's 600ms - tldraw's `store.listen`
-//   callback fires very frequently during canvas interaction, so this
-//   debounce matters even more here).
+//   wrote straight to Firestore. Here, saves go through lib/db/pages.ts's
+//   `updatePage` (spec.md M6 subtask 16 - this component now reads/writes
+//   the note's currently-selected Page, not the note itself; see below),
+//   which writes to local SQLite and (via the change-notification ->
+//   useSyncEngine.ts chain wired in subtask 15) automatically schedules a
+//   real, debounced Firestore push - the real `syncStatus` in
+//   stores/appStore.ts already reflects that actual push activity, so this
+//   component no longer needs to fake it. The 800ms debounce on the
+//   snapshot autosave is kept unchanged from the reference (distinct from
+//   the rich text editor's 600ms - tldraw's `store.listen` callback fires
+//   very frequently during canvas interaction, so this debounce matters
+//   even more here).
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DefaultStylePanel,
   StylePanelArrowKindPicker,
@@ -37,9 +39,9 @@ import {
   type TLUiStylePanelProps,
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
-import { updateNote } from "@/lib/db/notes";
+import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { useAppStore } from "@/stores/appStore";
-import type { Note } from "@/types";
+import type { Note, Page } from "@/types";
 import { RichTextShapeUtil, type RichTextShape } from "./RichTextShape";
 import { RichTextTool, installRichTextToolAutoReturn } from "./RichTextTool";
 
@@ -56,6 +58,20 @@ const shapeUtils = [RichTextShapeUtil];
 // this alongside - not instead of - tldraw's own select/draw/etc. tools).
 // Same referential-stability reasoning as `shapeUtils` above.
 const tools = [RichTextTool];
+
+// Module-level (i.e. survives across this component's own remounts, not
+// just re-renders) in-flight guard for the "note has zero pages, lazily
+// create a default one" self-healing path below, keyed by `note.id`. React
+// Strict Mode's dev-mode double-invoke-then-cleanup-then-invoke-again
+// pattern means two independent effect invocations can both call
+// `getPages(note.id)`, both see it come back empty (the first invocation's
+// `createPage` hasn't resolved/committed yet), and would otherwise both call
+// `createPage` - producing two duplicate empty pages for the same note. This
+// map lets a second concurrent invocation for the SAME note find and await
+// the first invocation's in-flight creation promise instead of starting its
+// own; only one `createPage` call ever actually runs per note. Mirrors the
+// `pushInFlight` guard pattern in lib/sync/engine.ts.
+const inFlightDefaultPageCreation = new Map<string, Promise<string>>();
 
 // spec.md M5 subtask 10 ("Remove tldraw's built-in opacity slider") - tldraw
 // 4.5.12 (verified via node_modules/tldraw/dist-esm) has no sub-component-
@@ -119,8 +135,100 @@ export function CanvasEditor({ note }: Props) {
   const pendingSaveRef = useRef(false);
   const setActiveCanvasEditor = useAppStore((s) => s.setActiveCanvasEditor);
 
+  // spec.md M6 subtask 16: the canvas editor now operates on one of the
+  // note's Pages, not on the note itself. `pages` + `selectedPageId` are
+  // deliberately plain component-local state (NOT part of
+  // stores/appStore.ts's global `noteHistory` back/forward stack, per the
+  // spec's Key Decision that page-switching stays note-scoped/local UI
+  // state) so a future page-switcher (subtask 17) can call
+  // `setSelectedPageId` directly without another rewrite. For now there's no
+  // UI to pick a page, so `selectedPageId` always ends up pointing at the
+  // first page (`order` ascending, per `getPages`'s own ordering).
+  const [pages, setPages] = useState<Page[]>([]);
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
+  const [pagesLoading, setPagesLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPagesLoading(true);
+    setPages([]);
+    setSelectedPageId(null);
+
+    (async () => {
+      let notePages = await getPages(note.id);
+
+      // Defensive self-healing (spec.md subtask 16): every note created via
+      // `createNote` (subtask 14) atomically gets a default first page, but
+      // notes that existed before that shipped currently have ZERO page
+      // rows. Rather than crash or render a broken blank canvas, lazily
+      // create a single default page the moment such a note is opened here
+      // - mirroring `createNote`'s own "always ≥1 page" invariant, just
+      // applied at read-time.
+      //
+      // This MUST NOT silently drop the note's pre-existing content (see
+      // app/note/page.tsx's header comment, which documents that its
+      // `/note?id=...` -> `/canvas?id=...` redirect for old-format notes is
+      // only safe because this component performs an inline migration on
+      // mount). Two cases:
+      //   - `note.canvasData` truthy: the note already has a tldraw
+      //     snapshot but was never given a page (e.g. it predates subtask
+      //     16's Page model) - copy it straight onto the new page below.
+      //   - `note.canvasData` falsy but `note.content` truthy: a true
+      //     old-format `type: "note"` row (real Tiptap content, no canvas
+      //     data yet). `createPage` alone can't run tldraw editor commands
+      //     to wrap that into a RichTextShape, so that half of the
+      //     migration is deferred to `handleMount` below (see its comment),
+      //     which persists the result onto this same page via `updatePage`
+      //     once the editor is available.
+      //
+      // `inFlightDefaultPageCreation` (module-level, see its comment above)
+      // makes the actual `createPage` call itself race-safe against React
+      // Strict Mode's double-invoke-then-cleanup-then-invoke-again pattern -
+      // without it, two concurrent invocations of this effect for the same
+      // note could both observe `getPages` returning empty and both call
+      // `createPage`, producing two duplicate default pages.
+      if (notePages.length === 0) {
+        let creation = inFlightDefaultPageCreation.get(note.id);
+        if (!creation) {
+          creation = (async () => {
+            const newPageId = await createPage(note.id, note.userId, "Untitled", 0);
+            if (note.canvasData) {
+              await updatePage(newPageId, { canvasData: note.canvasData });
+            }
+            return newPageId;
+          })();
+          inFlightDefaultPageCreation.set(note.id, creation);
+          void creation.finally(() => {
+            inFlightDefaultPageCreation.delete(note.id);
+          });
+        }
+        await creation;
+        notePages = await getPages(note.id);
+      }
+
+      if (cancelled) return;
+      setPages(notePages);
+      setSelectedPageId(notePages[0]?.id ?? null);
+      setPagesLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [note.id, note.userId]);
+
+  const selectedPage =
+    pages.find((p) => p.id === selectedPageId) ?? pages[0] ?? null;
+
   const handleMount = useCallback(
     (editor: Editor) => {
+      const page = selectedPage;
+      // Guarded defensively for type-narrowing only - the <Tldraw> below is
+      // never rendered until `selectedPage` is non-null (see the
+      // `pagesLoading`/`!selectedPage` early return further down), so this
+      // should be unreachable in practice.
+      if (!page) return;
+
       // Exposes the live tldraw `editor` instance to TopBar.tsx's top-bar
       // Undo/Redo (spec.md subtask 15, "Undo/redo wiring") via
       // stores/appStore.ts, mirroring RichTextEditor.tsx's `setActiveEditor`
@@ -149,48 +257,41 @@ export function CanvasEditor({ note }: Props) {
       // "just works, no reselecting a tool" requirement needs).
       const uninstallRichTextToolAutoReturn = installRichTextToolAutoReturn(editor);
 
-      // Load persisted snapshot
-      if (note.canvasData) {
+      // Load persisted snapshot from the SELECTED PAGE (spec.md subtask 16),
+      // not from the note itself - the page's own `canvasData` is now the
+      // source of truth once it's populated. `note.canvasData` copies onto
+      // a lazily-created page directly (no editor needed for a straight
+      // object copy - see the `getPages`/`createPage` effect above), so by
+      // the time this runs `page.canvasData` already reflects it if it
+      // existed.
+      //
+      // The remaining case - a true old-format `type: "note"` row with real
+      // Tiptap `content` and no `canvasData` at all (see app/note/page.tsx's
+      // header comment) - can't be resolved above because wrapping it into a
+      // RichTextShape needs a live tldraw `editor`. This is the same
+      // minimal, idempotent inline migration spec.md subtask 6 originally
+      // added (wrap `note.content` into a single RichTextShape, then
+      // persist), just now targeting this page via `updatePage` instead of
+      // the note via `updateNote`: once persisted, `page.canvasData` is
+      // truthy on every subsequent open, so this branch never runs twice
+      // for the same page.
+      if (page.canvasData) {
         try {
-          editor.loadSnapshot(note.canvasData as TLEditorSnapshot);
+          editor.loadSnapshot(page.canvasData as TLEditorSnapshot);
         } catch {
           // Snapshot incompatible — start fresh
         }
       } else if (note.content && editor.getCurrentPageShapes().length === 0) {
-        // spec.md subtask 6 data-safety requirement: an old-format note
-        // (`type: "note"`, real Tiptap `content` from the retired full-page
-        // linear editor, no `canvasData` yet - subtask 8's full migration
-        // hasn't run) must never render as an apparently-blank canvas just
-        // because `canvasData` happens to be null. This performs a minimal,
-        // safe, idempotent inline migration the moment such a note is
-        // opened here: wrap the existing `content` into a single
-        // RichTextShape at a default top-left position, then persist that
-        // as this note's `canvasData` via the exact same save path below -
-        // so the old content becomes visible immediately, and every
-        // subsequent open of this note takes the `note.canvasData` branch
-        // above instead (idempotent - this branch never runs twice for the
-        // same note). This is intentionally the minimal, per-note version;
-        // a startup/backfill pass over notes that are never individually
-        // opened this way is still spec.md subtask 8's job.
-        //
-        // spec.md subtask 8 verification finding: `note.canvasData` alone
-        // is NOT a reliable idempotency guard against a second `onMount`
-        // firing for the SAME already-migrated editor/store instance within
-        // one component lifetime - `note` is a React prop captured in this
-        // callback's closure, so it stays stale (still reflecting
-        // `canvasData: null`) even after the migration below has already
-        // written a shape into this live editor and persisted it, until a
-        // fresh mount re-reads the note from the DB. This is exactly what
-        // React's dev-mode Strict Mode double-invocation of `onMount`
-        // exercises (mount -> cleanup -> mount again, reusing the same
-        // underlying editor/store) - confirmed live via CDP: without this
-        // second check, that double-invocation created two overlapping
-        // RichTextShapes from the same note content in a single session.
-        // Checking the live editor's own current shape count instead - not
-        // just the stale prop - makes the guard correct regardless of *why*
-        // `onMount` fires twice for the same store (Strict Mode today, but
-        // also any other real remount-with-shared-store scenario): a
-        // second invocation sees a non-empty page and skips.
+        // `page` is captured from this component's own React state, so it
+        // stays stale (still reflecting canvasData: null) across React
+        // Strict Mode's dev-mode double-invoke of onMount, which reuses the
+        // SAME underlying tldraw editor/store instance for both
+        // invocations - confirmed live via CDP in an earlier subtask.
+        // Checking the live editor's own current shape count (not just the
+        // stale `page`/`note` props) is what makes this idempotent: a
+        // second invocation sees a non-empty page and skips, instead of
+        // creating a second overlapping RichTextShape from the same
+        // content.
         editor.createShape<RichTextShape>({
           type: "rich-text",
           x: 40,
@@ -198,7 +299,7 @@ export function CanvasEditor({ note }: Props) {
           props: { w: 480, h: 320, content: note.content as object },
         });
         const snapshot = editor.getSnapshot();
-        void updateNote(note.id, { canvasData: snapshot as unknown as object });
+        void updatePage(page.id, { canvasData: snapshot as unknown as object });
       }
 
       // Listen for changes and auto-save
@@ -208,7 +309,7 @@ export function CanvasEditor({ note }: Props) {
           pendingSaveRef.current = true;
           saveTimer.current = setTimeout(() => {
             const snapshot = editor.getSnapshot();
-            void updateNote(note.id, { canvasData: snapshot as unknown as object });
+            void updatePage(page.id, { canvasData: snapshot as unknown as object });
             pendingSaveRef.current = false;
           }, 800);
         },
@@ -225,12 +326,20 @@ export function CanvasEditor({ note }: Props) {
         if (pendingSaveRef.current) {
           pendingSaveRef.current = false;
           const snapshot = editor.getSnapshot();
-          void updateNote(note.id, { canvasData: snapshot as unknown as object });
+          void updatePage(page.id, { canvasData: snapshot as unknown as object });
         }
       };
     },
-    [note.id, note.canvasData, note.content, setActiveCanvasEditor],
+    [selectedPage, note.content, setActiveCanvasEditor],
   );
+
+  if (pagesLoading || !selectedPage) {
+    return (
+      <div className="flex flex-1 h-full w-full items-center justify-center">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="canvas-editor-container relative flex-1 h-full w-full">
