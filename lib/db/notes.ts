@@ -224,6 +224,21 @@ export async function upsertNoteFromRemote(
  * migration 4 comment in src-tauri/src/lib.rs for why), so this requirement
  * is enforced here at the application layer instead, by simply not offering
  * a way to omit it.
+ *
+ * M6 (spec.md subtask 14): every newly-created note atomically gets a
+ * default first page too - a note with zero pages should never be a
+ * reachable state (nothing currently reads from that page, since
+ * CanvasEditor.tsx still reads/writes `notes.canvas_data` directly until
+ * spec.md subtask 16 rewires it onto Pages, but the row must exist from the
+ * moment the note does). This is a single `BEGIN; INSERT notes; INSERT
+ * pages; COMMIT;` multi-statement `db.execute()` call rather than two
+ * separate awaited `db.execute()` calls (one calling `createPage` from
+ * lib/db/pages.ts) wrapped in their own `BEGIN`/`COMMIT` - see
+ * `deleteFolder` in lib/db/folders.ts for why: `@tauri-apps/plugin-sql`
+ * pools connections, so separate `db.execute()` calls aren't guaranteed to
+ * reuse the same pooled connection, which breaks `BEGIN`/`COMMIT`
+ * transactions spanning them. Folding both inserts into one call restores
+ * real atomicity.
  */
 export async function createNote(
   userId: string,
@@ -235,13 +250,19 @@ export async function createNote(
 ): Promise<string> {
   const db = await getDb();
   const id = crypto.randomUUID();
+  const pageId = crypto.randomUUID();
   const now = Date.now();
 
   await db.execute(
-    `INSERT INTO ${TABLE}
+    `BEGIN;
+     INSERT INTO ${TABLE}
        (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, $9, NULL, 1, NULL)`,
-    [id, title, type, folderId, notebookId, userId, order, now, now],
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, $8, NULL, 1, NULL);
+     INSERT INTO pages
+       (id, note_id, title, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($9, $1, 'Untitled', $6, NULL, NULL, 0, $8, $8, NULL, 1, NULL);
+     COMMIT;`,
+    [id, title, type, folderId, notebookId, userId, order, now, pageId],
   );
 
   notifyDataChange("local");
