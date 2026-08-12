@@ -250,7 +250,9 @@ export async function createNote(
 
 export async function updateNote(
   noteId: string,
-  updates: Partial<Pick<Note, "title" | "content" | "canvasData" | "folderId" | "order">>,
+  updates: Partial<
+    Pick<Note, "title" | "content" | "canvasData" | "folderId" | "order" | "notebookId">
+  >,
 ): Promise<void> {
   const db = await getDb();
   const now = Date.now();
@@ -278,6 +280,10 @@ export async function updateNote(
   if (updates.order !== undefined) {
     setClauses.push(`order_index = $${i++}`);
     params.push(updates.order);
+  }
+  if (updates.notebookId !== undefined) {
+    setClauses.push(`notebook_id = $${i++}`);
+    params.push(updates.notebookId);
   }
 
   setClauses.push(`updated_at = $${i++}`);

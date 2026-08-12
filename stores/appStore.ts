@@ -4,6 +4,7 @@ import type { Editor as TldrawEditor, TLShapeId } from "@tldraw/tldraw";
 import type { Folder, Note, Notebook, SyncStatus } from "@/types";
 import type { Theme } from "@/lib/themes/types";
 import { BUILTIN_THEMES } from "@/lib/themes/builtin";
+import type { ClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
 
 // Note-visit history stack (spec.md subtask 14, "Back/forward navigation").
 // Deliberately session-only, in-memory state (NOT persisted to localStorage
@@ -114,6 +115,17 @@ interface AppState {
   // on a localStorage round-trip.
   selectedThemeId: string | null;
 
+  // Sidebar cut/copy/paste clipboard (spec.md M4 subtask 8, "Right-click
+  // context menu"). Same transient, one-shot-signal pattern as
+  // `pendingEditClickPoint` above - the actual paste logic lives in
+  // lib/clipboard/sidebarClipboard.ts (kept generic/reusable there, not
+  // baked into this store), this field just holds "what's on the
+  // clipboard right now" so any row's context menu can read/set it. `null`
+  // when nothing has been cut/copied. Deliberately built generic enough
+  // (`type: "note" | "folder"`) that M6's Page sidebar can reuse this same
+  // field/mechanism directly.
+  clipboard: ClipboardEntry | null;
+
   setFolders: (folders: Folder[]) => void;
   setNotes: (notes: Note[]) => void;
   setNotebooks: (notebooks: Notebook[]) => void;
@@ -131,6 +143,7 @@ interface AppState {
   setAvailableThemes: (themes: Theme[]) => void;
   setUserThemesLoaded: (loaded: boolean) => void;
   setSelectedThemeId: (id: string | null) => void;
+  setClipboard: (entry: ClipboardEntry | null) => void;
   // Records a genuine new note/canvas visit. No-ops if `entry` is identical
   // to the entry currently pointed at by `historyIndex` (avoids duplicate
   // consecutive entries from e.g. a content-only re-render re-triggering the
@@ -166,6 +179,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   availableThemes: BUILTIN_THEMES,
   userThemesLoaded: false,
   selectedThemeId: null,
+  clipboard: null,
 
   setFolders: (folders) => set({ folders }),
   setNotes: (notes) => set({ notes }),
@@ -184,6 +198,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setAvailableThemes: (availableThemes) => set({ availableThemes }),
   setUserThemesLoaded: (loaded) => set({ userThemesLoaded: loaded }),
   setSelectedThemeId: (selectedThemeId) => set({ selectedThemeId }),
+  setClipboard: (clipboard) => set({ clipboard }),
 
   visitNote: (entry) => {
     const { noteHistory, historyIndex } = get();

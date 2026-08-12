@@ -254,7 +254,7 @@ export async function createFolder(
 
 export async function updateFolder(
   folderId: string,
-  updates: Partial<Pick<Folder, "name" | "parentId" | "order">>,
+  updates: Partial<Pick<Folder, "name" | "parentId" | "order" | "notebookId">>,
 ): Promise<void> {
   const db = await getDb();
   const now = Date.now();
@@ -274,6 +274,10 @@ export async function updateFolder(
   if (updates.order !== undefined) {
     setClauses.push(`order_index = $${i++}`);
     params.push(updates.order);
+  }
+  if (updates.notebookId !== undefined) {
+    setClauses.push(`notebook_id = $${i++}`);
+    params.push(updates.notebookId);
   }
 
   setClauses.push(`updated_at = $${i++}`);

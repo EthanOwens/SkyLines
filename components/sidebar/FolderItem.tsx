@@ -3,7 +3,18 @@
 import { useState, useRef } from "react";
 import type { DragEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Folder, FolderOpen, FilePlus, FolderPlus, Pencil, Trash2 } from "lucide-react";
+import {
+  ChevronRight,
+  Folder,
+  FolderOpen,
+  FilePlus,
+  FolderPlus,
+  Pencil,
+  Trash2,
+  Scissors,
+  Copy,
+  Clipboard,
+} from "lucide-react";
 import { createNote, updateNote } from "@/lib/db/notes";
 import { createFolder, updateFolder, deleteFolder } from "@/lib/db/folders";
 import {
@@ -13,6 +24,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { useAppStore } from "@/stores/appStore";
+import { pasteClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
 import {
   isFolderOrDescendant,
   isSidebarDragEvent,
@@ -46,6 +60,17 @@ import type { Folder as FolderType, Note } from "@/types";
 // on the MIDDLE band to move the dragged note/folder INSIDE this folder
 // (re-parent). A folder can never be dropped onto itself or one of its own
 // descendants (`isFolderOrDescendant`) - doing so would corrupt the tree.
+//
+// M4 (spec.md subtask 8, "Right-click context menu"): this row now also
+// opens a real `onContextMenu`-triggered menu (via `ContextMenu`/
+// `ContextMenuTrigger`, components/ui/context-menu.tsx) with the same
+// actions as the existing "···" `DropdownMenu` trigger, PLUS Cut/Copy/Paste
+// against the generic clipboard mechanism (stores/appStore.ts's
+// `clipboard` field + lib/clipboard/sidebarClipboard.ts's
+// `pasteClipboardEntry`). "Paste" only appears here (a folder row) when the
+// clipboard is non-empty; pasting is blocked (`pasteClipboardEntry` itself
+// no-ops) if it would move this folder into itself or one of its own
+// descendants.
 
 interface Props {
   folder: FolderType;
@@ -79,6 +104,8 @@ export function FolderItem({
   const [name, setName] = useState(folder.name);
   const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const clipboard = useAppStore((s) => s.clipboard);
+  const setClipboard = useAppStore((s) => s.setClipboard);
 
   const childFolders = allFolders
     .filter((f) => f.parentId === folder.id)
@@ -108,6 +135,29 @@ export function FolderItem({
     // deleteFolder recursively soft-deletes this folder, all descendant
     // subfolders, and every note under any of them (see lib/db/folders.ts).
     await deleteFolder(folder.id);
+  }
+
+  function handleCut() {
+    setClipboard({ kind: "cut", type: "folder", id: folder.id });
+  }
+
+  function handleCopy() {
+    setClipboard({ kind: "copy", type: "folder", id: folder.id });
+  }
+
+  async function handlePaste() {
+    if (!clipboard) return;
+    const pasted = await pasteClipboardEntry(
+      userId,
+      clipboard,
+      { notebookId: folder.notebookId as string, folderId: folder.id },
+      allFolders,
+      allNotes,
+    );
+    if (pasted && clipboard.kind === "cut") {
+      setClipboard(null);
+    }
+    if (pasted) setOpen(true);
   }
 
   async function addNote() {
@@ -224,82 +274,114 @@ export function FolderItem({
 
   const paddingLeft = depth * 12 + 8;
 
+  // Shared between the "···" `DropdownMenu` trigger and the right-click
+  // `ContextMenu` trigger below (spec.md subtask 8) - both open the exact
+  // same set of actions, just via different entry points, so the item list
+  // itself is only written once.
+  function menuItems() {
+    return (
+      <>
+        <DropdownMenuItem onClick={addNote}>
+          <FilePlus className="mr-2 h-4 w-4" /> New note
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={addSubfolder}>
+          <FolderPlus className="mr-2 h-4 w-4" /> New subfolder
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={startRename}>
+          <Pencil className="mr-2 h-4 w-4" /> Rename
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={handleCut}>
+          <Scissors className="mr-2 h-4 w-4" /> Cut
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={handleCopy}>
+          <Copy className="mr-2 h-4 w-4" /> Copy
+        </DropdownMenuItem>
+        {clipboard && (
+          <DropdownMenuItem onClick={handlePaste}>
+            <Clipboard className="mr-2 h-4 w-4" /> Paste
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={handleDelete} className="text-destructive">
+          <Trash2 className="mr-2 h-4 w-4" /> Delete
+        </DropdownMenuItem>
+      </>
+    );
+  }
+
   return (
     <div>
       {dropPosition === "before" && (
         <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
       )}
-      <DropdownMenu>
-        <div
-          draggable
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          className={`group flex items-center gap-1 rounded-md py-0.5 pr-1 cursor-pointer hover:bg-sidebar-accent transition-colors ${
-            dropPosition === "inside" ? "bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring" : ""
-          }`}
-          style={{ paddingLeft }}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <ChevronRight
-            className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
-          />
-          {open ? (
-            <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-          )}
+      <ContextMenu>
+        <ContextMenuTrigger
+          render={
+            <div
+              draggable
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`group flex items-center gap-1 rounded-md py-0.5 pr-1 cursor-pointer hover:bg-sidebar-accent transition-colors ${
+                dropPosition === "inside" ? "bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring" : ""
+              }`}
+              style={{ paddingLeft }}
+              onClick={() => setOpen((v) => !v)}
+            >
+              <ChevronRight
+                className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+              />
+              {open ? (
+                <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+              )}
 
-          {renaming ? (
-            <input
-              ref={inputRef}
-              className="flex-1 bg-transparent text-sm outline-none"
-              value={name}
-              autoFocus
-              onChange={(e) => setName(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitRename();
-                if (e.key === "Escape") { setName(folder.name); setRenaming(false); }
-                e.stopPropagation();
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <span className="flex-1 truncate text-sm text-sidebar-foreground select-none">
-              {name}
-            </span>
-          )}
+              {renaming ? (
+                <input
+                  ref={inputRef}
+                  className="flex-1 bg-transparent text-sm outline-none"
+                  value={name}
+                  autoFocus
+                  onChange={(e) => setName(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") { setName(folder.name); setRenaming(false); }
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span className="flex-1 truncate text-sm text-sidebar-foreground select-none">
+                  {name}
+                </span>
+              )}
 
-          <DropdownMenuTrigger
-            render={
-              <button
-                className="invisible ml-auto shrink-0 rounded p-0.5 hover:bg-sidebar-accent group-hover:visible"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <span className="text-muted-foreground text-xs">···</span>
-              </button>
-            }
-          />
-        </div>
-
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <button
+                      className="invisible ml-auto shrink-0 rounded p-0.5 hover:bg-sidebar-accent group-hover:visible"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span className="text-muted-foreground text-xs">···</span>
+                    </button>
+                  }
+                />
+                <DropdownMenuContent align="start" className="w-44">
+                  {menuItems()}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          }
+        />
         <DropdownMenuContent align="start" className="w-44">
-          <DropdownMenuItem onClick={addNote}>
-            <FilePlus className="mr-2 h-4 w-4" /> New note
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={addSubfolder}>
-            <FolderPlus className="mr-2 h-4 w-4" /> New subfolder
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={startRename}>
-            <Pencil className="mr-2 h-4 w-4" /> Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleDelete} className="text-destructive">
-            <Trash2 className="mr-2 h-4 w-4" /> Delete
-          </DropdownMenuItem>
+          {menuItems()}
         </DropdownMenuContent>
-      </DropdownMenu>
+      </ContextMenu>
 
       {open && hasChildren && (
         <div>

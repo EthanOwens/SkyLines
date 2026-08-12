@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { DragEvent } from "react";
+import { Clipboard } from "lucide-react";
 import { useAppStore } from "@/stores/appStore";
 import { updateFolder } from "@/lib/db/folders";
 import { updateNote } from "@/lib/db/notes";
@@ -10,6 +11,12 @@ import {
   nextOrderValue,
   readSidebarDragPayload,
 } from "@/lib/dnd/sidebar";
+import { pasteClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { FolderItem } from "./FolderItem";
 import { NoteItem } from "./NoteItem";
 
@@ -39,6 +46,13 @@ import { NoteItem } from "./NoteItem";
 // tree (not on a specific row) moves it out to the root of this notebook
 // (`parentId`/`folderId: null`), the root-level analogue of `FolderItem`'s
 // "drop onto a folder" re-parent behavior.
+//
+// M4 (spec.md subtask 8, "Right-click context menu"): the same outer
+// container also now has a right-click context menu offering "Paste"
+// (disabled/absent affordance-wise when the clipboard is empty) - the
+// notebook-root analogue of `FolderItem.tsx`'s "Paste" item, landing the
+// pasted note/folder at this notebook's root (`folderId: null`) via the
+// same generic `pasteClipboardEntry` (lib/clipboard/sidebarClipboard.ts).
 
 interface Props {
   userId: string;
@@ -48,6 +62,8 @@ interface Props {
 export function FolderTree({ userId, notebookId }: Props) {
   const folders = useAppStore((s) => s.folders);
   const notes = useAppStore((s) => s.notes);
+  const clipboard = useAppStore((s) => s.clipboard);
+  const setClipboard = useAppStore((s) => s.setClipboard);
   const [rootDropActive, setRootDropActive] = useState(false);
 
   // Notes not inside any folder, scoped to this notebook.
@@ -111,42 +127,67 @@ export function FolderTree({ userId, notebookId }: Props) {
     }
   }
 
+  async function handlePasteToRoot() {
+    if (!clipboard) return;
+    const pasted = await pasteClipboardEntry(
+      userId,
+      clipboard,
+      { notebookId, folderId: null },
+      folders,
+      notes,
+    );
+    if (pasted && clipboard.kind === "cut") {
+      setClipboard(null);
+    }
+  }
+
   return (
-    <div
-      className={`min-h-full py-1 text-sm rounded-md transition-colors ${
-        rootDropActive ? "bg-sidebar-accent/50 ring-1 ring-inset ring-sidebar-ring" : ""
-      }`}
-      onDragOver={handleRootDragOver}
-      onDragLeave={handleRootDragLeave}
-      onDrop={handleRootDrop}
-    >
-      {rootFolders.map((folder) => (
-        <FolderItem
-          key={folder.id}
-          folder={folder}
-          allFolders={folders}
-          allNotes={notes}
-          userId={userId}
-          depth={0}
-          siblingFolderIds={rootFolderIds}
-          onDragOverRow={handleRowDragOver}
-        />
-      ))}
-      {rootNotes.map((note) => (
-        <NoteItem
-          key={note.id}
-          note={note}
-          userId={userId}
-          depth={0}
-          siblingNoteIds={rootNoteIds}
-          onDragOverRow={handleRowDragOver}
-        />
-      ))}
-      {rootFolders.length === 0 && rootNotes.length === 0 && (
-        <p className="px-3 py-2 text-xs text-muted-foreground">
-          No notes yet. Use the toolbar above to create one.
-        </p>
-      )}
-    </div>
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={
+          <div
+            className={`min-h-full py-1 text-sm rounded-md transition-colors ${
+              rootDropActive ? "bg-sidebar-accent/50 ring-1 ring-inset ring-sidebar-ring" : ""
+            }`}
+            onDragOver={handleRootDragOver}
+            onDragLeave={handleRootDragLeave}
+            onDrop={handleRootDrop}
+          >
+            {rootFolders.map((folder) => (
+              <FolderItem
+                key={folder.id}
+                folder={folder}
+                allFolders={folders}
+                allNotes={notes}
+                userId={userId}
+                depth={0}
+                siblingFolderIds={rootFolderIds}
+                onDragOverRow={handleRowDragOver}
+              />
+            ))}
+            {rootNotes.map((note) => (
+              <NoteItem
+                key={note.id}
+                note={note}
+                userId={userId}
+                depth={0}
+                siblingNoteIds={rootNoteIds}
+                onDragOverRow={handleRowDragOver}
+              />
+            ))}
+            {rootFolders.length === 0 && rootNotes.length === 0 && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">
+                No notes yet. Use the toolbar above to create one.
+              </p>
+            )}
+          </div>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-44">
+        <DropdownMenuItem onClick={handlePasteToRoot} disabled={!clipboard}>
+          <Clipboard className="mr-2 h-4 w-4" /> Paste
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </ContextMenu>
   );
 }

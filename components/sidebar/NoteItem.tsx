@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import type { DragEvent } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { FileText, LayoutDashboard, Pencil, Trash2 } from "lucide-react";
+import { FileText, LayoutDashboard, Pencil, Trash2, Scissors, Copy } from "lucide-react";
 import { updateNote, deleteNote } from "@/lib/db/notes";
 import {
   DropdownMenu,
@@ -12,6 +12,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { useAppStore } from "@/stores/appStore";
 import {
   isSidebarDragEvent,
   readSidebarDragPayload,
@@ -38,6 +40,15 @@ import type { Note } from "@/types";
 // row reorders. Notes can't contain children, so unlike `FolderItem` there
 // is no "drop inside" band here; moving a note into a folder happens by
 // dropping it on that folder's row instead.
+//
+// M4 (spec.md subtask 8, "Right-click context menu"): this row now also
+// opens a real `onContextMenu`-triggered menu (via `ContextMenu`/
+// `ContextMenuTrigger`, components/ui/context-menu.tsx) with the same
+// actions as the existing "···" `DropdownMenu` trigger, plus Cut/Copy
+// against the generic clipboard mechanism (stores/appStore.ts's
+// `clipboard` field, executed by lib/clipboard/sidebarClipboard.ts). There
+// is no "Paste" here - per spec.md's paste UX, pasting only makes sense on
+// a container (a folder row or the notebook root), not on a note leaf.
 
 interface Props {
   note: Note;
@@ -61,6 +72,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
   const [title, setTitle] = useState(note.title || "Untitled");
   const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const setClipboard = useAppStore((s) => s.setClipboard);
 
   // spec.md subtask 6 ("Merge note creation UI"): every note - old
   // `type: "note"` rows included - now opens through the merged free-form-
@@ -91,6 +103,14 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
   async function handleDelete() {
     await deleteNote(note.id);
     if (isActive) router.replace("/");
+  }
+
+  function handleCut() {
+    setClipboard({ kind: "cut", type: "note", id: note.id });
+  }
+
+  function handleCopy() {
+    setClipboard({ kind: "copy", type: "note", id: note.id });
   }
 
   function handleDragStart(e: DragEvent<HTMLDivElement>) {
@@ -134,75 +154,100 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
     }
   }
 
-  return (
-    <div>
-      {dropPosition === "before" && (
-        <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
-      )}
-      <DropdownMenu>
-      <div
-        draggable
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        className={`group flex items-center gap-1.5 rounded-md py-0.5 pr-1 cursor-pointer transition-colors ${
-          isActive
-            ? "bg-sidebar-accent text-sidebar-foreground"
-            : "hover:bg-sidebar-accent"
-        }`}
-        style={{ paddingLeft }}
-        onClick={() => !renaming && router.push(href)}
-      >
-        {note.type === "canvas" ? (
-          <LayoutDashboard className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        )}
-
-        {renaming ? (
-          <input
-            ref={inputRef}
-            className="flex-1 bg-transparent text-sm outline-none"
-            value={title}
-            autoFocus
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitRename();
-              if (e.key === "Escape") { setTitle(note.title); setRenaming(false); }
-              e.stopPropagation();
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span className="flex-1 truncate text-sm text-sidebar-foreground select-none">
-            {title}
-          </span>
-        )}
-
-        <DropdownMenuTrigger
-          render={
-            <button
-              className="invisible ml-auto shrink-0 rounded p-0.5 hover:bg-sidebar-accent group-hover:visible"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <span className="text-muted-foreground text-xs">···</span>
-            </button>
-          }
-        />
-      </div>
-
-      <DropdownMenuContent align="start" className="w-40">
+  // Shared between the "···" `DropdownMenu` trigger and the right-click
+  // `ContextMenu` trigger below (spec.md subtask 8).
+  function menuItems() {
+    return (
+      <>
         <DropdownMenuItem onClick={startRename}>
           <Pencil className="mr-2 h-4 w-4" /> Rename
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={handleCut}>
+          <Scissors className="mr-2 h-4 w-4" /> Cut
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={handleCopy}>
+          <Copy className="mr-2 h-4 w-4" /> Copy
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleDelete} className="text-destructive">
           <Trash2 className="mr-2 h-4 w-4" /> Delete
         </DropdownMenuItem>
-      </DropdownMenuContent>
-      </DropdownMenu>
+      </>
+    );
+  }
+
+  return (
+    <div>
+      {dropPosition === "before" && (
+        <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
+      )}
+      <ContextMenu>
+        <ContextMenuTrigger
+          render={
+            <div
+              draggable
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`group flex items-center gap-1.5 rounded-md py-0.5 pr-1 cursor-pointer transition-colors ${
+                isActive
+                  ? "bg-sidebar-accent text-sidebar-foreground"
+                  : "hover:bg-sidebar-accent"
+              }`}
+              style={{ paddingLeft }}
+              onClick={() => !renaming && router.push(href)}
+            >
+              {note.type === "canvas" ? (
+                <LayoutDashboard className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+
+              {renaming ? (
+                <input
+                  ref={inputRef}
+                  className="flex-1 bg-transparent text-sm outline-none"
+                  value={title}
+                  autoFocus
+                  onChange={(e) => setTitle(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") { setTitle(note.title); setRenaming(false); }
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span className="flex-1 truncate text-sm text-sidebar-foreground select-none">
+                  {title}
+                </span>
+              )}
+
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <button
+                      className="invisible ml-auto shrink-0 rounded p-0.5 hover:bg-sidebar-accent group-hover:visible"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span className="text-muted-foreground text-xs">···</span>
+                    </button>
+                  }
+                />
+                <DropdownMenuContent align="start" className="w-40">
+                  {menuItems()}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          }
+        />
+        <DropdownMenuContent align="start" className="w-40">
+          {menuItems()}
+        </DropdownMenuContent>
+      </ContextMenu>
       {dropPosition === "after" && (
         <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
       )}
