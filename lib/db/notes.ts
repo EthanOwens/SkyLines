@@ -321,15 +321,32 @@ export async function updateNote(
 }
 
 /**
- * Soft-deletes a single note: sets `deletedAt`/`dirty`, does not `DELETE
- * FROM` the row.
+ * Soft-deletes a single note and cascades that same soft-delete to every
+ * page under it (`pages.note_id REFERENCES notes(id)` is an enforced FK,
+ * and has no `ON DELETE CASCADE` - see lib/sync/cleanup.ts's tombstone
+ * hard-delete pass, which would otherwise eventually hit an FK violation
+ * hard-deleting an old `notes` tombstone while live `pages` rows still
+ * reference it). Sets `deletedAt`/`dirty` on both tables, does not `DELETE
+ * FROM` either row - mirrors `deleteFolder`'s folder-to-notes cascade in
+ * lib/db/folders.ts.
+ *
+ * Both `UPDATE`s below are sent as a SINGLE multi-statement `db.execute()`
+ * call (one semicolon-joined `BEGIN; UPDATE ...; UPDATE ...; COMMIT;`
+ * string) rather than as separate `db.execute()` calls wrapping a
+ * `BEGIN`/`COMMIT` transaction - see `deleteFolder` in lib/db/folders.ts for
+ * why: `@tauri-apps/plugin-sql` pools connections, so separate
+ * `db.execute()` calls aren't guaranteed to reuse the same pooled
+ * connection, which breaks `BEGIN`/`COMMIT` transactions spanning them.
  */
 export async function deleteNote(noteId: string): Promise<void> {
   const db = await getDb();
   const now = Date.now();
 
   await db.execute(
-    `UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id = $3`,
+    `BEGIN;
+     UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id = $3;
+     UPDATE pages SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE note_id = $3;
+     COMMIT;`,
     [now, now, noteId],
   );
   notifyDataChange("local");
