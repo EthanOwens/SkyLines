@@ -122,6 +122,7 @@ const NEUTRAL_FORMAT_STATE: FormatActionState = {
   fontFamily: "",
   fontSize: "",
   color: "",
+  highlight: null,
 };
 
 function FormatTab() {

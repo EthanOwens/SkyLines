@@ -66,10 +66,23 @@ import { createLowlight, common } from "lowlight";
 import { TextStyle, FontSize } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
+import Highlight from "@tiptap/extension-highlight";
 import { useAppStore } from "@/stores/appStore";
-import { formatActions, selectFormatActionState } from "@/components/ribbon/formatActions";
+import {
+  formatActions,
+  selectFormatActionState,
+  FONT_FAMILIES,
+  FONT_SIZES,
+  TEXT_COLORS,
+  HIGHLIGHT_COLORS,
+  applyFontFamily,
+  applyFontSize,
+  applyTextColor,
+  applyHighlightColor,
+  toggleHighlight,
+} from "@/components/ribbon/formatActions";
 import { cn } from "@/lib/utils";
-import { Link as LinkIcon } from "lucide-react";
+import { Link as LinkIcon, Highlighter } from "lucide-react";
 import "@/components/editor/editor.css";
 
 const lowlight = createLowlight(common);
@@ -102,7 +115,13 @@ function useIsHoveredShape(shapeId: TLShapeId) {
 // duplicated rather than imported from there since RichTextEditor.tsx is a
 // route-specific component slated for retirement (spec.md subtask 6), not a
 // shared module.
-const BUBBLE_MENU_ACTION_IDS = ["bold", "italic", "strike", "code"];
+//
+// spec.md M3 subtask 6 ("Bubble menu: add font family, font size,
+// highlight, text color, bullet/numbered toggles") added `bulletList`/
+// `orderedList` to this subset - both already existed in `formatActions`
+// (the Format tab already used them), so this just widens the filter
+// rather than duplicating their toggle logic.
+const BUBBLE_MENU_ACTION_IDS = ["bold", "italic", "strike", "code", "bulletList", "orderedList"];
 const bubbleMenuActions = formatActions.filter((a) => BUBBLE_MENU_ACTION_IDS.includes(a.id));
 
 export type RichTextShapeProps = {
@@ -183,6 +202,11 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
         FontFamily,
         FontSize,
         Color,
+        // spec.md M3 subtask 6. `multicolor: true` so `setHighlight({ color
+        // })` (via formatActions.ts's `applyHighlightColor`/
+        // `toggleHighlight`) can pick from `HIGHLIGHT_COLORS` rather than a
+        // single fixed highlight color.
+        Highlight.configure({ multicolor: true }),
       ],
       content: (shape.props.content as object) ?? "",
       editable: isEditing,
@@ -523,39 +547,126 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
             // - a shape's bounding box is much smaller than a full page, so
             // this keeps the popover compact enough to comfortably fit
             // within/near a shape sized close to its 320x200 default.
-            className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-0.5 text-popover-foreground shadow-md"
+            // `flex-wrap` + a fixed `max-w` (spec.md M3 subtask 6) let the
+            // now-larger control set (font family/size selects, highlight
+            // toggle + swatches, text-color swatches, list toggles) wrap
+            // onto a few short rows instead of the Format tab's single wide
+            // strip, which wouldn't fit over a small shape.
+            className="flex max-w-[220px] flex-wrap items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
           >
-            {bubbleMenuState &&
-              bubbleMenuActions.map((action) => (
+            {bubbleMenuState && (
+              <>
+                {bubbleMenuActions.map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    title={action.tip}
+                    disabled={action.isDisabled?.(bubbleMenuState)}
+                    onClick={() => action.run(tiptapEditor)}
+                    className={cn(
+                      "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-50",
+                      action.isActive(bubbleMenuState)
+                        ? "bg-secondary text-secondary-foreground"
+                        : "hover:bg-accent hover:text-accent-foreground",
+                    )}
+                  >
+                    <action.icon className="h-3 w-3" />
+                  </button>
+                ))}
                 <button
-                  key={action.id}
                   type="button"
-                  title={action.tip}
-                  disabled={action.isDisabled?.(bubbleMenuState)}
-                  onClick={() => action.run(tiptapEditor)}
+                  title="Insert link"
+                  onClick={setLink}
                   className={cn(
-                    "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-50",
-                    action.isActive(bubbleMenuState)
+                    "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    bubbleMenuState.link !== null
                       ? "bg-secondary text-secondary-foreground"
                       : "hover:bg-accent hover:text-accent-foreground",
                   )}
                 >
-                  <action.icon className="h-3 w-3" />
+                  <LinkIcon className="h-3 w-3" />
                 </button>
-              ))}
-            <button
-              type="button"
-              title="Insert link"
-              onClick={setLink}
-              className={cn(
-                "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors",
-                bubbleMenuState?.link !== null && bubbleMenuState?.link !== undefined
-                  ? "bg-secondary text-secondary-foreground"
-                  : "hover:bg-accent hover:text-accent-foreground",
-              )}
-            >
-              <LinkIcon className="h-3 w-3" />
-            </button>
+                <button
+                  type="button"
+                  title="Highlight"
+                  onClick={() => toggleHighlight(tiptapEditor)}
+                  className={cn(
+                    "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    bubbleMenuState.highlight !== null
+                      ? "bg-secondary text-secondary-foreground"
+                      : "hover:bg-accent hover:text-accent-foreground",
+                  )}
+                >
+                  <Highlighter className="h-3 w-3" />
+                </button>
+
+                {/* Full-width rows below (spec.md M3 subtask 6) - a select's
+                    intrinsic width and a row of color swatches don't fit
+                    alongside the icon-button strip above within this
+                    popover's 220px cap, so each gets its own flex-basis-100%
+                    row instead of being crammed into the first line. */}
+                <select
+                  aria-label="Font family"
+                  title="Font family"
+                  value={bubbleMenuState.fontFamily}
+                  onChange={(e) => applyFontFamily(tiptapEditor, e.target.value)}
+                  className="mt-0.5 h-6 w-full basis-full rounded-md border border-border bg-background px-1 text-[11px] text-foreground"
+                >
+                  {FONT_FAMILIES.map((f) => (
+                    <option key={f.value} value={f.value}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Font size"
+                  title="Font size"
+                  value={bubbleMenuState.fontSize}
+                  onChange={(e) => applyFontSize(tiptapEditor, e.target.value)}
+                  className="mt-0.5 h-6 w-full basis-full rounded-md border border-border bg-background px-1 text-[11px] text-foreground"
+                >
+                  {FONT_SIZES.map((f) => (
+                    <option key={f.value} value={f.value}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="mt-0.5 flex basis-full items-center gap-0.5" title="Highlight color">
+                  {HIGHLIGHT_COLORS.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      title={c.label}
+                      onClick={() => applyHighlightColor(tiptapEditor, c.value)}
+                      className={cn(
+                        "h-4 w-4 rounded-full border",
+                        bubbleMenuState.highlight === c.value
+                          ? "ring-2 ring-ring ring-offset-1"
+                          : "border-border",
+                      )}
+                      style={{ backgroundColor: c.value }}
+                    />
+                  ))}
+                </div>
+
+                <div className="mt-0.5 flex basis-full items-center gap-0.5" title="Text color">
+                  {TEXT_COLORS.map((c) => (
+                    <button
+                      key={c.value || "default"}
+                      type="button"
+                      title={c.label}
+                      onClick={() => applyTextColor(tiptapEditor, c.value)}
+                      className={cn(
+                        "h-4 w-4 rounded-full border",
+                        bubbleMenuState.color === c.value ? "ring-2 ring-ring ring-offset-1" : "border-border",
+                      )}
+                      style={{ backgroundColor: c.value || "transparent" }}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </BubbleMenu>
         )}
         <EditorContent editor={tiptapEditor} className="h-full px-2 py-1" />
