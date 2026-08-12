@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import type { DragEvent } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { FileText, LayoutDashboard, Pencil, Trash2 } from "lucide-react";
 import { updateNote, deleteNote } from "@/lib/db/notes";
@@ -11,6 +12,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  isSidebarDragEvent,
+  readSidebarDragPayload,
+  reindexSiblings,
+  resolveRowDropPosition,
+  setSidebarDragPayload,
+  type RowDropPosition,
+} from "@/lib/dnd/sidebar";
 import type { Note } from "@/types";
 
 // Ported from ../note_taking_app/components/sidebar/NoteItem.tsx (spec.md
@@ -21,18 +30,36 @@ import type { Note } from "@/types";
 // `<DropdownMenuTrigger render={<button .../>} />` instead of the
 // reference's `asChild` - see components/sidebar/Sidebar.tsx's header
 // comment for why.
+//
+// M4 (spec.md subtask 7, "Sidebar drag-and-drop"): this row is now
+// draggable, and is a drop target for reordering among sibling notes
+// (`siblingNoteIds`, the other notes in the same folder/root level, passed
+// down from the parent level) - dropping near the top/bottom half of the
+// row reorders. Notes can't contain children, so unlike `FolderItem` there
+// is no "drop inside" band here; moving a note into a folder happens by
+// dropping it on that folder's row instead.
 
 interface Props {
   note: Note;
   userId: string;
   depth: number;
+  /** Ordered ids of the sibling notes at this same level (same folder),
+   * including this note itself - used to compute the new order when a
+   * dragged note is dropped before/after this one. */
+  siblingNoteIds: string[];
+  /** Called from this row's own `handleDragOver` (in addition to its own
+   * `e.stopPropagation()`) so the root `FolderTree` container can clear its
+   * "drop to root" highlight while a specific row is being hovered - see
+   * `FolderTree.tsx`'s `handleRowDragOver` comment for why this is needed. */
+  onDragOverRow: () => void;
 }
 
-export function NoteItem({ note, depth }: Props) {
+export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(note.title || "Untitled");
+  const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // spec.md subtask 6 ("Merge note creation UI"): every note - old
@@ -66,9 +93,59 @@ export function NoteItem({ note, depth }: Props) {
     if (isActive) router.replace("/");
   }
 
+  function handleDragStart(e: DragEvent<HTMLDivElement>) {
+    if (renaming) {
+      e.preventDefault();
+      return;
+    }
+    setSidebarDragPayload(e, { type: "note", id: note.id });
+  }
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    if (!isSidebarDragEvent(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onDragOverRow();
+    const position = resolveRowDropPosition(e, e.currentTarget.getBoundingClientRect(), false);
+    e.dataTransfer.dropEffect = "move";
+    setDropPosition(position);
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDropPosition(null);
+  }
+
+  async function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    const position = dropPosition === "inside" ? "after" : dropPosition;
+    setDropPosition(null);
+    const payload = readSidebarDragPayload(e);
+    if (!payload || !position || payload.type !== "note" || payload.id === note.id) return;
+
+    const reindexed = reindexSiblings(siblingNoteIds, payload.id, note.id, position);
+    for (const { id, order } of reindexed) {
+      if (id === payload.id) {
+        await updateNote(id, { folderId: note.folderId, order });
+      } else {
+        await updateNote(id, { order });
+      }
+    }
+  }
+
   return (
-    <DropdownMenu>
+    <div>
+      {dropPosition === "before" && (
+        <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
+      )}
+      <DropdownMenu>
       <div
+        draggable
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         className={`group flex items-center gap-1.5 rounded-md py-0.5 pr-1 cursor-pointer transition-colors ${
           isActive
             ? "bg-sidebar-accent text-sidebar-foreground"
@@ -125,6 +202,10 @@ export function NoteItem({ note, depth }: Props) {
           <Trash2 className="mr-2 h-4 w-4" /> Delete
         </DropdownMenuItem>
       </DropdownMenuContent>
-    </DropdownMenu>
+      </DropdownMenu>
+      {dropPosition === "after" && (
+        <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
+      )}
+    </div>
   );
 }

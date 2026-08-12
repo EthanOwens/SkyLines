@@ -57,6 +57,7 @@ function noteToFirestoreDoc(note: Note, updatedAt: number) {
     userId: note.userId,
     content: note.content ?? null,
     canvasData: note.canvasData ?? null,
+    order: note.order,
     createdAt: note.createdAt,
     updatedAt,
     deletedAt: note.deletedAt,

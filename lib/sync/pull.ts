@@ -141,6 +141,7 @@ function toRemoteNoteData(id: string, data: DocumentData): RemoteNoteData {
     userId: data.userId as string,
     content: (data.content as object | null) ?? null,
     canvasData: (data.canvasData as object | null) ?? null,
+    order: (data.order as number) ?? 0,
     createdAt: data.createdAt as number,
     updatedAt: data.updatedAt as number,
     deletedAt: (data.deletedAt as number | null) ?? null,

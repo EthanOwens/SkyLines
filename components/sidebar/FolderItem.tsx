@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef } from "react";
+import type { DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, Folder, FolderOpen, FilePlus, FolderPlus, Pencil, Trash2 } from "lucide-react";
-import { createNote } from "@/lib/db/notes";
+import { createNote, updateNote } from "@/lib/db/notes";
 import { createFolder, updateFolder, deleteFolder } from "@/lib/db/folders";
 import {
   DropdownMenu,
@@ -12,6 +13,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  isFolderOrDescendant,
+  isSidebarDragEvent,
+  nextOrderValue,
+  readSidebarDragPayload,
+  reindexSiblings,
+  resolveRowDropPosition,
+  setSidebarDragPayload,
+  type RowDropPosition,
+} from "@/lib/dnd/sidebar";
 import { NoteItem } from "./NoteItem";
 import type { Folder as FolderType, Note } from "@/types";
 
@@ -27,6 +38,14 @@ import type { Folder as FolderType, Note } from "@/types";
 // `<DropdownMenuTrigger render={<button .../>} />` instead of the
 // reference's `asChild` - see components/sidebar/Sidebar.tsx's header
 // comment for why.
+//
+// M4 (spec.md subtask 7, "Sidebar drag-and-drop"): this row is now
+// draggable (moves the folder when dropped elsewhere), and is itself a drop
+// target two ways - drop near the TOP/BOTTOM edge to reorder among sibling
+// folders (`siblingFolderIds`, passed down from the parent level), or drop
+// on the MIDDLE band to move the dragged note/folder INSIDE this folder
+// (re-parent). A folder can never be dropped onto itself or one of its own
+// descendants (`isFolderOrDescendant`) - doing so would corrupt the tree.
 
 interface Props {
   folder: FolderType;
@@ -34,18 +53,42 @@ interface Props {
   allNotes: Note[];
   userId: string;
   depth: number;
+  /** Ordered ids of the sibling folders at this same level (same parent),
+   * including this folder itself - used to compute the new order when a
+   * dragged folder is dropped before/after this one. */
+  siblingFolderIds: string[];
+  /** Called from this row's own `handleDragOver` (in addition to its own
+   * `e.stopPropagation()`) so the root `FolderTree` container can clear its
+   * "drop to root" highlight while a specific row is being hovered - see
+   * `FolderTree.tsx`'s `handleRowDragOver` comment for why this is needed. */
+  onDragOverRow: () => void;
 }
 
-export function FolderItem({ folder, allFolders, allNotes, userId, depth }: Props) {
+export function FolderItem({
+  folder,
+  allFolders,
+  allNotes,
+  userId,
+  depth,
+  siblingFolderIds,
+  onDragOverRow,
+}: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(folder.name);
+  const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const childFolders = allFolders.filter((f) => f.parentId === folder.id);
-  const childNotes = allNotes.filter((n) => n.folderId === folder.id);
+  const childFolders = allFolders
+    .filter((f) => f.parentId === folder.id)
+    .sort((a, b) => a.order - b.order);
+  const childNotes = allNotes
+    .filter((n) => n.folderId === folder.id)
+    .sort((a, b) => a.order - b.order);
   const hasChildren = childFolders.length > 0 || childNotes.length > 0;
+  const childFolderIds = childFolders.map((f) => f.id);
+  const childNoteIds = childNotes.map((n) => n.id);
 
   function startRename() {
     setRenaming(true);
@@ -75,7 +118,14 @@ export function FolderItem({ folder, allFolders, allNotes, userId, depth }: Prop
     // ("Merge note creation UI"): every note is now the merged free-form-
     // canvas editor, so this always creates `type: "canvas"` and routes to
     // /canvas?id=... - there's no longer a separate "New canvas" action.
-    const id = await createNote(userId, "canvas", folder.notebookId as string, folder.id);
+    const id = await createNote(
+      userId,
+      "canvas",
+      folder.notebookId as string,
+      folder.id,
+      "Untitled",
+      nextOrderValue(childNotes.map((n) => n.order)),
+    );
     setOpen(true);
     router.push(`/canvas?id=${id}`);
   }
@@ -85,17 +135,110 @@ export function FolderItem({ folder, allFolders, allNotes, userId, depth }: Prop
     // between notebooks by being nested) - `folder.notebookId` is
     // guaranteed non-null in practice, see the notebookId comment on the
     // `Folder` type in types/index.ts.
-    await createFolder(userId, "New Folder", folder.notebookId as string, folder.id);
+    await createFolder(
+      userId,
+      "New Folder",
+      folder.notebookId as string,
+      folder.id,
+      nextOrderValue(childFolders.map((f) => f.order)),
+    );
     setOpen(true);
+  }
+
+  function handleDragStart(e: DragEvent<HTMLDivElement>) {
+    if (renaming) {
+      e.preventDefault();
+      return;
+    }
+    setSidebarDragPayload(e, { type: "folder", id: folder.id });
+  }
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    if (!isSidebarDragEvent(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onDragOverRow();
+    const position = resolveRowDropPosition(e, e.currentTarget.getBoundingClientRect(), true);
+    e.dataTransfer.dropEffect = "move";
+    setDropPosition(position);
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDropPosition(null);
+  }
+
+  async function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    const position = dropPosition;
+    setDropPosition(null);
+    const payload = readSidebarDragPayload(e);
+    if (!payload || !position) return;
+
+    if (position === "inside") {
+      if (payload.type === "folder") {
+        if (payload.id === folder.id || isFolderOrDescendant(allFolders, payload.id, folder.id)) return;
+        await updateFolder(payload.id, {
+          parentId: folder.id,
+          order: nextOrderValue(childFolders.map((f) => f.order)),
+        });
+      } else {
+        await updateNote(payload.id, {
+          folderId: folder.id,
+          order: nextOrderValue(childNotes.map((n) => n.order)),
+        });
+      }
+      setOpen(true);
+      return;
+    }
+
+    // "before"/"after": reorder among this row's own siblings, re-parenting
+    // the dragged item to this row's parent if it came from elsewhere.
+    if (payload.type === "folder") {
+      if (payload.id === folder.id) return;
+      // Reordering moves the dragged folder to `folder.parentId` (this
+      // row's own parent). That's only a cycle if `folder.parentId` is the
+      // dragged folder itself or one of ITS descendants - a null
+      // `folder.parentId` (moving to root) is always safe.
+      if (folder.parentId && isFolderOrDescendant(allFolders, payload.id, folder.parentId)) {
+        return;
+      }
+      const reindexed = reindexSiblings(siblingFolderIds, payload.id, folder.id, position);
+      for (const { id, order } of reindexed) {
+        if (id === payload.id) {
+          await updateFolder(id, { parentId: folder.parentId, order });
+        } else {
+          await updateFolder(id, { order });
+        }
+      }
+    } else {
+      // A note dropped before/after a folder row has no note siblings here
+      // to reorder against - treat it as "move into this folder's parent
+      // level, appended at the end" isn't well-defined for a folder target,
+      // so ignore (notes only reorder against other notes; use the
+      // "inside" band to move a note into a folder).
+      return;
+    }
   }
 
   const paddingLeft = depth * 12 + 8;
 
   return (
     <div>
+      {dropPosition === "before" && (
+        <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
+      )}
       <DropdownMenu>
         <div
-          className="group flex items-center gap-1 rounded-md py-0.5 pr-1 cursor-pointer hover:bg-sidebar-accent transition-colors"
+          draggable
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`group flex items-center gap-1 rounded-md py-0.5 pr-1 cursor-pointer hover:bg-sidebar-accent transition-colors ${
+            dropPosition === "inside" ? "bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring" : ""
+          }`}
           style={{ paddingLeft }}
           onClick={() => setOpen((v) => !v)}
         >
@@ -168,12 +311,25 @@ export function FolderItem({ folder, allFolders, allNotes, userId, depth }: Prop
               allNotes={allNotes}
               userId={userId}
               depth={depth + 1}
+              siblingFolderIds={childFolderIds}
+              onDragOverRow={onDragOverRow}
             />
           ))}
           {childNotes.map((n) => (
-            <NoteItem key={n.id} note={n} userId={userId} depth={depth + 1} />
+            <NoteItem
+              key={n.id}
+              note={n}
+              userId={userId}
+              depth={depth + 1}
+              siblingNoteIds={childNoteIds}
+              onDragOverRow={onDragOverRow}
+            />
           ))}
         </div>
+      )}
+
+      {dropPosition === "after" && (
+        <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
       )}
     </div>
   );

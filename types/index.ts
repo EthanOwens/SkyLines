@@ -57,6 +57,11 @@ export interface Note {
   userId: string;
   content?: object | null;    // TipTap JSON doc
   canvasData?: object | null; // Tldraw snapshot
+  // Sibling display order within a folder (or within the notebook root for
+  // folder-less notes), mirroring `Folder.order` (spec.md M4 subtask 7,
+  // "Sidebar drag-and-drop reordering") - drives the sidebar's sort order,
+  // independent of `updatedAt`.
+  order: number;
   createdAt: number;
   updatedAt: number;
   // Sync bookkeeping (mirrors sqlite `notes` columns dirty/synced_at/deleted_at,

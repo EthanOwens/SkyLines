@@ -21,6 +21,7 @@ type NoteRow = {
   user_id: string;
   content: string | null;
   canvas_data: string | null;
+  order_index: number;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -39,6 +40,7 @@ function rowToNote(row: NoteRow): Note {
     content: row.content !== null ? (JSON.parse(row.content) as object | null) : null,
     canvasData:
       row.canvas_data !== null ? (JSON.parse(row.canvas_data) as object | null) : null,
+    order: row.order_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     dirty: row.dirty === 1,
@@ -155,6 +157,7 @@ export type RemoteNoteData = {
   userId: string;
   content: object | null;
   canvasData: object | null;
+  order: number;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
@@ -177,8 +180,8 @@ export async function upsertNoteFromRemote(
   const db = await getDb();
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      ON CONFLICT(id) DO UPDATE SET
        title = excluded.title,
        type = excluded.type,
@@ -187,6 +190,7 @@ export async function upsertNoteFromRemote(
        user_id = excluded.user_id,
        content = excluded.content,
        canvas_data = excluded.canvas_data,
+       order_index = excluded.order_index,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        deleted_at = excluded.deleted_at,
@@ -201,6 +205,7 @@ export async function upsertNoteFromRemote(
       remote.userId,
       remote.content === null ? null : JSON.stringify(remote.content),
       remote.canvasData === null ? null : JSON.stringify(remote.canvasData),
+      remote.order,
       remote.createdAt,
       remote.updatedAt,
       remote.deletedAt,
@@ -226,6 +231,7 @@ export async function createNote(
   notebookId: string,
   folderId: string | null = null,
   title = "Untitled",
+  order = 0,
 ): Promise<string> {
   const db = await getDb();
   const id = crypto.randomUUID();
@@ -233,9 +239,9 @@ export async function createNote(
 
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, NULL, 1, NULL)`,
-    [id, title, type, folderId, notebookId, userId, now, now],
+       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, $9, NULL, 1, NULL)`,
+    [id, title, type, folderId, notebookId, userId, order, now, now],
   );
 
   notifyDataChange("local");
@@ -244,7 +250,7 @@ export async function createNote(
 
 export async function updateNote(
   noteId: string,
-  updates: Partial<Pick<Note, "title" | "content" | "canvasData" | "folderId">>,
+  updates: Partial<Pick<Note, "title" | "content" | "canvasData" | "folderId" | "order">>,
 ): Promise<void> {
   const db = await getDb();
   const now = Date.now();
@@ -268,6 +274,10 @@ export async function updateNote(
   if (updates.folderId !== undefined) {
     setClauses.push(`folder_id = $${i++}`);
     params.push(updates.folderId);
+  }
+  if (updates.order !== undefined) {
+    setClauses.push(`order_index = $${i++}`);
+    params.push(updates.order);
   }
 
   setClauses.push(`updated_at = $${i++}`);

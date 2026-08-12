@@ -8,6 +8,7 @@ import { auth } from "@/lib/firebase";
 import { createNote } from "@/lib/db/notes";
 import { createFolder } from "@/lib/db/folders";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
+import { nextOrderValue } from "@/lib/dnd/sidebar";
 import { useAppStore } from "@/stores/appStore";
 import { FolderTree } from "./FolderTree";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -74,6 +75,8 @@ export function Sidebar({ user }: Props) {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const selectedNotebookId = useAppStore((s) => s.selectedNotebookId);
+  const notes = useAppStore((s) => s.notes);
+  const folders = useAppStore((s) => s.folders);
   const [creating, setCreating] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
@@ -98,7 +101,21 @@ export function Sidebar({ user }: Props) {
     setCreating(true);
     try {
       const notebookId = await resolveNotebookId();
-      const id = await createNote(user.uid, "canvas", notebookId);
+      // Root-level, matching FolderItem.tsx's addNote/addSubfolder: append
+      // after the other existing root notes in this notebook rather than
+      // defaulting to order 0 (createNote's default), which would collide
+      // with/jump ahead of whatever's already at the root.
+      const rootNoteOrders = notes
+        .filter((n) => !n.folderId && n.notebookId === notebookId)
+        .map((n) => n.order);
+      const id = await createNote(
+        user.uid,
+        "canvas",
+        notebookId,
+        undefined,
+        undefined,
+        nextOrderValue(rootNoteOrders),
+      );
       router.push(`/canvas?id=${id}`);
     } finally {
       setCreating(false);
@@ -107,7 +124,17 @@ export function Sidebar({ user }: Props) {
 
   async function newFolder() {
     const notebookId = await resolveNotebookId();
-    await createFolder(user.uid, "New Folder", notebookId);
+    // See the comment in newNote above - same reasoning for root folders.
+    const rootFolderOrders = folders
+      .filter((f) => !f.parentId && f.notebookId === notebookId)
+      .map((f) => f.order);
+    await createFolder(
+      user.uid,
+      "New Folder",
+      notebookId,
+      undefined,
+      nextOrderValue(rootFolderOrders),
+    );
   }
 
   async function handleSignOut() {

@@ -442,6 +442,25 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
+        // spec.md subtask 7 (M4, "Sidebar drag-and-drop"): sidebar reordering
+        // needs a persisted sibling-order field for notes the same way
+        // `folders.order_index`/`notebooks.order_index` already have one -
+        // confirmed genuinely missing (notes.ts's `getNotes` only ever
+        // ordered by `updated_at DESC`, and no `order`/`orderIndex` field
+        // exists anywhere on the `notes` table or the `Note` type). Unlike
+        // migrations 3/4's `notebook_id` backfills, a real constant
+        // `DEFAULT 0` is sensible here (SQLite's `ALTER TABLE ... ADD
+        // COLUMN` allows a `NOT NULL` column with a literal constant
+        // default), so this is a plain single-statement additive migration
+        // with no backfill UPDATE needed.
+        tauri_plugin_sql::Migration {
+            version: 5,
+            description: "add notes.order_index",
+            sql: "
+                ALTER TABLE notes ADD COLUMN order_index INTEGER NOT NULL DEFAULT 0;
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
     ];
 
     // M5 (spec.md subtask 21): Google sign-in uses a system-browser +
