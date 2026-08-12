@@ -233,7 +233,7 @@ export function CanvasEditor({ note }: Props) {
   );
 
   return (
-    <div className="relative flex-1 h-full w-full">
+    <div className="canvas-editor-container relative flex-1 h-full w-full">
       {/* spec.md M2 subtask 4 ("Draw tab rebuild") - hides tldraw's own
           native toolbar/menu/zoom/etc. chrome so this app's own ribbon
           (components/ribbon/Ribbon.tsx's Draw tab) is the sole
