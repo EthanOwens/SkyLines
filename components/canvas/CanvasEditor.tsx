@@ -17,7 +17,25 @@
 //   debounce matters even more here).
 
 import { useCallback, useRef } from "react";
-import { Tldraw, type Editor, type TLEditorSnapshot } from "@tldraw/tldraw";
+import {
+  DefaultStylePanel,
+  StylePanelArrowKindPicker,
+  StylePanelArrowheadPicker,
+  StylePanelColorPicker,
+  StylePanelDashPicker,
+  StylePanelFillPicker,
+  StylePanelFontPicker,
+  StylePanelGeoShapePicker,
+  StylePanelLabelAlignPicker,
+  StylePanelSection,
+  StylePanelSizePicker,
+  StylePanelSplinePicker,
+  StylePanelTextAlignPicker,
+  Tldraw,
+  type Editor,
+  type TLEditorSnapshot,
+  type TLUiStylePanelProps,
+} from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import { updateNote } from "@/lib/db/notes";
 import { useAppStore } from "@/stores/appStore";
@@ -38,6 +56,54 @@ const shapeUtils = [RichTextShapeUtil];
 // this alongside - not instead of - tldraw's own select/draw/etc. tools).
 // Same referential-stability reasoning as `shapeUtils` above.
 const tools = [RichTextTool];
+
+// spec.md M5 subtask 10 ("Remove tldraw's built-in opacity slider") - tldraw
+// 4.5.12 (verified via node_modules/tldraw/dist-esm) has no sub-component-
+// level override slot for just the opacity control within its default style
+// panel; the `components` prop's `StylePanel` slot only lets you replace the
+// panel wholesale (see node_modules/tldraw/dist-cjs/index.d.ts's
+// `TLUiComponents.StylePanel?: ComponentType<TLUiStylePanelProps> | null`).
+// However, tldraw DOES export `DefaultStylePanel` (the outer
+// container/wrapper - keyboard handling, pointer-out styling reset, mobile
+// class, etc.) as a component that accepts a `children` override instead of
+// rendering its own default content when children are passed (see
+// node_modules/tldraw/dist-esm/lib/ui/components/StylePanel/
+// DefaultStylePanel.mjs: `children ?? <DefaultStylePanelContent />`), plus
+// every individual picker sub-component `DefaultStylePanelContent` itself is
+// built from (`StylePanelColorPicker`, `StylePanelFillPicker`, etc. - see
+// node_modules/tldraw/dist-esm/lib/ui/components/StylePanel/
+// DefaultStylePanelContent.mjs's named exports). So instead of hand-rolling
+// the whole panel, this reconstructs `DefaultStylePanelContent`'s exact
+// section layout via those exported pickers, just omitting
+// `StylePanelOpacityPicker` (the only omission), and passes it as
+// `DefaultStylePanel`'s `children`. Every other control (color, fill, dash,
+// size, font, text/label align, geo shape, arrow kind/heads, spline) keeps
+// its exact stock tldraw component and behavior.
+function StylePanelWithoutOpacity(props: TLUiStylePanelProps) {
+  return (
+    <DefaultStylePanel {...props}>
+      <StylePanelSection>
+        <StylePanelColorPicker />
+      </StylePanelSection>
+      <StylePanelSection>
+        <StylePanelFillPicker />
+        <StylePanelDashPicker />
+        <StylePanelSizePicker />
+      </StylePanelSection>
+      <StylePanelSection>
+        <StylePanelFontPicker />
+        <StylePanelTextAlignPicker />
+        <StylePanelLabelAlignPicker />
+      </StylePanelSection>
+      <StylePanelSection>
+        <StylePanelGeoShapePicker />
+        <StylePanelArrowKindPicker />
+        <StylePanelArrowheadPicker />
+        <StylePanelSplinePicker />
+      </StylePanelSection>
+    </DefaultStylePanel>
+  );
+}
 
 interface Props {
   note: Note;
@@ -180,10 +246,11 @@ export function CanvasEditor({ note }: Props) {
           override (see node_modules/tldraw/dist-esm/lib/ui/context/
           components.mjs's `TldrawUiComponentsProvider`, confirmed against
           the installed tldraw 4.5.12), nulling out every chrome slot EXCEPT
-          `StylePanel`, which is left unset so it keeps rendering tldraw's
-          default `DefaultStylePanel`. The canvas itself (shapes, selection,
-          editing) is entirely unaffected either way; only the surrounding
-          native UI chrome (minus the style panel) is suppressed. */}
+          `StylePanel`, which renders `StylePanelWithoutOpacity` above (spec.md
+          M5 subtask 10) - tldraw's own style panel minus just the opacity
+          slider. The canvas itself (shapes, selection, editing) is entirely
+          unaffected either way; only the surrounding native UI chrome (minus
+          the style panel's opacity control) is suppressed. */}
       <Tldraw
         shapeUtils={shapeUtils}
         tools={tools}
@@ -199,6 +266,7 @@ export function CanvasEditor({ note }: Props) {
           PageMenu: null,
           HelperButtons: null,
           QuickActions: null,
+          StylePanel: StylePanelWithoutOpacity,
         }}
       />
     </div>
