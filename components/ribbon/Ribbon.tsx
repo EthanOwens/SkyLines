@@ -30,6 +30,7 @@ import {
   applyTextColor,
   formatActions,
   selectFormatActionState,
+  type FormatActionState,
 } from "./formatActions";
 
 // Ribbon shell (spec.md subtask 8, "Ribbon shell"). Tab bar with File/Format
@@ -93,10 +94,36 @@ function FormatBtn({
 // see RichTextEditor.tsx's `setActiveEditor` effect for why that indirection
 // is needed (Ribbon is a sibling of the note page, not a descendant).
 //
-// Renders a neutral placeholder when `activeEditor` is null - covers both
-// "no note open" (notebook-open placeholder page) and "canvas note open"
-// (components/canvas/CanvasEditor.tsx has no Tiptap instance at all; that's
-// the Draw tab's job, subtask 12).
+// Always renders the full control set (spec.md M3 subtask 5) - when
+// `activeEditor` is null (covers both "no note open", i.e. the
+// notebook-open placeholder page, and "canvas note open" since
+// components/canvas/CanvasEditor.tsx has no Tiptap instance at all - that's
+// the Draw tab's job), every control below is individually disabled and
+// reflects a neutral/off state rather than being hidden.
+// Neutral/off snapshot rendered (read-only) when there's no `activeEditor`
+// to read real state from - keeps every "active" highlight off and every
+// `isDisabled` check moot (the controls are already force-disabled below via
+// `!activeEditor`), rather than reading fields off a null editor.
+const NEUTRAL_FORMAT_STATE: FormatActionState = {
+  bold: false,
+  italic: false,
+  strike: false,
+  code: false,
+  heading1: false,
+  heading2: false,
+  heading3: false,
+  bulletList: false,
+  orderedList: false,
+  taskList: false,
+  blockquote: false,
+  link: null,
+  canUndo: false,
+  canRedo: false,
+  fontFamily: "",
+  fontSize: "",
+  color: "",
+};
+
 function FormatTab() {
   const activeEditor = useAppStore((s) => s.activeEditor);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -110,14 +137,16 @@ function FormatTab() {
   // overload returns `null` when there's no editor instead of throwing, so
   // this stays safe to call across notes closing/canvas routes/the
   // notebook-open placeholder.
-  const state = useEditorState({
+  const liveState = useEditorState({
     editor: activeEditor,
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
   });
 
-  if (!activeEditor || !state) {
-    return <div className="flex items-center text-muted-foreground">No formatting available.</div>;
-  }
+  // Full control set always renders (spec.md M3 subtask 5) - when there's no
+  // focused text box, every control below is individually `disabled` and
+  // reflects this neutral/off state instead of being hidden.
+  const state = activeEditor && liveState ? liveState : NEUTRAL_FORMAT_STATE;
+  const disabledAll = !activeEditor || !liveState;
 
   function insertImage(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -151,8 +180,8 @@ function FormatTab() {
           key={action.id}
           tip={action.tip}
           active={action.isActive(state)}
-          disabled={action.isDisabled?.(state)}
-          onClick={() => action.run(activeEditor)}
+          disabled={disabledAll || action.isDisabled?.(state)}
+          onClick={() => activeEditor && action.run(activeEditor)}
         >
           <action.icon className="h-3.5 w-3.5" />
         </FormatBtn>
@@ -160,10 +189,14 @@ function FormatTab() {
 
       <Separator orientation="vertical" className="mx-1 h-5" />
 
-      <FormatBtn tip="Insert image" onClick={() => fileInputRef.current?.click()}>
+      <FormatBtn
+        tip="Insert image"
+        disabled={disabledAll}
+        onClick={() => fileInputRef.current?.click()}
+      >
         <ImageIcon className="h-3.5 w-3.5" />
       </FormatBtn>
-      <FormatBtn tip="Insert link" active={state.link !== null} onClick={setLink}>
+      <FormatBtn tip="Insert link" active={state.link !== null} disabled={disabledAll} onClick={setLink}>
         <LinkIcon className="h-3.5 w-3.5" />
       </FormatBtn>
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={insertImage} />
@@ -172,9 +205,10 @@ function FormatTab() {
 
       <select
         aria-label="Font family"
-        className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
+        className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         value={state.fontFamily}
-        onChange={(e) => applyFontFamily(activeEditor, e.target.value)}
+        disabled={disabledAll}
+        onChange={(e) => activeEditor && applyFontFamily(activeEditor, e.target.value)}
       >
         {FONT_FAMILIES.map((f) => (
           <option key={f.value} value={f.value}>
@@ -185,9 +219,10 @@ function FormatTab() {
 
       <select
         aria-label="Font size"
-        className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
+        className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         value={state.fontSize}
-        onChange={(e) => applyFontSize(activeEditor, e.target.value)}
+        disabled={disabledAll}
+        onChange={(e) => activeEditor && applyFontSize(activeEditor, e.target.value)}
       >
         {FONT_SIZES.map((f) => (
           <option key={f.value} value={f.value}>
@@ -205,9 +240,10 @@ function FormatTab() {
               render={
                 <button
                   type="button"
-                  onClick={() => applyTextColor(activeEditor, c.value)}
+                  disabled={disabledAll}
+                  onClick={() => activeEditor && applyTextColor(activeEditor, c.value)}
                   className={cn(
-                    "h-5 w-5 rounded-full border",
+                    "h-5 w-5 rounded-full border disabled:cursor-not-allowed disabled:opacity-50",
                     state.color === c.value ? "ring-2 ring-ring ring-offset-1" : "border-border",
                   )}
                   style={{ backgroundColor: c.value || "transparent" }}
