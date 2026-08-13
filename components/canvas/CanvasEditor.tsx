@@ -285,7 +285,11 @@ export function CanvasEditor({ note }: Props) {
         } catch {
           // Snapshot incompatible — start fresh
         }
-      } else if (note.content && editor.getCurrentPageShapes().length === 0) {
+      } else if (
+        note.content &&
+        page.id === pages[0]?.id &&
+        editor.getCurrentPageShapes().length === 0
+      ) {
         // `page` is captured from this component's own React state, so it
         // stays stale (still reflecting canvasData: null) across React
         // Strict Mode's dev-mode double-invoke of onMount, which reuses the
@@ -296,6 +300,27 @@ export function CanvasEditor({ note }: Props) {
         // second invocation sees a non-empty page and skips, instead of
         // creating a second overlapping RichTextShape from the same
         // content.
+        //
+        // `page.id === pages[0]?.id` (spec.md M1 subtask 1 fix follow-up):
+        // `note.content` is never cleared after this migration runs (see
+        // lib/db/notes.ts - no code path sets it back to null), so it stays
+        // truthy for the lifetime of a legacy note. Before `<Tldraw>` had
+        // `key={selectedPage.id}` (see below), `onMount` only ever fired
+        // once total regardless of page, so this was unreachable more than
+        // once. Now that `onMount` genuinely re-fires on every page switch,
+        // without this guard EVERY page with 0 shapes and no `canvasData` -
+        // including a brand-new blank page just created via the Page
+        // sidebar, or any page whose shapes were all deleted - would get a
+        // duplicate copy of the old note-level content injected. `content`
+        // legitimately only ever belonged to the note's original page (the
+        // one that existed before the Page model), so gating on
+        // `pages[0]` (the note's first page, per `getPages`'s stable
+        // `order_index ASC` ordering - see lib/db/pages.ts) instead of
+        // clearing `note.content` post-migration keeps this consistent with
+        // this codebase's non-destructive-migration philosophy: `note.content`
+        // stays untouched forever (mirroring how `note.canvasData` above is
+        // only ever copied FROM, never mutated), while still guaranteeing a
+        // second/third/new page can never receive a duplicate injection.
         editor.createShape<RichTextShape>({
           type: "rich-text",
           x: 40,
@@ -334,7 +359,7 @@ export function CanvasEditor({ note }: Props) {
         }
       };
     },
-    [selectedPage, note.content, setActiveCanvasEditor],
+    [selectedPage, note.content, pages, setActiveCanvasEditor],
   );
 
   if (pagesLoading || !selectedPage) {
@@ -364,7 +389,27 @@ export function CanvasEditor({ note }: Props) {
           slider. The canvas itself (shapes, selection, editing) is entirely
           unaffected either way; only the surrounding native UI chrome (minus
           the style panel's opacity control) is suppressed. */}
+      {/* spec.md M1 subtask 1 (critical bug fix) - `key={selectedPage.id}`
+          forces a full remount of <Tldraw> whenever the selected page
+          changes. Without this, tldraw's own `onMount` (wrapped internally
+          by its `useEvent`) only ever fires once per editor/store instance,
+          so `handleMount` above never re-runs on a page switch: the
+          `editor.loadSnapshot` call never reloads the newly-selected page's
+          `canvasData`, and the `editor.store.listen(...)` autosave closure
+          keeps writing to whatever page was selected at first mount,
+          forever - silently overwriting the wrong page. Remounting here
+          mirrors the identical `key={note.id}` pattern already used one
+          level up in app/canvas/page.tsx for note-switching. This is
+          guaranteed non-null at this point in the render because of the
+          `pagesLoading || !selectedPage` early return above. The tradeoff
+          (accepted per spec.md's Key Decision) is a brief re-init flash on
+          every page switch, since the outgoing <Tldraw> instance fully
+          unmounts (running handleMount's cleanup, which flushes any pending
+          debounced save via `pendingSaveRef` to the OUTGOING page) before
+          the new instance mounts and runs `handleMount` fresh for the
+          incoming page. */}
       <Tldraw
+        key={selectedPage.id}
         shapeUtils={shapeUtils}
         tools={tools}
         onMount={handleMount}
