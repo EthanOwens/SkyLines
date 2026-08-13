@@ -1,16 +1,13 @@
 Changes:
-- The text boxes by default should have a transparent background. When hovering over or inserting into a text box it should show dotted border and a thin bar at the top you can use to drag the box around. Clicking on a line of text in the box should put your text cursor immediately to that line (I don't want to need to double click to start editing it)
-- I want to be able to click and drag to highlight things in the canvas (text boxes, drawn things, etc)
-  - This means that clicking once fully will create a text box and clicking and dragging will let me highlight
-- I should be able to drag notes and folders around in the left sidebar to move them around (reorder, move note into folder, move folder into folder, etc)
-- When right clicking notes and folders on the left sidebar it should show editing options like delete, rename, cut, copy.
-- The format section should still show it's options even when not in a text box, but the features you can't use should be grayed out and unclickable instead of just being gone
-- Highlighting text should show more options in the quick menu (font, text size, highlight toggle + color, text color, toggle bullet point formatting, toggle numbered formatting)
-- Add a new off-white theme with varying soft shades of grays, creams, and beiges
-- Remove the slider to change transparancy 
-- Change the "Default" theme to "System". It should take whatever the machines theme setting is and use that
-- Make an extra sidebar for the page selection when inside of a notesheet (What I'll call notes a lot of the time). There should be a "Add Page" button at the top, a button to collapse the sidebar, and the same right click edit features as I wanted for the folders and notesheets.
-
-Bug Fixes:
-- The canvas should change color depending on the theme (at the moment the canvas stays white no matter what)
-- When you enter the tiptap drawing menu it removes the functionality to click to create a textbox, and there is no good way of exiting it. Ideally this menu should only appear if I click on a button in the Draw section
+- When highlighting things they should stay highlighted after you finish the click-drag so you can do stuff like group move them, delete them, change formatting, etc
+- At the moment the pages aren't unique, each page shares the same canvas with the same contents
+- You currently can't drag items from the hierarchy around (folders and notesheets, or pages). You just get a red circle with a line through it.
+- When you click on a folder the hierarchy it should leave it faintly highlighted so when clicking the new note or new folder button it creates it under that folder
+- Under File "Swap Notebook" and "New Notebook" Currently do nothing. Delete them for now. It's ok for them to do nothing
+- For pages on canvas's they should infinitely scallable, but confined. What this means is when you make a new notesheet there should be a top and a bottom that you can scroll and move through, but if the note you're working on extends for whatever reason (text box needs more room, moving text or drawing off the current confined space, etc) then it extends the confined space of the canvas. To note the top there should be a title header with a line below it (not underline), the title should be the same as what the page is called in the menu (editing either on the canvas or in the sidebar should update both in real time)
+- The default text (not any text color that has been manually changed) color should update with the theme changes so the text is still easy to see (or at least fitting with the theme)
+- When picking a theme there should be an option to at the bottom to edit themes that opens a pop up menu. The left sidebar should be each of the themes you have, and a button (with a dotted border) to create a new theme. The right sidebar should be all the colors in the theme that you can edit via color wheel selector. The center should be display that shows elements of what all theme aspects modify (essentially a mini bounded canvas with a text box with default text that you can change and move the text box around the mini canvas) that will update real time with the changes you make to the colors on the right sidebar. There should be a "Save" and "Discard" buttons at the bottom of the center menu to save or discard changes made to certain themes. If the menu closes or you swap changes with unsaved changes it should give you a small pop-up asking if you want to save or discard your changes. If a new theme is not saved when this menu closes then it is deleted.
+  - These themes and values should be saved in a file so if you want to export or import other themes you can just change modify or copy stuff from this file. 
+    - At the bottom of the left sidebar should be a button to open file explorer to this file
+    - right clicking on a theme in the left sidebar should let you choose between: copy theme values, paste theme values, delete (ctl + z will undo modifications of themes: deletions, changes to individual values, full theme pastes)
+- The tiptap/richtext menu (not sure which, it's the one with the grid of colors, text sizes, etc that appears on the top right of the canvas area sometimes) can be deleted. All the functionality of this menu should be accessible in the Draw menu. Speaking of which, add in a little dropdown carrot next to the pencil/pen menu in the Draw tab to change the color it uses. When highlighting a drawing on the canvas you should also be able to change it's color 
