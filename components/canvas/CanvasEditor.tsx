@@ -21,24 +21,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
-  DefaultStylePanel,
-  StylePanelArrowKindPicker,
-  StylePanelArrowheadPicker,
-  StylePanelColorPicker,
-  StylePanelDashPicker,
-  StylePanelFillPicker,
-  StylePanelFontPicker,
-  StylePanelGeoShapePicker,
-  StylePanelLabelAlignPicker,
-  StylePanelSection,
-  StylePanelSizePicker,
-  StylePanelSplinePicker,
-  StylePanelTextAlignPicker,
   Tldraw,
   react,
   type Editor,
   type TLEditorSnapshot,
-  type TLUiStylePanelProps,
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
@@ -118,54 +104,6 @@ function applyPageCameraConstraints(editor: Editor, bounds: Box) {
       behavior: "inside",
     },
   });
-}
-
-// spec.md M5 subtask 10 ("Remove tldraw's built-in opacity slider") - tldraw
-// 4.5.12 (verified via node_modules/tldraw/dist-esm) has no sub-component-
-// level override slot for just the opacity control within its default style
-// panel; the `components` prop's `StylePanel` slot only lets you replace the
-// panel wholesale (see node_modules/tldraw/dist-cjs/index.d.ts's
-// `TLUiComponents.StylePanel?: ComponentType<TLUiStylePanelProps> | null`).
-// However, tldraw DOES export `DefaultStylePanel` (the outer
-// container/wrapper - keyboard handling, pointer-out styling reset, mobile
-// class, etc.) as a component that accepts a `children` override instead of
-// rendering its own default content when children are passed (see
-// node_modules/tldraw/dist-esm/lib/ui/components/StylePanel/
-// DefaultStylePanel.mjs: `children ?? <DefaultStylePanelContent />`), plus
-// every individual picker sub-component `DefaultStylePanelContent` itself is
-// built from (`StylePanelColorPicker`, `StylePanelFillPicker`, etc. - see
-// node_modules/tldraw/dist-esm/lib/ui/components/StylePanel/
-// DefaultStylePanelContent.mjs's named exports). So instead of hand-rolling
-// the whole panel, this reconstructs `DefaultStylePanelContent`'s exact
-// section layout via those exported pickers, just omitting
-// `StylePanelOpacityPicker` (the only omission), and passes it as
-// `DefaultStylePanel`'s `children`. Every other control (color, fill, dash,
-// size, font, text/label align, geo shape, arrow kind/heads, spline) keeps
-// its exact stock tldraw component and behavior.
-function StylePanelWithoutOpacity(props: TLUiStylePanelProps) {
-  return (
-    <DefaultStylePanel {...props}>
-      <StylePanelSection>
-        <StylePanelColorPicker />
-      </StylePanelSection>
-      <StylePanelSection>
-        <StylePanelFillPicker />
-        <StylePanelDashPicker />
-        <StylePanelSizePicker />
-      </StylePanelSection>
-      <StylePanelSection>
-        <StylePanelFontPicker />
-        <StylePanelTextAlignPicker />
-        <StylePanelLabelAlignPicker />
-      </StylePanelSection>
-      <StylePanelSection>
-        <StylePanelGeoShapePicker />
-        <StylePanelArrowKindPicker />
-        <StylePanelArrowheadPicker />
-        <StylePanelSplinePicker />
-      </StylePanelSection>
-    </DefaultStylePanel>
-  );
 }
 
 interface Props {
@@ -543,20 +481,28 @@ export function CanvasEditor({ note }: Props) {
       {/* spec.md M2 subtask 4 ("Draw tab rebuild") - hides tldraw's own
           native toolbar/menu/zoom/etc. chrome so this app's own ribbon
           (components/ribbon/Ribbon.tsx's Draw tab) is the sole
-          tool-switcher, WITHOUT the `hideUi` prop, which suppresses tldraw's
-          ENTIRE UI including the `StylePanel` (shape stroke color/fill/
-          stroke-width/opacity/dash/arrowhead controls) - there is no
-          replacement for that UI anywhere else in this app, so `hideUi`
-          would leave users with no way to restyle a shape once created.
+          tool-switcher, WITHOUT the `hideUi` prop, which would also suppress
+          tldraw's Toasts/Dialogs/A11y layers this app still relies on.
           Instead, this uses tldraw's independently-swappable `components`
           override (see node_modules/tldraw/dist-esm/lib/ui/context/
           components.mjs's `TldrawUiComponentsProvider`, confirmed against
-          the installed tldraw 4.5.12), nulling out every chrome slot EXCEPT
-          `StylePanel`, which renders `StylePanelWithoutOpacity` above (spec.md
-          M5 subtask 10) - tldraw's own style panel minus just the opacity
-          slider. The canvas itself (shapes, selection, editing) is entirely
-          unaffected either way; only the surrounding native UI chrome (minus
-          the style panel's opacity control) is suppressed. */}
+          the installed tldraw 4.5.12), nulling out every chrome slot
+          including `StylePanel` (spec.md M6 subtask 9 - previously kept
+          alive minus its opacity slider per M5 subtask 10, now fully
+          suppressed; verified against node_modules/tldraw/dist-esm/lib/ui/
+          TldrawUi.mjs's `StylePanel && ... && jsx(StylePanel, {})` render
+          guard, which short-circuits entirely when the slot is `null` - see
+          also node_modules/tldraw/dist-cjs/index.d.ts's
+          `TLUiComponents.StylePanel?: ComponentType<TLUiStylePanelProps> |
+          null`, confirming `null` is the intended way to fully opt a slot
+          out rather than just replace its content). A ribbon-native
+          replacement for color/fill/dash/size controls is built in the very
+          next subtask (M6 subtask 10) - until then there is intentionally no
+          UI to restyle a shape, mirroring this exact "hide native chrome
+          first, rebuild in ribbon next" pattern already used for the rest of
+          tldraw's toolbar/menu chrome above. The canvas itself (shapes,
+          selection, editing) is entirely unaffected either way; only the
+          surrounding native UI chrome is suppressed. */}
       {/* spec.md M1 subtask 1 (critical bug fix) - `key={selectedPage.id}`
           forces a full remount of <Tldraw> whenever the selected page
           changes. Without this, tldraw's own `onMount` (wrapped internally
@@ -592,7 +538,7 @@ export function CanvasEditor({ note }: Props) {
           PageMenu: null,
           HelperButtons: null,
           QuickActions: null,
-          StylePanel: StylePanelWithoutOpacity,
+          StylePanel: null,
         }}
       />
       </div>
