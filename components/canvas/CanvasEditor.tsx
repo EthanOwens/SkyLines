@@ -18,7 +18,7 @@
 //   very frequently during canvas interaction, so this debounce matters
 //   even more here).
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
   DefaultStylePanel,
@@ -271,6 +271,48 @@ export function CanvasEditor({ note }: Props) {
   const selectedPage =
     pages.find((p) => p.id === selectedPageId) ?? pages[0] ?? null;
 
+  // spec.md M4 subtask 7 ("Page title header on the canvas") - local editing
+  // buffer for the inline-editable title header rendered above the confined
+  // canvas below, mirroring PageItem.tsx's own `title`/`renaming` local
+  // state exactly (same "buffer while editing, commit on blur/Enter" shape).
+  // Kept as plain component state (not written into stores/appStore.ts)
+  // since it's just an in-progress edit, same as PageItem.tsx's own copy -
+  // the shared `pages` array in the store is only touched on commit, via
+  // the exact same `updatePage` + `setPages` path PageSidebar.tsx's
+  // `refresh()` uses, so both this header and the sidebar's `PageItem` stay
+  // in sync through that one shared store field rather than two independent
+  // title-editing implementations.
+  const [titleDraft, setTitleDraft] = useState(selectedPage?.title || "Untitled");
+
+  // Resyncs the local draft whenever the selected page changes (including a
+  // rename that came from PageSidebar/PageItem.tsx, since that updates the
+  // same shared `pages` store this reads from) - without this, switching
+  // pages or a sidebar-driven rename would leave this input showing a stale
+  // title until the user next interacts with it.
+  useEffect(() => {
+    setTitleDraft(selectedPage?.title || "Untitled");
+  }, [selectedPage?.id, selectedPage?.title]);
+
+  async function commitTitle() {
+    if (!selectedPage) return;
+    const trimmed = titleDraft.trim() || "Untitled";
+    setTitleDraft(trimmed);
+    if (trimmed !== selectedPage.title) {
+      await updatePage(selectedPage.id, { title: trimmed });
+      // Reads the live store state right before mapping (rather than the
+      // `pages` closed over at render time) - `await updatePage(...)` above
+      // yields to the event loop, and PageSidebar.tsx's `refresh()` (a full
+      // `getPages(note.id)` refetch, triggered by drag-reorder, add-page,
+      // delete, or paste) can land in that window. Mapping over a stale
+      // `pages` snapshot here would silently overwrite whatever the sidebar
+      // just wrote.
+      const freshPages = useAppStore.getState().pages;
+      setPages(
+        freshPages.map((p) => (p.id === selectedPage.id ? { ...p, title: trimmed } : p)),
+      );
+    }
+  }
+
   const handleMount = useCallback(
     (editor: Editor) => {
       const page = selectedPage;
@@ -468,7 +510,36 @@ export function CanvasEditor({ note }: Props) {
   }
 
   return (
-    <div className="canvas-editor-container relative flex-1 h-full w-full">
+    <div className="canvas-editor-container relative flex h-full w-full flex-1 flex-col">
+      {/* spec.md M4 subtask 7 ("Page title header on the canvas") - renders
+          ABOVE the confined canvas area as a separate UI layer/sibling, not
+          inside <Tldraw> itself, so it's unaffected by subtask 6's camera
+          confinement (that logic lives entirely inside `handleMount`/
+          `applyPageCameraConstraints` below and isn't touched here). The
+          horizontal rule below the title is a genuine `border-bottom` (per
+          the spec's explicit "a border, not `text-decoration: underline`"
+          requirement - those render visually differently), not text
+          decoration on the input itself. Inline-editable via a plain
+          `<input>`, mirroring PageItem.tsx's own inline-rename `<input>`
+          pattern (same value/onChange/onBlur/Enter-to-commit/Escape-to-
+          revert shape) for a consistent UX with the sidebar's rename UI. */}
+      <div className="shrink-0 border-b border-border px-4 py-2">
+        <input
+          className="w-full bg-transparent text-lg font-semibold text-foreground outline-none"
+          value={titleDraft}
+          onChange={(e) => setTitleDraft(e.target.value)}
+          onBlur={() => void commitTitle()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.currentTarget.blur();
+            } else if (e.key === "Escape") {
+              setTitleDraft(selectedPage.title || "Untitled");
+              e.currentTarget.blur();
+            }
+          }}
+        />
+      </div>
+      <div className="canvas-editor-canvas relative flex-1">
       {/* spec.md M2 subtask 4 ("Draw tab rebuild") - hides tldraw's own
           native toolbar/menu/zoom/etc. chrome so this app's own ribbon
           (components/ribbon/Ribbon.tsx's Draw tab) is the sole
@@ -524,6 +595,7 @@ export function CanvasEditor({ note }: Props) {
           StylePanel: StylePanelWithoutOpacity,
         }}
       />
+      </div>
     </div>
   );
 }
