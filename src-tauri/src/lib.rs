@@ -111,8 +111,22 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
                 // (`tauri://drag-enter` / `-over` / `-drop` / `-leave` on
                 // the JS side, all funneled into this single
                 // `WindowEvent::DragDrop` variant on the Rust side) and
-                // does nothing further. `dragDropEnabled` is set on the
-                // window in tauri.conf.json so these events actually fire.
+                // does nothing further.
+                //
+                // Currently INERT (M1, spec.md subtask 3): `dragDropEnabled`
+                // is now `false` in tauri.conf.json, so this handler never
+                // fires - no OS-level `WindowEvent::DragDrop` events are
+                // delivered at all. This was flipped off because Tauri's
+                // native OS-level window drag-drop and the webview's own
+                // native HTML5 `dragover`/`drop` DOM events are mutually
+                // exclusive on Windows/WebView2: leaving it `true` was
+                // silently breaking the sidebar's HTML5 drag-and-drop
+                // (lib/dnd/sidebar.ts and friends), which is the feature
+                // that's actually built and in use today. Left in place
+                // (rather than deleted) as a placeholder for if/when a real
+                // file-import feature re-enables `dragDropEnabled` - at
+                // which point the sidebar's HTML5 DnD would need to be
+                // reconciled with this native path instead.
                 //
                 // Deliberately using `writeln!` to a raw stderr handle
                 // instead of println!/eprintln! - see the global shortcut
