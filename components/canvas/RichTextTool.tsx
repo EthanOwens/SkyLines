@@ -177,8 +177,16 @@
 // for the brush/translate case: a one-shot reactive watcher (tldraw's own
 // `react()`, re-exported from `@tldraw/state` all the way through `tldraw`'s
 // public index) that fires exactly once, the first time `select` genuinely
-// settles back into `select.idle`, then switches back to `rich-text` and
-// tears itself down.
+// settles back into `select.idle` WITH AN EMPTY SELECTION (not idle alone -
+// see `watchForReturnToSelectIdle`'s own comment below for why: staying on
+// `select` for as long as a selection persists is what keeps resize/rotate
+// handles, native Delete, and further drag-to-move working, since tldraw
+// only wires those up while `currentTool` is genuinely `select`), then
+// switches back to `rich-text` and tears itself down. One accepted UX
+// consequence: after a marquee-select or shape-drag, the next click on empty
+// canvas deselects (native `select`-tool behavior) rather than immediately
+// creating a new shape; only the click after that (once back on `rich-text`)
+// creates one.
 import {
   StateNode,
   createShapeId,
@@ -211,7 +219,11 @@ const shapesCreatedByThisTool = new Set<TLShapeId>();
 // rubber-band select) state - see this file's header comment for why this
 // reuses tldraw's OWN `Brushing` implementation (via the already-registered
 // `select` tool instance) rather than a reimplementation, and why a plain
-// `import` of the `Brushing` class itself isn't possible.
+// `import` of the `Brushing` class itself isn't possible. `currentTool`
+// stays on `select` - not `rich-text` - for as long as the resulting
+// selection is non-empty (see `watchForReturnToSelectIdle`), so the marquee
+// selection's resize/rotate handles, Delete, and further drag-to-move all
+// work natively once this settles.
 function handOffToBrushing(editor: Editor, info: TLPointerEventInfo & { target: "canvas" }) {
   const selectTool = editor.getStateDescendant("select");
   if (!selectTool) return;
@@ -226,7 +238,9 @@ function handOffToBrushing(editor: Editor, info: TLPointerEventInfo & { target: 
 // `translating` state - same reasoning/mechanism as `handOffToBrushing`
 // above. Selects the dragged shape first, mirroring tldraw's own
 // `PointingShape.startTranslating` (`Translating.onEnter` bails out to
-// `idle` immediately if nothing is selected).
+// `idle` immediately if nothing is selected). Same as `handOffToBrushing`:
+// `currentTool` stays on `select` (not `rich-text`) for as long as the
+// dragged shape stays selected (see `watchForReturnToSelectIdle`).
 function handOffToTranslating(
   editor: Editor,
   info: TLPointerEventInfo & { target: "shape"; shape: TLShape },
@@ -244,19 +258,87 @@ function handOffToTranslating(
   watchForReturnToSelectIdle(editor);
 }
 
+// M1 subtask 2 originally added a `handOffToSelectionHandle` function here
+// (gated on `Idle.onPointerDown` seeing `info.target === 'selection'`) to
+// hand a pointer-down on a resize/rotate handle off to the real `select`
+// tool's `pointing_resize_handle`/`pointing_rotate_handle` states. It was
+// REMOVED after the fix to `watchForReturnToSelectIdle` below made it
+// permanently unreachable dead code - not just unreachable due to the timing
+// bug that fix addresses, but unreachable for a more fundamental reason that
+// no fix to this file's own watcher logic could ever change:
+//
+// tldraw only makes selection resize/rotate handle DOM elements receive real
+// pointer events while `editor.isInAny('select.idle', 'select.pointing_selection',
+// 'select.pointing_shape', 'select.crop.idle')` is true (see
+// `TldrawSelectionForeground.tsx`'s `shouldDisplayControls`; outside those
+// states the handle elements get a `tl-hidden` class with
+// `pointer-events: none`). That condition can only be true while
+// `editor.getCurrentToolId()` is genuinely `'select'` - never while it's
+// `'rich-text'`. But `info.target === 'selection'` can only ever reach
+// `Idle.onPointerDown` in the first place if OUR tool (`rich-text`) is the
+// one receiving the pointer-down, i.e. `currentTool === 'rich-text'`. Those
+// two conditions ("select" active for handles to be interactive vs.
+// "rich-text" active for our own `Idle` to see the event at all) are
+// mutually exclusive - so a real DOM pointer-down with `target: 'selection'`
+// can never reach this tool's `Idle` state, regardless of what
+// `watchForReturnToSelectIdle` does.
+//
+// This is also why the fix below is the right one and not just a smaller
+// patch: every place in this file that ever selects shapes
+// (`createShapeAtOrigin`, `PointingShape.performClickAction`,
+// `handOffToTranslating`) immediately hands off to `select`/`select.editing_shape`
+// in the same call, so `currentTool` is never left on `rich-text` with a
+// non-empty selection by this file's own code. The one remaining case checked
+// live/via source (tldraw's own Ctrl+A `select-all` action, see
+// node_modules/tldraw/src/lib/ui/context/actions.tsx's `mustGoBackToSelectToolFirst`)
+// force-switches `currentTool` to `'select'` itself before selecting, so it
+// doesn't violate this either. Net effect: whenever `rich-text` is genuinely
+// active, the selection is empty, so there is never a legitimate handle for
+// `Idle.onPointerDown` to hand off in the first place - resize/rotate/Delete/
+// further-drag on an existing selection are now handled entirely by keeping
+// `currentTool` on the real `select` tool for as long as the selection is
+// non-empty (see `watchForReturnToSelectIdle` below), not by any hand-off
+// code in this tool's own chart.
+
 // One-shot reactive watcher: the first time the real `select` tool (driving
 // a brush-select or shape-translate gesture this tool just handed off to,
-// per the two functions above) genuinely settles back into `select.idle`,
-// switch back to `rich-text` and tear this watcher down. See this file's
-// header comment for why this is needed at all (unlike
-// `installRichTextToolAutoReturn`'s `editingShapeId`-keyed problem, this one
-// isn't a document/record-store change tldraw's `sideEffects` can observe -
-// tool-chart transitions are pure in-memory `StateNode` state - hence
-// tldraw's own fine-grained-reactivity `react()`, not a store listener,
-// watching `editor.isIn('select.idle')`, which IS reactive).
+// per the two functions above) genuinely settles back into `select.idle`
+// WITH AN EMPTY SELECTION, switch back to `rich-text` and tear this watcher
+// down. Deliberately requires BOTH conditions, not `select.idle` alone:
+// tldraw only makes a selection's resize/rotate handles (and native
+// Delete/Backspace, drag-to-move, etc.) interactive while `currentTool` is
+// genuinely `select` (see the removed-`handOffToSelectionHandle` comment
+// above for the precise mechanism) - if this watcher switched back to
+// `rich-text` as soon as `select.idle` was reached, a marquee-select or
+// shape-translate hand-off would settle into `select.idle` WITH a live
+// selection still showing, immediately get yanked back to `rich-text`, and
+// silently lose all of that native handle/Delete/drag behavior (handle DOM
+// elements go non-interactive, and tldraw's own Delete action requires
+// `editor.isIn('select')`). By staying on `select` for as long as the
+// selection is non-empty, all of that native `select`-tool behavory just
+// works, with no extra hand-off code needed. Once the user clicks empty
+// canvas to deselect (while still within the native `select` tool, which
+// just deselects - it does NOT create a rich-text shape), the selection
+// becomes empty while still `select.idle`, and only then does this watcher
+// fire and hand control back to `rich-text` - so, as an accepted UX
+// consequence, the very next click after selecting something deselects
+// rather than immediately creating a new shape; a second click (now back on
+// `rich-text`) is what creates one. See this file's header comment for why
+// this is needed at all (unlike `installRichTextToolAutoReturn`'s
+// `editingShapeId`-keyed problem, this one isn't a document/record-store
+// change tldraw's `sideEffects` can observe - tool-chart transitions and
+// selection are pure in-memory `StateNode`/signal state - hence tldraw's own
+// fine-grained-reactivity `react()`, not a store listener; `editor.isIn(...)`
+// and `editor.getSelectedShapeIds()` are both backed by tldraw's own reactive
+// signals - see `Editor.isIn`/`Editor.getSelectedShapeIds` in
+// @tldraw/editor's `Editor.ts`, both implemented as/derived from `@tldraw/state`
+// atoms/computeds - so `react()` re-running whenever either changes, and
+// staying alive/re-evaluating rather than firing early, is exactly the
+// reactivity `react()` provides, not an assumption specific to this file).
 function watchForReturnToSelectIdle(editor: Editor) {
   const stop = react("rich-text tool: return from select brush/translate hand-off", () => {
     if (!editor.isIn("select.idle")) return;
+    if (editor.getSelectedShapeIds().length > 0) return;
     stop();
     // Success path: the reactor already tore itself down above, so remove
     // its entry from `editor.disposables` too (added below) - otherwise
@@ -478,6 +560,17 @@ class Idle extends StateNode {
   override onPointerDown(info: TLPointerEventInfo) {
     const { editor } = this;
 
+    // Note: there is deliberately no `info.target === 'selection'` branch
+    // here (a prior version of this subtask had one, calling a now-removed
+    // `handOffToSelectionHandle` function) - see the large comment above
+    // `watchForReturnToSelectIdle` for why a real resize/rotate-handle
+    // pointer-down can never actually reach this tool's `Idle` state in the
+    // first place: tldraw only makes handle DOM elements pointer-interactive
+    // while `currentTool` is genuinely `select`, which - now that
+    // `watchForReturnToSelectIdle` keeps `currentTool` on `select` for as
+    // long as a selection persists - is exactly the situation whenever a
+    // handle could legitimately be grabbed.
+
     // See this file's header comment for why `info.target` alone can't be
     // trusted here - do the same real geometry-based hit test tldraw's own
     // select tool does for this exact "canvas pointer-down, but was a shape
@@ -578,13 +671,93 @@ export function installRichTextToolAutoReturn(editor: Editor): () => void {
       if (!wasCreatedByThisTool) return;
 
       // Only auto-return when this is really "the user clicked elsewhere on
-      // the canvas to keep creating" (see this file's header comment for why
-      // `isIn('select.idle')` alone isn't a reliable enough signal, and why
-      // `getIsPointing()` is the one that actually distinguishes a live
-      // pointer-driven click from an out-of-band tool switch).
-      if (editor.isIn("select.idle") && editor.inputs.getIsPointing()) {
-        editor.setCurrentTool("rich-text");
+      // the canvas to keep creating", not an out-of-band `setCurrentTool`/
+      // toolbar-button call that also happens to end the edit session (see
+      // this file's header comment for the "Select tool must stay genuinely
+      // independent" requirement this distinguishes). `editor.inputs
+      // .getIsPointing()` is the signal that distinguishes them - true only
+      // while this handler is firing as a nested side effect of a REAL,
+      // in-flight pointer_down dispatch (see Editor.ts's `dispatch()`, which
+      // sets `inputs.isPointing = true` before invoking the state chart that
+      // eventually calls `setEditingShape(null)`).
+      //
+      // Round 4 fix: `getIsPointing()` MUST be read synchronously, right
+      // here, before anything else runs - not re-read later from inside a
+      // deferred callback. Traced sequence (this is what rounds 3 and 4 both
+      // got wrong in different ways): this handler fires synchronously in the
+      // middle of tldraw's own `EditingShape.onExit()` (called from
+      // `select.transition('idle', ...)`, itself invoked by
+      // `EditingShape.onPointerDown`'s `case 'canvas'` branch when the user
+      // clicks empty canvas to finish editing). `onExit()`'s
+      // `editor.setEditingShape(null)` call is its own top-level store
+      // transaction, so THIS `instance_page_state.afterChange` handler runs
+      // immediately, before that same `case 'canvas'` branch's following line
+      // - `this.editor.root.handleEvent(info)`, which re-dispatches the SAME
+      // pointerdown event - has run. That re-dispatch is what actually drives
+      // `select`'s own `Idle -> PointingCanvas` transition, and
+      // `PointingCanvas` only returns `select` to `idle` on pointer-UP, not
+      // immediately - so `select.idle` is NOT yet reached at the instant this
+      // handler fires. `getIsPointing()`, by contrast, IS already reliably
+      // true right here (round 3's mistake was checking it again later, once
+      // its true-window had already closed - `inputs.isPointing` is cleared
+      // before the state chart even processes the eventual pointerup, so by
+      // the time `select.idle` is genuinely reached, `getIsPointing()` always
+      // reads false). So: capture it now, synchronously, while it's still a
+      // reliable "this is the same in-flight, user-driven gesture" signal.
+      const wasPointing = editor.inputs.getIsPointing();
+      if (!wasPointing) {
+        // Not a live pointer gesture (e.g. an out-of-band `setCurrentTool`
+        // call while mid-edit) - don't auto-return; see the Select-tool-
+        // independence requirement in this file's header comment.
+        return;
       }
+
+      // Now wait for `select` to genuinely, eventually reach `select.idle`
+      // WITH AN EMPTY SELECTION - however long that actually takes (one
+      // pointerup event, however many ticks away) - using the SAME one-shot
+      // `react()` watcher technique `watchForReturnToSelectIdle` above
+      // already uses successfully: tool-chart transitions and selection are
+      // pure in-memory `StateNode`/signal state, not something `sideEffects`/
+      // store listeners can observe, hence tldraw's own fine-grained
+      // reactivity instead of a fixed-timing guess like the `queueMicrotask`
+      // this replaces (round 3's bug: by the time a microtask runs, `select`
+      // is still `select.pointing_canvas`, not `select.idle` yet -
+      // `isIn('select.idle')` was never true at that point, so the old check
+      // could never fire).
+      //
+      // The empty-selection requirement (round 5 fix) is required for the
+      // same reason `watchForReturnToSelectIdle` needs it: the click-away
+      // pointerdown that ends the edit session gets re-dispatched into
+      // `select.Idle -> pointing_canvas`, and `PointingCanvas.onEnter`'s own
+      // `selectNone()` runs immediately at pointer-DOWN time, not at
+      // settle/pointer-up time - but if the user's pointer then moves enough
+      // before releasing, `PointingCanvas.onPointerMove` transitions to
+      // `select.brushing` instead (a real marquee-select), which can settle
+      // back into `select.idle` with a NON-empty selection. Gating on
+      // `select.idle` alone would then switch back to `rich-text` while that
+      // marquee selection is still live, stranding its resize/rotate handles
+      // and native Delete outside `select` - the exact class of bug
+      // `watchForReturnToSelectIdle` already guards against for its own
+      // brush/translate hand-offs. Requiring both conditions here means the
+      // switch to `rich-text` only happens once `select` is truly done with
+      // this gesture AND nothing is left selected.
+      const stop = react("rich-text tool: auto-return after click-away edit exit", () => {
+        if (!editor.isIn("select.idle")) return;
+        if (editor.getSelectedShapeIds().length > 0) return;
+        stop();
+        // Mirrors `watchForReturnToSelectIdle`'s own cleanup comment: the
+        // reactor already tore itself down above, so remove its entry from
+        // `editor.disposables` too, rather than letting a dead entry pile up
+        // for every click-away over a long session.
+        editor.disposables.delete(stop);
+        editor.setCurrentTool("rich-text");
+      });
+      // Same reasoning/pattern as `watchForReturnToSelectIdle`'s own
+      // `editor.disposables.add(stop)`: if the editor is disposed before
+      // `select` ever reaches `idle` (e.g. the note is closed mid-gesture),
+      // tear this watcher down too, rather than leaving a live subscription
+      // with a closure over a disposed `editor`.
+      editor.disposables.add(stop);
     },
   );
 
