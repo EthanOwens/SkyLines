@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import {
+  Box,
   DefaultStylePanel,
   StylePanelArrowKindPicker,
   StylePanelArrowheadPicker,
@@ -34,6 +35,7 @@ import {
   StylePanelSplinePicker,
   StylePanelTextAlignPicker,
   Tldraw,
+  react,
   type Editor,
   type TLEditorSnapshot,
   type TLUiStylePanelProps,
@@ -72,6 +74,51 @@ const tools = [RichTextTool];
 // own; only one `createPage` call ever actually runs per note. Mirrors the
 // `pushInFlight` guard pattern in lib/sync/engine.ts.
 const inFlightDefaultPageCreation = new Map<string, Promise<string>>();
+
+// spec.md M4 subtask 6 ("Per-page canvas confinement, expandable on
+// overflow") - a sensible default "page-sized" bound in tldraw page-space
+// units, roughly matching a Letter/A4 page's proportions at a 1 page-unit =
+// 1px-at-100%-zoom scale (tldraw's own default shapes - e.g. geo shapes - are
+// sized on the order of 100-200 units, so ~850x1100 reads as a full page
+// rather than a single shape). There's no existing precedent for this size
+// anywhere else in the codebase; chosen purely for a "normal document page"
+// feel per the spec's own suggestion. This is the FLOOR the confined area
+// never shrinks below - see `applyPageCameraConstraints` and its caller in
+// `handleMount` below for how it's unioned with actual shape content and
+// only ever grows from here.
+const DEFAULT_PAGE_BOUNDS = { x: 0, y: 0, w: 850, h: 1100 };
+
+// spec.md M4 subtask 6 - applies (or re-applies) tldraw's camera
+// `constraints` with the given `bounds`. Verified against the installed
+// @tldraw/tldraw 4.5.12 (node_modules/@tldraw/editor/dist-esm/lib/editor/
+// Editor.mjs's `setCameraOptions`): calling this again with a NEW `bounds`
+// after mount does take live effect - `setCameraOptions` internally calls
+// `this.setCamera(this.getCamera())` right after storing the new options,
+// which re-clamps the CURRENT camera position/zoom against the freshly
+// updated constraints, so an already-panned/zoomed camera is immediately
+// re-clamped into the newly expanded area rather than requiring a manual
+// reset. `behavior: 'inside'` (see @tldraw/editor's `TLCameraConstraints` -
+// node_modules/@tldraw/editor/dist-cjs/index.d.ts) keeps the ENTIRE bounds
+// box clamped within the viewport at all times - i.e. you can pan/zoom
+// freely within the page, but can't pan the page fully out of view - which
+// is the "bounded, not infinitely pannable... matching a normal document
+// page's feel" behavior the spec calls for (confirmed against
+// node_modules/tldraw/src/test/commands/setCamera.test.ts's "Inside
+// behavior" cases, which show panning far past the bounds gets clamped to
+// bounds + padding on every side).
+function applyPageCameraConstraints(editor: Editor, bounds: Box) {
+  editor.setCameraOptions({
+    ...editor.getCameraOptions(),
+    constraints: {
+      bounds: bounds.toJson(),
+      padding: { x: 40, y: 40 },
+      origin: { x: 0.5, y: 0 },
+      initialZoom: "fit-x-100",
+      baseZoom: "default",
+      behavior: "inside",
+    },
+  });
+}
 
 // spec.md M5 subtask 10 ("Remove tldraw's built-in opacity slider") - tldraw
 // 4.5.12 (verified via node_modules/tldraw/dist-esm) has no sub-component-
@@ -241,6 +288,55 @@ export function CanvasEditor({ note }: Props) {
       // falls back to a neutral/disabled state once this canvas unmounts.
       setActiveCanvasEditor(editor);
 
+      // spec.md M4 subtask 6 ("Per-page canvas confinement, expandable on
+      // overflow") - set up fresh on every mount, since <Tldraw>'s
+      // `key={selectedPage.id}` (see below) fully remounts per page switch,
+      // so this needs to run again for each fresh `editor` instance rather
+      // than once globally. `confinedBounds` starts at the default
+      // page-sized bound and is reassigned (never shrunk - see
+      // `Box.Common`'s union semantics below) each time content grows past
+      // it, so it only ever expands for the lifetime of this mount.
+      let confinedBounds = Box.From(DEFAULT_PAGE_BOUNDS);
+      applyPageCameraConstraints(editor, confinedBounds);
+
+      // Reactively tracks the union of the current confined bounds and the
+      // page's actual shape content bounds (`editor.getCurrentPageBounds()`
+      // - verified via node_modules/@tldraw/editor/dist-cjs/index.d.ts,
+      // returns `Box | undefined`, `undefined` when the page has no shapes),
+      // re-applying the camera constraints whenever that union grows beyond
+      // the currently-applied bounds. Uses tldraw's own fine-grained
+      // reactivity (`react()`, re-exported from `@tldraw/state` through
+      // `@tldraw/tldraw` - same technique RichTextTool.tsx's
+      // `watchForReturnToSelectIdle` already uses for reactive
+      // editor-state watching, rather than `editor.store.listen`, since
+      // `getCurrentPageBounds()` is a derived/computed signal, not a raw
+      // store-change event) - the callback re-runs automatically whenever
+      // any signal it reads (here, `getCurrentPageBounds()`) changes, no
+      // manual subscription bookkeeping needed. `Box.Common([a, b])` always
+      // returns a box that contains both inputs, so unioning against the
+      // CURRENT `confinedBounds` (rather than recomputing fresh from
+      // `DEFAULT_PAGE_BOUNDS` each time) guarantees this only ever grows,
+      // never shrinks back down when shapes are later moved/deleted - per
+      // the spec's "if content extends... it extends the confined space"
+      // wording, with no shrink-back behavior requested.
+      const stopConfinementWatcher = react(
+        "canvas confinement: expand bounds to include shape content",
+        () => {
+          const contentBounds = editor.getCurrentPageBounds();
+          if (!contentBounds) return;
+          const union = Box.Common([confinedBounds, contentBounds]);
+          if (
+            union.x !== confinedBounds.x ||
+            union.y !== confinedBounds.y ||
+            union.w !== confinedBounds.w ||
+            union.h !== confinedBounds.h
+          ) {
+            confinedBounds = union;
+            applyPageCameraConstraints(editor, confinedBounds);
+          }
+        },
+      );
+
       // spec.md subtask 2 ("Click-to-create tool") - makes the rich-text
       // tool the default/primary interaction on mount (design guidance:
       // "set this new tool as the DEFAULT active tool when a canvas note
@@ -349,6 +445,7 @@ export function CanvasEditor({ note }: Props) {
         setActiveCanvasEditor(null);
         if (saveTimer.current) clearTimeout(saveTimer.current);
         unlisten();
+        stopConfinementWatcher();
         uninstallRichTextToolAutoReturn();
         // Flush any pending debounced save on unmount, so navigating away
         // within the 800ms debounce window doesn't silently drop the edit.
