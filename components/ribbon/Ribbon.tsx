@@ -24,6 +24,11 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Image as ImageIcon,
   Link as LinkIcon,
   MousePointer2,
@@ -33,6 +38,7 @@ import {
   Circle,
   ArrowUpRight,
   Type,
+  ChevronDown,
 } from "lucide-react";
 import {
   FONT_FAMILIES,
@@ -497,9 +503,66 @@ function DrawTab() {
       <FormatBtn tip="Select" active={liveToolId === "select"} onClick={() => setTool("select")}>
         <MousePointer2 className="h-3.5 w-3.5" />
       </FormatBtn>
-      <FormatBtn tip="Pencil" active={liveToolId === "draw"} onClick={() => setTool("draw")}>
-        <Pencil className="h-3.5 w-3.5" />
-      </FormatBtn>
+      <div className="flex items-center">
+        <FormatBtn tip="Pencil" active={liveToolId === "draw"} onClick={() => setTool("draw")}>
+          <Pencil className="h-3.5 w-3.5" />
+        </FormatBtn>
+        {/* spec.md M6 subtask 11 ("Pencil color dropdown") - a small, dedicated
+            color-swatch caret anchored right next to the Pencil button itself,
+            separate from and layered on top of the full always-visible
+            DRAW_COLORS grid a few buttons over (built in subtask 10) - lets the
+            user change the draw tool's current/next color without moving focus
+            away from the pencil. Reuses DRAW_COLORS and the `setStyle` helper
+            verbatim rather than duplicating either. Built with the existing
+            DropdownMenu primitive (components/ui/dropdown-menu.tsx, already
+            used extensively elsewhere in this app, e.g. the sidebar) since
+            there's no separate, lighter-weight Popover primitive in
+            components/ui to reach for instead - clicking the Pencil button
+            itself is unaffected, this caret is a wholly separate trigger. */}
+        <Tooltip>
+          <DropdownMenu>
+            <TooltipTrigger
+              render={
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-5 shrink-0 px-0"
+                      aria-label="Pencil color"
+                    >
+                      <ChevronDown className="h-2.5 w-2.5" />
+                    </Button>
+                  }
+                />
+              }
+            />
+            <DropdownMenuContent align="start" className="w-auto min-w-0 p-1.5">
+              <div className="grid grid-cols-4 gap-1">
+                {DRAW_COLORS.map((c) => (
+                  <Tooltip key={c.value}>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          onClick={() => setStyle(DefaultColorStyle, c.value)}
+                          className={cn(
+                            "h-5 w-5 rounded-full border border-border",
+                            colorStyle === c.value && "ring-2 ring-ring ring-offset-1",
+                          )}
+                          style={{ backgroundColor: c.hex }}
+                        />
+                      }
+                    />
+                    <TooltipContent>{c.label}</TooltipContent>
+                  </Tooltip>
+                ))}
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <TooltipContent>Pencil color</TooltipContent>
+        </Tooltip>
+      </div>
       <FormatBtn tip="Eraser" active={liveToolId === "eraser"} onClick={() => setTool("eraser")}>
         <Eraser className="h-3.5 w-3.5" />
       </FormatBtn>
