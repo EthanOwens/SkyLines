@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEditorState } from "@tiptap/react";
 import { GeoShapeGeoStyle, react, useValue, type Editor } from "@tldraw/tldraw";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
-import { setLastOpen } from "@/lib/lastOpen";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -370,28 +369,11 @@ function DrawTab() {
 
 export function Ribbon() {
   const pathname = usePathname();
-  const router = useRouter();
-  const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
   const activeCanvasEditor = useAppStore((s) => s.activeCanvasEditor);
   const normalizedPathname = normalizePathname(pathname);
   const isCanvasRoute = normalizedPathname === "/canvas";
 
   const [activeTab, setActiveTab] = useState<RibbonTab>("file");
-
-  // Shared by both File tab actions (spec.md subtask 9, "File tab"): the
-  // notebook picker (app/page.tsx) already has a complete list/create-
-  // notebook UI, so both "swap notebook" and "new notebook" just clear the
-  // current selection (in-memory store + persisted last-open state) and
-  // send the user back to "/" rather than duplicating that UI here. Clearing
-  // the persisted state (not just the store) is required - otherwise
-  // AppShell.tsx's restore effect would just re-select the same notebook (or
-  // navigate straight back into the last note) the next time "/" is
-  // reached, defeating the point of swapping.
-  function returnToPicker() {
-    setSelectedNotebook(null);
-    setLastOpen({ notebookId: null, folderId: null, noteId: null });
-    router.push("/");
-  }
 
   // If the Draw tab is currently active and the route navigates away from
   // /canvas (e.g. the user opens a plain note), fall back to File rather
@@ -478,14 +460,7 @@ export function Ribbon() {
       </div>
       <div className="flex-1 px-3 py-2 text-sm text-muted-foreground">
         {effectiveTab === "file" && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={returnToPicker}>
-              Swap Notebook
-            </Button>
-            <Button variant="outline" size="sm" onClick={returnToPicker}>
-              New Notebook
-            </Button>
-          </div>
+          <div className="flex items-center text-muted-foreground">No actions available.</div>
         )}
         {effectiveTab === "format" && <FormatTab />}
         {effectiveTab === "draw" && <DrawTab />}
