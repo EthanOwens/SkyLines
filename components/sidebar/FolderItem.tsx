@@ -106,6 +106,9 @@ export function FolderItem({
   const inputRef = useRef<HTMLInputElement>(null);
   const clipboard = useAppStore((s) => s.clipboard);
   const setClipboard = useAppStore((s) => s.setClipboard);
+  const selectedFolderId = useAppStore((s) => s.selectedFolderId);
+  const setSelectedFolder = useAppStore((s) => s.setSelectedFolder);
+  const isSelected = selectedFolderId === folder.id;
 
   const childFolders = allFolders
     .filter((f) => f.parentId === folder.id)
@@ -329,10 +332,24 @@ export function FolderItem({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               className={`group flex items-center gap-1 rounded-md py-0.5 pr-1 cursor-pointer hover:bg-sidebar-accent transition-colors ${
-                dropPosition === "inside" ? "bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring" : ""
+                dropPosition === "inside"
+                  ? "bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring"
+                  : isSelected
+                    ? "bg-sidebar-accent/40"
+                    : ""
               }`}
               style={{ paddingLeft }}
-              onClick={() => setOpen((v) => !v)}
+              onClick={(e) => {
+                // Selecting a folder for toolbar-creation scoping is layered
+                // on top of the pre-existing expand/collapse toggle, not a
+                // replacement for it (spec.md M2 subtask 4). Stop
+                // propagation so this doesn't also bubble up to
+                // FolderTree.tsx's own container click, which clears the
+                // selection back to root-scoped for clicks on empty space.
+                e.stopPropagation();
+                setOpen((v) => !v);
+                setSelectedFolder(folder.id);
+              }}
             >
               <ChevronRight
                 className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}

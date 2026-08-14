@@ -64,6 +64,7 @@ export function FolderTree({ userId, notebookId }: Props) {
   const notes = useAppStore((s) => s.notes);
   const clipboard = useAppStore((s) => s.clipboard);
   const setClipboard = useAppStore((s) => s.setClipboard);
+  const setSelectedFolder = useAppStore((s) => s.setSelectedFolder);
   const [rootDropActive, setRootDropActive] = useState(false);
 
   // Notes not inside any folder, scoped to this notebook.
@@ -154,6 +155,13 @@ export function FolderTree({ userId, notebookId }: Props) {
             onDragOver={handleRootDragOver}
             onDragLeave={handleRootDragLeave}
             onDrop={handleRootDrop}
+            // Clicking empty space in the tree (the notebook root, below/
+            // between rows) clears the selected-folder creation scope back
+            // to root-scoped (spec.md M2 subtask 4). Individual rows
+            // (FolderItem.tsx) stop propagation on their own row click, so
+            // this only fires for genuine empty-space clicks, not clicks
+            // that bubbled up from a row.
+            onClick={() => setSelectedFolder(null)}
           >
             {rootFolders.map((folder) => (
               <FolderItem

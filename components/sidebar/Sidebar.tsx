@@ -75,6 +75,7 @@ export function Sidebar({ user }: Props) {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const selectedNotebookId = useAppStore((s) => s.selectedNotebookId);
+  const selectedFolderId = useAppStore((s) => s.selectedFolderId);
   const notes = useAppStore((s) => s.notes);
   const folders = useAppStore((s) => s.folders);
   const [creating, setCreating] = useState(false);
@@ -101,20 +102,23 @@ export function Sidebar({ user }: Props) {
     setCreating(true);
     try {
       const notebookId = await resolveNotebookId();
-      // Root-level, matching FolderItem.tsx's addNote/addSubfolder: append
-      // after the other existing root notes in this notebook rather than
-      // defaulting to order 0 (createNote's default), which would collide
-      // with/jump ahead of whatever's already at the root.
-      const rootNoteOrders = notes
-        .filter((n) => !n.folderId && n.notebookId === notebookId)
+      // spec.md M2 subtask 4 ("folder selection for scoped creation"): when
+      // a folder is selected in the sidebar, the toolbar creates under it
+      // instead of at the notebook root - matching FolderItem.tsx's own
+      // addNote/addSubfolder, append after the other existing notes at
+      // whichever level (selected folder, or root) rather than defaulting
+      // to order 0 (createNote's default), which would collide with/jump
+      // ahead of whatever's already there.
+      const siblingNoteOrders = notes
+        .filter((n) => n.folderId === (selectedFolderId ?? null) && n.notebookId === notebookId)
         .map((n) => n.order);
       const id = await createNote(
         user.uid,
         "canvas",
         notebookId,
+        selectedFolderId ?? undefined,
         undefined,
-        undefined,
-        nextOrderValue(rootNoteOrders),
+        nextOrderValue(siblingNoteOrders),
       );
       router.push(`/canvas?id=${id}`);
     } finally {
@@ -124,16 +128,17 @@ export function Sidebar({ user }: Props) {
 
   async function newFolder() {
     const notebookId = await resolveNotebookId();
-    // See the comment in newNote above - same reasoning for root folders.
-    const rootFolderOrders = folders
-      .filter((f) => !f.parentId && f.notebookId === notebookId)
+    // See the comment in newNote above - same reasoning, scoped under the
+    // selected folder (if any) instead of always the notebook root.
+    const siblingFolderOrders = folders
+      .filter((f) => f.parentId === (selectedFolderId ?? null) && f.notebookId === notebookId)
       .map((f) => f.order);
     await createFolder(
       user.uid,
       "New Folder",
       notebookId,
-      undefined,
-      nextOrderValue(rootFolderOrders),
+      selectedFolderId ?? undefined,
+      nextOrderValue(siblingFolderOrders),
     );
   }
 

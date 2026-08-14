@@ -197,7 +197,10 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
                   : "hover:bg-sidebar-accent"
               }`}
               style={{ paddingLeft }}
-              onClick={() => !renaming && router.push(href)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!renaming) router.push(href);
+              }}
             >
               {note.type === "canvas" ? (
                 <LayoutDashboard className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

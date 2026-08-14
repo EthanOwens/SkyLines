@@ -36,6 +36,17 @@ interface AppState {
   // it back to `false`.
   notebooksLoaded: boolean;
   selectedNoteId: string | null;
+  // Which folder row is currently "selected" in the sidebar (spec.md M2
+  // subtask 4, "folder selection for scoped creation") - distinct from a
+  // folder's own expand/collapse `open` state (FolderItem.tsx's local
+  // `useState`) and from `selectedNotebookId` below. Clicking a folder row
+  // both toggles its expand/collapse AND sets this; clicking empty space in
+  // the sidebar (FolderTree.tsx's own container) clears it back to `null`.
+  // Consumed by Sidebar.tsx's toolbar "New Note"/"New Folder" buttons to
+  // scope root-toolbar creation under this folder when set, or at the
+  // notebook root when `null` - existing per-row inline creation actions
+  // (FolderItem.tsx's own "+"/context-menu items) are unaffected, since they
+  // already create under that row's own folder id directly.
   selectedFolderId: string | null;
   // Which notebook is currently "open" (spec.md subtask 6, "Notebook
   // picker") - distinct from selectedFolderId/selectedNoteId, which scope a
@@ -213,7 +224,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setNotebooksLoaded: (loaded) => set({ notebooksLoaded: loaded }),
   setSelectedNote: (id) => set({ selectedNoteId: id }),
   setSelectedFolder: (id) => set({ selectedFolderId: id }),
-  setSelectedNotebook: (id) => set({ selectedNotebookId: id }),
+  setSelectedNotebook: (id) => set({ selectedNotebookId: id, selectedFolderId: null }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),
