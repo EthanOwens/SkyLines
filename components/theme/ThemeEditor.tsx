@@ -14,6 +14,7 @@ import { useAppStore } from "@/stores/appStore";
 import { LIGHT_THEME } from "@/lib/themes/builtin";
 import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/themes/types";
 import { ThemeColorField } from "./ThemeColorField";
+import { ThemePreview } from "./ThemePreview";
 
 // Human-readable label for a ThemeVariableKey, e.g. "sidebar-primary-foreground"
 // -> "Sidebar Primary Foreground". Used by the right sidebar's field list
@@ -187,9 +188,16 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
           </div>
 
           {/* Center - live preview (subtask 16: bounded mock canvas with a
-              movable/editable text box). */}
-          <div className="flex min-w-0 flex-1 items-center justify-center bg-muted/30 p-3 text-xs text-muted-foreground">
-            Live preview (subtask 16)
+              movable/editable text box). Reads the same draftVariables/
+              editingTheme state the right sidebar's color editor below
+              writes to, so it re-renders live for free as colors change -
+              no extra plumbing needed. */}
+          <div className="flex min-w-0 flex-1 items-center justify-center bg-muted/30 p-3">
+            {editingTheme ? (
+              <ThemePreview editingTheme={editingTheme} draftVariables={draftVariables} />
+            ) : (
+              <div className="text-xs text-muted-foreground">No theme selected</div>
+            )}
           </div>
 
           {/* Right sidebar - color editor (subtask 15: color-wheel editor
