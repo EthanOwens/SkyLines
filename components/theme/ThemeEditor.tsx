@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Clipboard, Copy, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -20,10 +20,16 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useAppStore } from "@/stores/appStore";
 import { BUILTIN_THEMES, LIGHT_THEME } from "@/lib/themes/builtin";
 import { applyTheme } from "@/lib/themes/apply";
-import { loadThemes, saveTheme } from "@/lib/themes/loader";
+import { deleteThemeFile, loadThemes, saveTheme } from "@/lib/themes/loader";
 import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/themes/types";
 import { ThemeColorField } from "./ThemeColorField";
 import { ThemePreview } from "./ThemePreview";
@@ -42,7 +48,28 @@ const SYSTEM_THEME_VALUE = "__system__";
 // and the footer's own Discard button); "switch" covers clicking a
 // different theme in the left sidebar's list while the current draft is
 // dirty.
-type PendingAction = { type: "close" } | { type: "switch"; theme: Theme };
+type PendingAction =
+  | { type: "close" }
+  | { type: "switch"; theme: Theme }
+  | { type: "paste"; theme: Theme };
+
+// A single undo step for subtask 18's in-session Ctrl+Z history: a snapshot
+// of every piece of state a value edit, a delete, or a theme-values paste
+// can touch, captured right BEFORE that action runs. Undo just restores all
+// of it verbatim - simpler and more robust than inverse-operations given how
+// small this data is (a handful of themes, ~31 string values each).
+// `restoreFile`, set only by the delete action, additionally re-persists the
+// deleted theme's file to disk on undo (its file is really gone after
+// delete, unlike everything else here which is purely in-memory).
+interface UndoSnapshot {
+  editingThemeId: string | null;
+  draftVariables: Partial<Record<ThemeVariableKey, string>>;
+  unsavedNewTheme: Theme | null;
+  availableThemes: Theme[];
+  restoreFile?: Theme;
+}
+
+const MAX_UNDO_HISTORY = 50;
 
 // Human-readable label for a ThemeVariableKey, e.g. "sidebar-primary-foreground"
 // -> "Sidebar Primary Foreground". Used by the right sidebar's field list
@@ -101,6 +128,39 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   // prompt is showing.
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
+  // Subtask 18's left-sidebar "copy theme values" clipboard: an in-memory,
+  // this-ThemeEditor-instance-only copy of one theme's full `variables`
+  // object (NOT the OS clipboard, not persisted). "Paste theme values"
+  // below reads this; the paste item is disabled while it's null.
+  const [copiedVariables, setCopiedVariables] = useState<Partial<
+    Record<ThemeVariableKey, string>
+  > | null>(null);
+
+  // Subtask 18's in-session Ctrl+Z history: a plain stack of UndoSnapshots,
+  // pushed to right before each undoable action (a value edit, a delete, or
+  // a theme-values paste) runs. A ref (not state) since pushing/popping it
+  // shouldn't itself trigger a re-render - only the state it restores does.
+  // Built fresh each time the dialog opens and discarded on close, per
+  // spec.md's "hand-rolled, in-session-only history stack" decision -
+  // deliberately not persisted, and entirely unrelated to tldraw's/Tiptap's
+  // own undo/redo.
+  const undoHistoryRef = useRef<UndoSnapshot[]>([]);
+
+  // Coalescing for `handleVariableChange` below: react-colorful's wheel
+  // fires `onChange` continuously on every pointer-move during a single
+  // drag, and its hex input fires on every keystroke - without coalescing,
+  // each of those raw events would push its own UndoSnapshot, flooding
+  // `undoHistoryRef` and (via MAX_UNDO_HISTORY's `shift()` eviction)
+  // silently bumping older, unrelated undoable actions (a delete, a paste)
+  // out of history. Tracks the key of the most recent edit; consecutive
+  // edits to the SAME key reuse the snapshot already sitting on top of the
+  // stack (it already captured the pre-edit state) instead of pushing a new
+  // one. Reset to null - so the next edit of ANY key pushes fresh - by
+  // `loadThemeForEditing` (a different theme is now being edited),
+  // `pushUndoSnapshot` itself (a delete/paste just pushed its own snapshot),
+  // and `handleUndo` (an undo just happened).
+  const lastEditedKeyRef = useRef<ThemeVariableKey | null>(null);
+
   // All themes selectable in the left sidebar's list: real (persisted)
   // themes plus the in-progress unsaved one, if any.
   const themeList = unsavedNewTheme
@@ -114,6 +174,9 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   function loadThemeForEditing(theme: Theme | undefined) {
     setEditingThemeId(theme?.id ?? null);
     setDraftVariables(theme ? { ...theme.variables } : {});
+    // A different theme's now being edited - don't let a same-key edit on
+    // it coalesce with a same-key edit on whatever was loaded before.
+    lastEditedKeyRef.current = null;
   }
 
   // Seed editingThemeId/draftVariables whenever the dialog opens: default to
@@ -129,6 +192,8 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
 
     setUnsavedNewTheme(null);
     setPendingAction(null);
+    setCopiedVariables(null);
+    undoHistoryRef.current = [];
 
     const fallback = availableThemes[0]?.id ?? null;
     const initialId =
@@ -139,6 +204,39 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     loadThemeForEditing(availableThemes.find((t) => t.id === initialId));
     // Only re-seed when the dialog transitions open, not on every store
     // update while it's already open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Subtask 18: Ctrl+Z (Cmd+Z on Mac) undo, scoped to only fire while the
+  // Theme Editor dialog is open - listener is added/removed alongside
+  // `open` itself, so nothing fires once it's closed. `handleUndo` only
+  // reads `undoHistoryRef` (a ref) and calls the state setters (which are
+  // referentially stable), so this doesn't need `handleUndo` in its
+  // dependency array - it's never stale.
+  //
+  // Deliberately ignores keydowns whose target is an `<input>`/`<textarea>`
+  // (e.g. the hex color input, the radius text field) so this doesn't
+  // hijack those elements' own native undo - the safest way to tell "this
+  // keydown was meant for a text field's own undo, not this dialog's"
+  // without trying to guess at cursor/selection state.
+  useEffect(() => {
+    if (!open) return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      const isUndoShortcut =
+        (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z";
+      if (!isUndoShortcut) return;
+
+      const target = e.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      if (tagName === "INPUT" || tagName === "TEXTAREA" || target?.isContentEditable) return;
+
+      e.preventDefault();
+      void handleUndo();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -162,7 +260,78 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   // `draftVariables` - never lib/themes/apply.ts - so edits stay local to
   // this dialog's draft until subtask 17's Save applies them for real.
   function handleVariableChange(key: ThemeVariableKey, value: string) {
+    // Only push a fresh snapshot when this edit starts a new run (a
+    // different key than the immediately-prior edit, or no prior edit since
+    // the last delete/paste/undo) - see `lastEditedKeyRef`'s comment above.
+    // A run of same-key edits (one color-wheel drag's stream of onChange
+    // events, or one hex-input's keystrokes) reuses the snapshot already on
+    // top of the stack instead of pushing a new one per event.
+    if (lastEditedKeyRef.current !== key) {
+      pushUndoSnapshot();
+      lastEditedKeyRef.current = key;
+    }
     setDraftVariables((prev) => ({ ...prev, [key]: value }));
+  }
+
+  // Captures the current, pre-action state as an UndoSnapshot and pushes it
+  // onto this session's history stack - call this right before making any
+  // undoable change (a value edit, a delete, or a paste). `restoreFile` is
+  // only ever passed by the delete action (see `handleDeleteTheme` below).
+  function pushUndoSnapshot(restoreFile?: Theme) {
+    // A delete/paste is pushing its own snapshot right now - any run of
+    // same-key edit-coalescing tracked above no longer applies to whatever
+    // edit happens next, even if it's to the same key as before this call.
+    lastEditedKeyRef.current = null;
+    undoHistoryRef.current.push({
+      editingThemeId,
+      draftVariables: { ...draftVariables },
+      unsavedNewTheme,
+      availableThemes: [...availableThemes],
+      restoreFile,
+    });
+    if (undoHistoryRef.current.length > MAX_UNDO_HISTORY) {
+      undoHistoryRef.current.shift();
+    }
+  }
+
+  // Ctrl+Z (Cmd+Z on Mac): pops the last snapshot and restores every field
+  // it captured verbatim. If that snapshot was captured right before a
+  // delete, also writes the deleted theme's file back to disk FIRST - unlike
+  // everything else here (purely in-memory), the deleted theme's file is
+  // really gone, so `setAvailableThemes` below would otherwise make it
+  // reappear in the UI while its on-disk file is still missing (it'd then
+  // silently vanish again the next time `loadThemes()` runs, e.g. next Save
+  // or dialog reopen). Async so this write can be awaited - see the keydown
+  // handler above, which now calls this with `void`.
+  async function handleUndo() {
+    const snapshot = undoHistoryRef.current.pop();
+    if (!snapshot) return;
+    // An undo just happened - the same-key edit-coalescing tracked above no
+    // longer applies to whatever edit happens next.
+    lastEditedKeyRef.current = null;
+
+    if (snapshot.restoreFile) {
+      try {
+        await saveTheme(snapshot.restoreFile);
+      } catch (err) {
+        // The restore write failed - put the snapshot back so the user can
+        // retry Ctrl+Z, and don't touch any state below: the theme's data
+        // isn't lost (it's still sitting in this snapshot), only its
+        // on-disk restore is, so the UI must NOT claim it's back until that
+        // actually succeeds. This app has no toast/alert convention yet for
+        // surfacing a save failure to the user (checked ThemeEditor.tsx and
+        // its callers), so this is logged only; wiring up a visible error
+        // indication here is a reasonable follow-up if one gets added.
+        console.error("Theme editor: failed to restore deleted theme file on undo", err);
+        undoHistoryRef.current.push(snapshot);
+        return;
+      }
+    }
+
+    setEditingThemeId(snapshot.editingThemeId);
+    setDraftVariables(snapshot.draftVariables);
+    setUnsavedNewTheme(snapshot.unsavedNewTheme);
+    setAvailableThemes(snapshot.availableThemes);
   }
 
   const editingTheme = themeList.find((t) => t.id === editingThemeId);
@@ -291,7 +460,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     onOpenChange(false);
   }
 
-  // Resolves whichever close/switch action the confirmation prompt is
+  // Resolves whichever close/switch/paste action the confirmation prompt is
   // blocking on.
   function resolvePendingAction() {
     const action = pendingAction;
@@ -299,8 +468,74 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     if (!action) return;
     if (action.type === "close") {
       onOpenChange(false);
-    } else {
+    } else if (action.type === "switch") {
       loadThemeForEditing(action.theme);
+    } else {
+      applyPasteToTheme(action.theme);
+    }
+  }
+
+  // Subtask 18's left-sidebar context menu: "Copy theme values" - copies
+  // `theme`'s full `variables` object (the theme the menu was opened on,
+  // not necessarily the currently-loaded draft) into this session's
+  // in-memory clipboard. Not undoable itself (it doesn't touch any theme's
+  // data), so it deliberately doesn't push an undo snapshot.
+  function handleCopyTheme(theme: Theme) {
+    setCopiedVariables({ ...theme.variables });
+  }
+
+  // Applies the copied clipboard onto `theme`: loads `theme` into the
+  // editor with the copied variables as its new draft, so it's immediately
+  // marked dirty by the existing `isDraftDirty` comparison against
+  // `theme.variables` - Save/Discard/the confirmation prompt all then work
+  // unchanged, with no extra plumbing.
+  function applyPasteToTheme(theme: Theme) {
+    if (!copiedVariables) return;
+    pushUndoSnapshot();
+    setEditingThemeId(theme.id);
+    setDraftVariables({ ...copiedVariables });
+  }
+
+  // Subtask 18's left-sidebar context menu: "Paste theme values" - pastes
+  // the last-copied variables onto `theme` (the row the menu was opened
+  // on). Routed through the same dirty-check the theme list's row clicks
+  // use (`requestLoadTheme`) so an unsaved edit on a DIFFERENT theme isn't
+  // silently discarded by a paste - if the current draft is dirty, the
+  // existing Save/Discard/Cancel prompt below blocks first.
+  function requestPasteTheme(theme: Theme) {
+    if (!copiedVariables) return;
+    if (isDraftDirty()) {
+      setPendingAction({ type: "paste", theme });
+      return;
+    }
+    applyPasteToTheme(theme);
+  }
+
+  // Subtask 18's left-sidebar context menu: "Delete" - removes `theme`'s
+  // on-disk file and drops it from `availableThemes`, mirroring
+  // `persistDraft`'s own pattern for refreshing that store field from disk
+  // afterwards. Built-in themes have no on-disk file and are never offered
+  // this action (hidden in the menu below) - guarded here too as a
+  // belt-and-suspenders check. If the deleted theme was the one currently
+  // loaded in the editor, falls back to loading whatever theme is now
+  // first in the refreshed list (or clears the editor if none remain).
+  async function handleDeleteTheme(theme: Theme) {
+    if (BUILTIN_THEMES.some((b) => b.id === theme.id)) return;
+
+    pushUndoSnapshot(theme);
+
+    await deleteThemeFile(theme.id);
+
+    const { themes: userThemes } = await loadThemes();
+    const usableUserThemes = userThemes.filter(
+      (t) => t.id !== SYSTEM_THEME_VALUE && !BUILTIN_THEMES.some((b) => b.id === t.id),
+    );
+    const refreshedThemes = [...BUILTIN_THEMES, ...usableUserThemes];
+    setAvailableThemes(refreshedThemes);
+    setUserThemesLoaded(true);
+
+    if (editingThemeId === theme.id) {
+      loadThemeForEditing(refreshedThemes.find((t) => t.id !== theme.id));
     }
   }
 
@@ -360,24 +595,55 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
 
           <div className="flex min-h-0 flex-1">
             {/* Left sidebar - theme list: built-in + user-created themes, plus
-                a "create new theme" button (spec.md M7 subtask 14). */}
+                a "create new theme" button (spec.md M7 subtask 14). Each row
+                also has a right-click context menu (subtask 18) offering
+                copy/paste theme values and delete. */}
             <div className="flex w-48 shrink-0 flex-col overflow-y-auto border-r border-border bg-sidebar p-2">
               <div className="flex flex-1 flex-col gap-0.5">
                 {themeList.map((theme) => {
                   const isActive = theme.id === editingThemeId;
+                  const isBuiltin = BUILTIN_THEMES.some((b) => b.id === theme.id);
+                  const isUnsaved = unsavedNewTheme?.id === theme.id;
                   return (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      onClick={() => requestLoadTheme(theme)}
-                      className={`truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                        isActive
-                          ? "bg-sidebar-accent text-sidebar-foreground"
-                          : "text-sidebar-foreground hover:bg-sidebar-accent"
-                      }`}
-                    >
-                      {theme.name}
-                    </button>
+                    <ContextMenu key={theme.id}>
+                      <ContextMenuTrigger
+                        render={
+                          <button
+                            type="button"
+                            onClick={() => requestLoadTheme(theme)}
+                            className={`truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                              isActive
+                                ? "bg-sidebar-accent text-sidebar-foreground"
+                                : "text-sidebar-foreground hover:bg-sidebar-accent"
+                            }`}
+                          >
+                            {theme.name}
+                          </button>
+                        }
+                      />
+                      <DropdownMenuContent align="start" className="w-44">
+                        <DropdownMenuItem onClick={() => handleCopyTheme(theme)}>
+                          <Copy className="mr-2 h-4 w-4" /> Copy theme values
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!copiedVariables}
+                          onClick={() => requestPasteTheme(theme)}
+                        >
+                          <Clipboard className="mr-2 h-4 w-4" /> Paste theme values
+                        </DropdownMenuItem>
+                        {!isBuiltin && !isUnsaved && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() => void handleDeleteTheme(theme)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" /> Delete
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </ContextMenu>
                   );
                 })}
               </div>
@@ -479,7 +745,11 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
             <AlertDialogDescription>
               {editingTheme
                 ? `"${editingTheme.name}" has unsaved changes. Save them before ${
-                    pendingAction?.type === "switch" ? "switching themes" : "closing"
+                    pendingAction?.type === "switch"
+                      ? "switching themes"
+                      : pendingAction?.type === "paste"
+                        ? "pasting theme values"
+                        : "closing"
                   }?`
                 : "This theme has unsaved changes."}
             </AlertDialogDescription>
