@@ -12,7 +12,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/stores/appStore";
 import { LIGHT_THEME } from "@/lib/themes/builtin";
-import type { Theme, ThemeVariableKey } from "@/lib/themes/types";
+import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/themes/types";
+import { ThemeColorField } from "./ThemeColorField";
+
+// Human-readable label for a ThemeVariableKey, e.g. "sidebar-primary-foreground"
+// -> "Sidebar Primary Foreground". Used by the right sidebar's field list
+// (subtask 15) so the raw kebab-case CSS variable names aren't shown as-is.
+function labelForKey(key: ThemeVariableKey): string {
+  return key
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
 
 interface ThemeEditorProps {
   open: boolean;
@@ -109,6 +120,14 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     loadThemeForEditing(newTheme);
   }
 
+  // Updates a single variable in the working draft (subtask 15's color
+  // editor and radius field both call this). Deliberately only ever touches
+  // `draftVariables` - never lib/themes/apply.ts - so edits stay local to
+  // this dialog's draft until subtask 17's Save applies them for real.
+  function handleVariableChange(key: ThemeVariableKey, value: string) {
+    setDraftVariables((prev) => ({ ...prev, [key]: value }));
+  }
+
   // Placeholder for subtask 17's real save-to-file logic - for now this just
   // closes the dialog without persisting `draftVariables` anywhere.
   function handleSave() {
@@ -174,9 +193,56 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
           </div>
 
           {/* Right sidebar - color editor (subtask 15: color-wheel editor
-              for all 31 ThemeVariableKey values). */}
-          <div className="flex w-64 shrink-0 flex-col border-l border-border bg-sidebar p-3 text-xs text-muted-foreground">
-            Color editor (subtask 15)
+              for all 31 ThemeVariableKey values). Reads each value from
+              draftVariables, falling back to the loaded theme's own value
+              when the draft hasn't overridden it yet (in practice
+              loadThemeForEditing above always seeds the full theme into
+              draftVariables, but this fallback keeps the field correct even
+              if that ever changes). Edits only ever update draftVariables -
+              not the live app theme (lib/themes/apply.ts isn't called
+              here). */}
+          <div className="flex w-64 shrink-0 flex-col overflow-y-auto border-l border-border bg-sidebar p-3">
+            {editingTheme ? (
+              <div className="flex flex-col divide-y divide-border">
+                {THEME_VARIABLE_KEYS.map((key) => {
+                  const value = draftVariables[key] ?? editingTheme.variables[key];
+                  const label = labelForKey(key);
+
+                  if (key === "radius") {
+                    return (
+                      <div key={key} className="flex items-center justify-between gap-2 py-1">
+                        <label
+                          htmlFor="theme-editor-radius"
+                          className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground"
+                        >
+                          {label}
+                        </label>
+                        <input
+                          id="theme-editor-radius"
+                          type="text"
+                          value={value ?? ""}
+                          onChange={(e) => handleVariableChange(key, e.target.value)}
+                          placeholder="0.625rem"
+                          className="h-6 w-20 shrink-0 rounded-md border border-input bg-transparent px-1.5 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+                        />
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <ThemeColorField
+                      key={key}
+                      varKey={key}
+                      label={label}
+                      value={value}
+                      onChange={handleVariableChange}
+                    />
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">No theme selected</div>
+            )}
           </div>
         </div>
 
