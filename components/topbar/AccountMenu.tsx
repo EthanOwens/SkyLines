@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
@@ -24,6 +24,7 @@ import { useAppStore } from "@/stores/appStore";
 import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
 import { setSelectedThemeId as persistSelectedThemeId } from "@/lib/themes/selection";
 import { getSystemTheme, watchSystemThemeChanges } from "@/lib/themes/system";
+import { ThemeEditor } from "@/components/theme/ThemeEditor";
 import { LogOut, Palette, Cloud, CloudOff, Loader2, CheckCircle2 } from "lucide-react";
 
 // "System" sentinel for the theme radio group (spec.md subtask 11, "Rename
@@ -70,6 +71,10 @@ export function AccountMenu() {
   const availableThemes = useAppStore((s) => s.availableThemes);
   const selectedThemeId = useAppStore((s) => s.selectedThemeId);
   const setSelectedThemeId = useAppStore((s) => s.setSelectedThemeId);
+  // Open/closed state for the Theme Editor (spec.md M7 subtask 12), kept
+  // local to this component since no other part of the app needs to read or
+  // trigger it - it's opened solely from the "Edit themes..." item below.
+  const [themeEditorOpen, setThemeEditorOpen] = useState(false);
 
   // Keeps "System" dynamically in sync with the OS while it remains the
   // active selection (spec.md subtask 11's key decision: a live
@@ -150,60 +155,67 @@ export function AccountMenu() {
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 rounded-full bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90"
-          >
-            {initial}
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel className="truncate">
-            {displayName || user.email}
-          </DropdownMenuLabel>
-          <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-            {user.email}
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-          <StatusIcon className={`mr-2 h-3 w-3 ${statusInfo.className}`} />
-          {statusInfo.label}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Palette className="mr-2 h-4 w-4" />
-            Theme
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent>
-            <DropdownMenuRadioGroup
-              value={selectedThemeId ?? SYSTEM_THEME_VALUE}
-              onValueChange={handleThemeChange}
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 rounded-full bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90"
             >
-              <DropdownMenuRadioItem value={SYSTEM_THEME_VALUE}>
-                System
-              </DropdownMenuRadioItem>
-              {availableThemes.map((theme) => (
-                <DropdownMenuRadioItem key={theme.id} value={theme.id}>
-                  {theme.name}
+              {initial}
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="truncate">
+              {displayName || user.email}
+            </DropdownMenuLabel>
+            <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+              {user.email}
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+            <StatusIcon className={`mr-2 h-3 w-3 ${statusInfo.className}`} />
+            {statusInfo.label}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Palette className="mr-2 h-4 w-4" />
+              Theme
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuRadioGroup
+                value={selectedThemeId ?? SYSTEM_THEME_VALUE}
+                onValueChange={handleThemeChange}
+              >
+                <DropdownMenuRadioItem value={SYSTEM_THEME_VALUE}>
+                  System
                 </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
-          <LogOut className="mr-2 h-4 w-4" />
-          Sign out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+                {availableThemes.map((theme) => (
+                  <DropdownMenuRadioItem key={theme.id} value={theme.id}>
+                    {theme.name}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setThemeEditorOpen(true)}>
+                Edit themes...
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
+            <LogOut className="mr-2 h-4 w-4" />
+            Sign out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ThemeEditor open={themeEditorOpen} onOpenChange={setThemeEditorOpen} />
+    </>
   );
 }
