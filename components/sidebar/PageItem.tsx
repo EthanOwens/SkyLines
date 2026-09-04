@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { DragEvent } from "react";
 import { FileText, Pencil, Trash2, Scissors, Copy } from "lucide-react";
 import { updatePage, deletePage } from "@/lib/db/pages";
@@ -53,6 +53,14 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
   const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const setClipboard = useAppStore((s) => s.setClipboard);
+
+  // Resyncs from an external rename (e.g. the canvas title header) - not
+  // depended on `renaming` so it can't clobber an in-progress edit or the
+  // optimistic title commitRename() just set locally.
+  useEffect(() => {
+    if (!renaming) setTitle(page.title || "Untitled");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page.title]);
 
   function startRename() {
     setRenaming(true);
