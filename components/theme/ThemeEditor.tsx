@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Clipboard, Copy, Plus, Trash2 } from "lucide-react";
+import { Clipboard, Copy, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { openPath } from "@tauri-apps/plugin-opener";
 import {
   Dialog,
   DialogContent,
@@ -29,7 +30,7 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useAppStore } from "@/stores/appStore";
 import { BUILTIN_THEMES, LIGHT_THEME } from "@/lib/themes/builtin";
 import { applyTheme } from "@/lib/themes/apply";
-import { deleteThemeFile, loadThemes, saveTheme } from "@/lib/themes/loader";
+import { deleteThemeFile, ensureThemesDir, loadThemes, saveTheme } from "@/lib/themes/loader";
 import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/themes/types";
 import { ThemeColorField } from "./ThemeColorField";
 import { ThemePreview } from "./ThemePreview";
@@ -253,6 +254,23 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     };
     setUnsavedNewTheme(newTheme);
     loadThemeForEditing(newTheme);
+  }
+
+  // Left sidebar's bottom "Open themes folder" button (subtask 19): opens
+  // the on-disk themes directory (lib/themes/loader.ts's
+  // `<app-config-dir>/themes`) in the OS's file explorer, via
+  // @tauri-apps/plugin-opener's `openPath`. `ensureThemesDir()` (rather than
+  // `getThemesDir()`) is used here so this doesn't fail on a fresh install
+  // where no user theme has ever been saved and the directory doesn't exist
+  // yet - it creates the directory first, same as `loadThemes()`/
+  // `saveTheme()` already do.
+  async function handleOpenThemesFolder() {
+    try {
+      const dir = await ensureThemesDir();
+      await openPath(dir);
+    } catch (err) {
+      console.error("Theme editor: failed to open themes folder", err);
+    }
   }
 
   // Updates a single variable in the working draft (subtask 15's color
@@ -655,6 +673,15 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
               >
                 <Plus className="h-3.5 w-3.5" />
                 New theme
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleOpenThemesFolder()}
+                className="mt-1 flex shrink-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+                Open themes folder
               </button>
             </div>
 
