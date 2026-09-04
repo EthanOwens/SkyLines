@@ -68,6 +68,7 @@ import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import { useAppStore } from "@/stores/appStore";
+import { suppressReenterEditAfterEndingSession } from "./RichTextTool";
 import {
   formatActions,
   selectFormatActionState,
@@ -258,6 +259,9 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   // operations (setEditable/focus/isEmpty/deleteShapes) stay gated on
   // `tiptapEditor` being non-null.
   const wasEditingRef = useRef(isEditing);
+  // Set by the drag handle to skip the empty-delete check below when it
+  // ends editing to start a drag (avoids deleting the shape mid-drag).
+  const suppressEmptyDeleteRef = useRef(false);
 
   // Toggle the underlying ProseMirror editable state as edit-mode is
   // entered/exited (tldraw's own default select-tool double-click-to-edit
@@ -360,7 +364,9 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     // space character is still a text node) and for any non-text content
     // (e.g. an inserted image node), so neither case is wrongly deleted
     // here.
-    if (tiptapEditor.isEmpty) {
+    if (suppressEmptyDeleteRef.current) {
+      suppressEmptyDeleteRef.current = false;
+    } else if (tiptapEditor.isEmpty) {
       tldrawEditor.deleteShapes([shape.id]);
     }
   }, [isEditing, tiptapEditor, tldrawEditor, shape.id, setActiveEditor, setPendingEditClickPoint]);
@@ -494,6 +500,15 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
               opacity: 0.4,
               borderTopLeftRadius: 3,
               borderTopRightRadius: 3,
+            }}
+            // End editing first so the drag reaches tldraw's real
+            // translate handling instead of EditingShape's no-op.
+            onPointerDown={() => {
+              if (isEditing) {
+                suppressEmptyDeleteRef.current = true;
+                tldrawEditor.setEditingShape(null);
+                suppressReenterEditAfterEndingSession();
+              }
             }}
           />
         )}

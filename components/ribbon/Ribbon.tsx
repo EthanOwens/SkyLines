@@ -18,6 +18,7 @@ import {
   type TLDefaultFillStyle,
   type TLDefaultSizeStyle,
 } from "@tldraw/tldraw";
+import { switchToToolExplicitly } from "@/components/canvas/RichTextTool";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
 import { Button } from "@/components/ui/button";
@@ -52,11 +53,8 @@ import {
   type FormatActionState,
 } from "./formatActions";
 
-// Ribbon shell (spec.md subtask 8, "Ribbon shell"). Tab bar with File/Format
-// always shown, and Draw shown only when the currently-open note is a canvas
-// note (i.e. the route is /canvas). Each tab's real content is a separate,
-// later subtask (File: 9, Format: 10, Draw: 12) - this only builds the shell
-// and tab-switching, per this subtask's explicit scope.
+// Tab bar: File/Format always shown, Draw only when the open note is a
+// canvas note (route is /canvas).
 
 type RibbonTab = "file" | "format" | "draw";
 
@@ -106,25 +104,12 @@ function FormatBtn({
   );
 }
 
-// Format tab's real content (spec.md subtask 10, "Format tab") - ports the
-// formatting actions that used to live in components/editor/EditorToolbar.tsx
-// (rendered inside RichTextEditor.tsx, above the Tiptap content) into the
-// ribbon, plus new font family / font size / text color controls. All
-// actions read/write `activeEditor` from stores/appStore.ts, which
-// RichTextEditor.tsx keeps in sync with its own `useEditor()` instance -
-// see RichTextEditor.tsx's `setActiveEditor` effect for why that indirection
-// is needed (Ribbon is a sibling of the note page, not a descendant).
-//
-// Always renders the full control set (spec.md M3 subtask 5) - when
-// `activeEditor` is null (covers both "no note open", i.e. the
-// notebook-open placeholder page, and "canvas note open" since
-// components/canvas/CanvasEditor.tsx has no Tiptap instance at all - that's
-// the Draw tab's job), every control below is individually disabled and
-// reflects a neutral/off state rather than being hidden.
-// Neutral/off snapshot rendered (read-only) when there's no `activeEditor`
-// to read real state from - keeps every "active" highlight off and every
-// `isDisabled` check moot (the controls are already force-disabled below via
-// `!activeEditor`), rather than reading fields off a null editor.
+// Formatting actions read/write `activeEditor` from stores/appStore.ts,
+// which RichTextEditor.tsx keeps in sync with its own Tiptap instance
+// (Ribbon is a sibling, not a descendant, so needs this indirection).
+// Always renders the full control set - disabled/neutral when there's no
+// `activeEditor` (no note open, or a canvas note with no Tiptap instance),
+// rather than hiding controls.
 const NEUTRAL_FORMAT_STATE: FormatActionState = {
   bold: false,
   italic: false,
@@ -150,23 +135,15 @@ function FormatTab() {
   const activeEditor = useAppStore((s) => s.activeEditor);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Tiptap's `editor` object instance does not change identity when its
-  // internal state changes (bold toggled, selection moved, etc.), and
-  // FormatTab lives outside RichTextEditor.tsx's own re-render cycle (it's
-  // rendered by AppLayout.tsx as a sibling, not a descendant) - so it needs
-  // its own explicit subscription to stay in sync, which `useEditorState` is
-  // Tiptap v3's documented mechanism for. The `editor: Editor | null`
-  // overload returns `null` when there's no editor instead of throwing, so
-  // this stays safe to call across notes closing/canvas routes/the
-  // notebook-open placeholder.
+  // Tiptap's `editor` instance doesn't change identity on internal state
+  // changes (bold toggled, selection moved), so this needs its own
+  // subscription (`useEditorState`) to stay in sync from outside
+  // RichTextEditor.tsx's own re-render cycle.
   const liveState = useEditorState({
     editor: activeEditor,
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
   });
 
-  // Full control set always renders (spec.md M3 subtask 5) - when there's no
-  // focused text box, every control below is individually `disabled` and
-  // reflects this neutral/off state instead of being hidden.
   const state = activeEditor && liveState ? liveState : NEUTRAL_FORMAT_STATE;
   const disabledAll = !activeEditor || !liveState;
 
@@ -280,46 +257,11 @@ function FormatTab() {
   );
 }
 
-// Draw tab's real content (spec.md M2 subtask 4, "Draw tab rebuild"). Now
-// that CanvasEditor.tsx's `<Tldraw>` `components` override suppresses
-// tldraw's own native toolbar/menu/zoom/etc. chrome (but deliberately keeps
-// its `StylePanel`, so shape color/fill/stroke controls stay available -
-// see that file's comment), this ribbon tab is the ONLY way to switch
-// tldraw's active tool - reuses `activeCanvasEditor` from
-// stores/appStore.ts (the same store field TopBar.tsx's undo/redo already
-// reads the live tldraw `Editor` instance from) rather than threading a new
-// prop down from CanvasEditor.tsx, matching this project's established
-// pattern for reaching the live tldraw editor from a ribbon-level sibling
-// component.
-//
-// Tool ids below (`select`/`draw`/`eraser`/`geo`/`arrow`/`rich-text`) were
-// verified against the installed tldraw 4.5.12 (`node_modules/tldraw/
-// dist-esm/lib/...ShapeTool.mjs`'s `static id = "..."` fields, and
-// `node_modules/tldraw/dist-esm/lib/tools/EraserTool/EraserTool.mjs` /
-// `SelectTool.mjs`), not guessed. The two "geo" shape buttons (rectangle/
-// ellipse) additionally set `GeoShapeGeoStyle` before activating the `geo`
-// tool, mirroring tldraw's own toolbar implementation
-// (node_modules/tldraw/dist-esm/lib/ui/hooks/useTools.mjs's
-// `editor.run(() => { editor.setStyleForNextShapes(GeoShapeGeoStyle, geo);
-// editor.setCurrentTool("geo"); })`) - `geo` alone is not a distinct
-// rectangle/ellipse tool id, it's one tool whose shape is chosen by that
-// style.
-// spec.md M6 subtask 10 ("Rebuild equivalent color/fill/dash/size controls
-// in the ribbon's Draw tab") - the deleted native style panel's controls
-// (see `StylePanelWithoutOpacity` in `git show fb6e8ad~1:components/canvas/
-// CanvasEditor.tsx`, removed by commit fb6e8ad "removed tlsdraw's native
-// floating panel") rebuilt here. Value sets
-// (12 colors / 3 fill styles / 4 dash styles / 4 sizes) verified against the
-// installed tldraw 4.5.12's `STYLES` export
-// (node_modules/tldraw/dist-esm/lib/styles.mjs) - NOT guessed. `hex` below
-// is each color's light-mode "solid" swatch value from
-// node_modules/@tldraw/tlschema/dist-esm/styles/TLColorStyle.mjs's
-// `DefaultColorThemePalette.lightMode` (the same value tldraw's own
-// `StylePanelButtonPicker` renders as its swatch background) - kept static
-// rather than reactive to the app's light/dark theme, since tldraw's own
-// `STYLES.color` list is identical either way and threading canvas dark-mode
-// state into the ribbon is out of this subtask's scope (spec.md's Non-Goals:
-// "don't touch theming").
+// Draw tab: the sole tldraw tool-switcher, since CanvasEditor.tsx's
+// `<Tldraw>` suppresses the native toolbar/style panel chrome. Reuses
+// `activeCanvasEditor` from stores/appStore.ts. Colors/fills/dashes/sizes
+// below mirror tldraw's own `STYLES` values; swatch hexes are each color's
+// light-mode value (kept static, not theme-reactive - out of scope here).
 const DRAW_COLORS: { label: string; value: TLDefaultColorStyle; hex: string }[] = [
   { label: "Black", value: "black", hex: "#1d1d1d" },
   { label: "Grey", value: "grey", hex: "#9fa8b2" },
@@ -396,22 +338,9 @@ function DashIcon({ variant }: { variant: TLDefaultDashStyle }) {
 function DrawTab() {
   const activeCanvasEditor = useAppStore((s) => s.activeCanvasEditor);
 
-  // Keep this tab's active-button highlighting in sync with the live tldraw
-  // tool, including tool changes that happen OUTSIDE this tab (e.g. the
-  // click-to-create rich-text tool's own auto-return-to-`rich-text`
-  // mechanisms in RichTextTool.tsx, or a keyboard shortcut). `editor.store`
-  // does NOT emit for tool-chart changes (see RichTextTool.tsx's header
-  // comment on why tool-chart transitions aren't document/session-store
-  // events - they're pure in-memory `StateNode` state), but
-  // `getCurrentToolId()` IS a tldraw `@computed` signal (see
-  // node_modules/@tldraw/editor/dist-esm/lib/editor/Editor.mjs's
-  // `_getCurrentToolId_dec` decorator on it), so tldraw's own `useValue`
-  // React hook (re-exported from `@tldraw/state-react` all the way through
-  // `@tldraw/tldraw`, same as `react()` in RichTextTool.tsx uses the
-  // non-React form of the same reactivity system) is the correct way to
-  // subscribe to it here - mirroring RichTextTool.tsx's own established
-  // preference for tldraw's fine-grained reactivity over store listeners for
-  // this exact kind of state.
+  // `getCurrentToolId()` is a tldraw signal, not a store event, so this
+  // needs `useValue` (not `editor.store.listen`) to stay in sync with tool
+  // changes that happen outside this tab too.
   const liveToolId = useValue(
     "ribbon draw tab: current tool id",
     () => activeCanvasEditor?.getCurrentToolId() ?? null,
@@ -423,16 +352,10 @@ function DrawTab() {
     [activeCanvasEditor],
   );
 
-  // spec.md M6 subtask 10 - same `getSharedStyles().getAsKnownValue(...)`
-  // reactive-read pattern as `geoStyle` above, applied to the four core
-  // style props the deleted native panel exposed. `getAsKnownValue` reads
-  // whichever of the "selected shapes' shared style" / "next shape's style"
-  // is currently relevant (mirrors tldraw's own dual-purpose resolution -
-  // see `editor.getSharedStyles()`'s doc comment in
-  // node_modules/@tldraw/editor/dist-cjs/index.d.ts), and returns `null`
-  // when the selection has mixed values for that style or no relevant shape/
-  // tool has it at all - same "no highlight" fallback `geoStyle` already
-  // relies on.
+  // Same reactive-read pattern as `geoStyle` above, for the other three
+  // style props the deleted native panel exposed. `getAsKnownValue` returns
+  // null on a mixed/no-relevant-shape selection - same "no highlight"
+  // fallback as `geoStyle`.
   const colorStyle = useValue(
     "ribbon draw tab: current color style",
     () => activeCanvasEditor?.getSharedStyles().getAsKnownValue(DefaultColorStyle) ?? null,
@@ -458,35 +381,25 @@ function DrawTab() {
     return <div className="flex items-center text-muted-foreground">No canvas available.</div>;
   }
 
+  // Every deliberate tool switch must go through `switchToToolExplicitly`
+  // (not a raw `setCurrentTool`) - see RichTextTool.tsx for why.
   function setTool(id: string) {
-    activeCanvasEditor?.setCurrentTool(id);
+    if (!activeCanvasEditor) return;
+    switchToToolExplicitly(activeCanvasEditor, id);
   }
 
   function setGeoTool(geo: "rectangle" | "ellipse") {
     if (!activeCanvasEditor) return;
     activeCanvasEditor.run(() => {
       activeCanvasEditor.setStyleForNextShapes(GeoShapeGeoStyle, geo);
-      activeCanvasEditor.setCurrentTool("geo");
+      switchToToolExplicitly(activeCanvasEditor, "geo");
     });
   }
 
   const isGeo = (geo: "rectangle" | "ellipse") => liveToolId === "geo" && geoStyle === geo;
 
-  // spec.md M6 subtask 10 - exactly mirrors tldraw's own native style panel
-  // logic (verified against node_modules/tldraw/dist-esm/lib/ui/components/
-  // StylePanel/StylePanelContext.mjs's `onValueChange`, the handler every
-  // native picker in the now-deleted `StylePanelWithoutOpacity` used): when
-  // shapes are selected, restyle them via `setStyleForSelectedShapes` in
-  // addition to (not instead of) `setStyleForNextShapes`, so a subsequently
-  // drawn shape keeps the same style. `editor.isIn("select")` is the same
-  // check the native panel used to decide whether "there's an active
-  // selection to restyle" (rather than e.g. checking
-  // `getSelectedShapeIds().length`), and `updateInstanceState({
-  // isChangingStyle: true })` reproduces the same brief "style is actively
-  // being changed" UI flag tldraw's own panel sets (used elsewhere by
-  // tldraw internals to suppress hover UI while dragging a style picker) -
-  // kept for parity even though nothing in this app's own UI currently
-  // reads it.
+  // Mirrors tldraw's own native style panel logic: restyle selected shapes
+  // AND the next-shape style, so a subsequently drawn shape keeps it too.
   function setStyle<T>(style: StyleProp<T>, value: T) {
     if (!activeCanvasEditor) return;
     activeCanvasEditor.run(() => {
@@ -507,18 +420,8 @@ function DrawTab() {
         <FormatBtn tip="Pencil" active={liveToolId === "draw"} onClick={() => setTool("draw")}>
           <Pencil className="h-3.5 w-3.5" />
         </FormatBtn>
-        {/* spec.md M6 subtask 11 ("Pencil color dropdown") - a small, dedicated
-            color-swatch caret anchored right next to the Pencil button itself,
-            separate from and layered on top of the full always-visible
-            DRAW_COLORS grid a few buttons over (built in subtask 10) - lets the
-            user change the draw tool's current/next color without moving focus
-            away from the pencil. Reuses DRAW_COLORS and the `setStyle` helper
-            verbatim rather than duplicating either. Built with the existing
-            DropdownMenu primitive (components/ui/dropdown-menu.tsx, already
-            used extensively elsewhere in this app, e.g. the sidebar) since
-            there's no separate, lighter-weight Popover primitive in
-            components/ui to reach for instead - clicking the Pencil button
-            itself is unaffected, this caret is a wholly separate trigger. */}
+        {/* Quick color caret next to the Pencil button - separate trigger
+            from the full color grid below, same DRAW_COLORS/setStyle. */}
         <Tooltip>
           <DropdownMenu>
             <TooltipTrigger
@@ -674,31 +577,15 @@ export function Ribbon() {
     ...(isCanvasRoute ? ([{ id: "draw", label: "Draw" }] as const) : []),
   ];
 
-  // spec.md M2 subtask 4 ("Draw tab rebuild") - "Switching to the File or
-  // Format tab ... always returns the canvas to the `rich-text` tool."
-  // Runs whenever the effective (i.e. actually-displayed) tab settles on
-  // something other than Draw - covers both an explicit File/Format click
-  // AND the route-navigated-away-from-canvas fallback above, and re-checks
-  // `activeCanvasEditor` too (a canvas can mount/unmount independently of
-  // tab clicks). Deliberately does nothing while `effectiveTab === "draw"` -
-  // that tab's own buttons (including its "Back to text" button) are what
-  // drive `setCurrentTool` while Draw itself is active.
-  //
-  // Guarded against interrupting an in-flight tldraw drag gesture (marquee-
-  // select/shape-translate/resize/rotate, including gestures RichTextTool.tsx
-  // hands off to real `select` states via `handOffToBrushing`/
-  // `handOffToTranslating`) - same reasoning/mechanism as that file's own
-  // `watchForReturnToSelectIdle`/`installRichTextToolAutoReturn`: forcing a
-  // tool switch mid-gesture is destructive/jarring, so if the user switches
-  // to File/Format while mid-drag, this waits (via tldraw's own `react()`
-  // fine-grained reactivity, not a store listener - tool-chart transitions
-  // aren't document/session-store events) for the gesture to genuinely
-  // settle before actually calling `setCurrentTool("rich-text")`.
+  // Switching to File/Format always returns the canvas to the `rich-text`
+  // tool - deferred while a drag gesture is in flight or a selection is
+  // non-empty (would otherwise strand resize/rotate/Delete on the wrong
+  // tool), matching RichTextTool.tsx's own watcher logic.
   useEffect(() => {
     if (effectiveTab === "draw") return;
     if (!activeCanvasEditor) return;
 
-    const isMidGesture = (editor: Editor) =>
+    const shouldDeferReturnToRichText = (editor: Editor) =>
       editor.inputs.getIsPointing() ||
       editor.inputs.getIsDragging() ||
       editor.isInAny(
@@ -706,18 +593,19 @@ export function Ribbon() {
         "select.brushing",
         "select.resizing",
         "select.rotating",
-      );
+      ) ||
+      (editor.isIn("select") && editor.getSelectedShapeIds().length > 0);
 
-    if (!isMidGesture(activeCanvasEditor)) {
-      activeCanvasEditor.setCurrentTool("rich-text");
+    if (!shouldDeferReturnToRichText(activeCanvasEditor)) {
+      switchToToolExplicitly(activeCanvasEditor, "rich-text");
       return;
     }
 
     const stop = react("ribbon: deferred return to rich-text after in-flight gesture", () => {
-      if (isMidGesture(activeCanvasEditor)) return;
+      if (shouldDeferReturnToRichText(activeCanvasEditor)) return;
       stop();
       activeCanvasEditor.disposables.delete(stop);
-      activeCanvasEditor.setCurrentTool("rich-text");
+      switchToToolExplicitly(activeCanvasEditor, "rich-text");
     });
     activeCanvasEditor.disposables.add(stop);
 
