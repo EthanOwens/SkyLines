@@ -2,9 +2,10 @@
 
 // spec.md subtask 8 ("Sticky note pop-out window"). A minimal Tiptap editor
 // for a single sticky note's content, hosted in its own pop-out window (see
-// app/sticky/page.tsx). Deliberately does NOT build the top/bottom
-// formatting bars (spec.md subtasks 9/10) or the bubble menu - just a plain,
-// functional, autosaving editor. Reuses the exact same extensions list as
+// app/sticky/page.tsx). Deliberately does NOT build the bottom formatting
+// bar (spec.md subtask 10) or the bubble menu - just a plain, functional,
+// autosaving editor plus the top bar (spec.md subtask 9, see
+// StickyNoteTopBar below). Reuses the exact same extensions list as
 // components/editor/RichTextEditor.tsx (copied, not guessed at) so sticky
 // note content stays structurally compatible with the rest of the app's
 // Tiptap-based editors.
@@ -24,6 +25,7 @@ import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import { updateStickyNote } from "@/lib/db/stickyNotes";
 import type { StickyNote } from "@/types";
+import { StickyNoteTopBar } from "./StickyNoteTopBar";
 import "./editor.css";
 
 const lowlight = createLowlight(common);
@@ -95,8 +97,29 @@ export function StickyNoteEditor({ note }: Props) {
     }
   }
 
+  // Flushes any unsaved title/content edits synchronously (as much as
+  // awaiting async DB writes allows) - used by StickyNoteTopBar's Exit
+  // button so a debounced edit in flight isn't lost when the window closes,
+  // extending the same unmount-flush pattern above to a title still sitting
+  // unblurred in the input.
+  async function flushPendingSave() {
+    const trimmed = title.trim() || "Untitled";
+    if (trimmed !== note.title) {
+      await updateStickyNote(note.id, { title: trimmed });
+    }
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    if (pendingContentRef.current) {
+      await updateStickyNote(note.id, { content: pendingContentRef.current });
+      pendingContentRef.current = null;
+    }
+  }
+
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden">
+      <StickyNoteTopBar note={note} title={title} onBeforeExit={flushPendingSave} />
       <div className="flex flex-1 flex-col overflow-y-auto px-4 py-4">
         <input
           className="mb-2 w-full bg-transparent text-lg font-bold text-foreground outline-none placeholder:text-muted-foreground"
