@@ -82,6 +82,44 @@ function labelForKey(key: ThemeVariableKey): string {
     .join(" ");
 }
 
+// Groups the right sidebar's 27 ThemeVariableKey rows into labeled sections
+// (spec.md subtask 3) matching how the keys are actually used, instead of one
+// flat list. Purely a presentation grouping - every key still renders via the
+// exact same ThemeColorField/radius-input logic below, just organized under
+// these headings. Order here is the render order.
+const THEME_VARIABLE_GROUPS: { label: string; keys: ThemeVariableKey[] }[] = [
+  { label: "Base & Text", keys: ["background", "foreground", "muted", "muted-foreground"] },
+  { label: "Card", keys: ["card", "card-foreground"] },
+  { label: "Popover", keys: ["popover", "popover-foreground"] },
+  {
+    label: "Primary / Secondary / Accent",
+    keys: [
+      "primary",
+      "primary-foreground",
+      "secondary",
+      "secondary-foreground",
+      "accent",
+      "accent-foreground",
+    ],
+  },
+  { label: "Destructive", keys: ["destructive"] },
+  { label: "Border / Input / Focus Ring", keys: ["border", "input", "ring"] },
+  { label: "Radius", keys: ["radius"] },
+  {
+    label: "Sidebar",
+    keys: [
+      "sidebar",
+      "sidebar-foreground",
+      "sidebar-primary",
+      "sidebar-primary-foreground",
+      "sidebar-accent",
+      "sidebar-accent-foreground",
+      "sidebar-border",
+      "sidebar-ring",
+    ],
+  },
+];
+
 interface ThemeEditorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -699,52 +737,65 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
             </div>
 
             {/* Right sidebar - color editor (subtask 15: color-wheel editor
-                for all 31 ThemeVariableKey values). Reads each value from
-                draftVariables, falling back to the loaded theme's own value
-                when the draft hasn't overridden it yet (in practice
-                loadThemeForEditing above always seeds the full theme into
-                draftVariables, but this fallback keeps the field correct even
-                if that ever changes). Edits only ever update draftVariables -
-                not the live app theme (lib/themes/apply.ts isn't called
-                here). */}
+                for all 27 ThemeVariableKey values, grouped into labeled
+                sections per subtask 3 - see THEME_VARIABLE_GROUPS above).
+                Reads each value from draftVariables, falling back to the
+                loaded theme's own value when the draft hasn't overridden it
+                yet (in practice loadThemeForEditing above always seeds the
+                full theme into draftVariables, but this fallback keeps the
+                field correct even if that ever changes). Edits only ever
+                update draftVariables - not the live app theme
+                (lib/themes/apply.ts isn't called here). */}
             <div className="flex w-64 shrink-0 flex-col overflow-y-auto border-l border-border bg-sidebar p-3">
               {editingTheme ? (
-                <div className="flex flex-col divide-y divide-border">
-                  {THEME_VARIABLE_KEYS.map((key) => {
-                    const value = draftVariables[key] ?? editingTheme.variables[key];
-                    const label = labelForKey(key);
+                <div className="flex flex-col gap-3">
+                  {THEME_VARIABLE_GROUPS.map((group) => (
+                    <div key={group.label} className="flex flex-col">
+                      <span className="px-0.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {group.label}
+                      </span>
+                      <div className="flex flex-col divide-y divide-border">
+                        {group.keys.map((key) => {
+                          const value = draftVariables[key] ?? editingTheme.variables[key];
+                          const label = labelForKey(key);
 
-                    if (key === "radius") {
-                      return (
-                        <div key={key} className="flex items-center justify-between gap-2 py-1">
-                          <label
-                            htmlFor="theme-editor-radius"
-                            className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground"
-                          >
-                            {label}
-                          </label>
-                          <input
-                            id="theme-editor-radius"
-                            type="text"
-                            value={value ?? ""}
-                            onChange={(e) => handleVariableChange(key, e.target.value)}
-                            placeholder="0.625rem"
-                            className="h-6 w-20 shrink-0 rounded-md border border-input bg-transparent px-1.5 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-                          />
-                        </div>
-                      );
-                    }
+                          if (key === "radius") {
+                            return (
+                              <div
+                                key={key}
+                                className="flex items-center justify-between gap-2 py-1"
+                              >
+                                <label
+                                  htmlFor="theme-editor-radius"
+                                  className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground"
+                                >
+                                  {label}
+                                </label>
+                                <input
+                                  id="theme-editor-radius"
+                                  type="text"
+                                  value={value ?? ""}
+                                  onChange={(e) => handleVariableChange(key, e.target.value)}
+                                  placeholder="0.625rem"
+                                  className="h-6 w-20 shrink-0 rounded-md border border-input bg-transparent px-1.5 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+                                />
+                              </div>
+                            );
+                          }
 
-                    return (
-                      <ThemeColorField
-                        key={key}
-                        varKey={key}
-                        label={label}
-                        value={value}
-                        onChange={handleVariableChange}
-                      />
-                    );
-                  })}
+                          return (
+                            <ThemeColorField
+                              key={key}
+                              varKey={key}
+                              label={label}
+                              value={value}
+                              onChange={handleVariableChange}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="text-xs text-muted-foreground">No theme selected</div>
