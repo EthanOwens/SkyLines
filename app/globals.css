@@ -116,6 +116,36 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* spec.md M5 subtask 12 ("canvas background theming") - tldraw's own canvas
+   background is painted via `--tl-color-background` (see
+   node_modules/tldraw/tldraw.css's `.tl-background { background-color:
+   var(--tl-color-background) }`), which tldraw sets itself inside the
+   `.tl-theme__light`/`.tl-theme__dark` classes it toggles on its own root
+   `.tl-container` element (see @tldraw/editor's TldrawEditor.tsx) to fixed
+   light/dark values baked into tldraw.css, entirely independent of this
+   app's own theme variables - so it stayed white regardless of the active
+   app theme. Rebinding `--tl-color-background` to this app's own
+   `--background` (the same variable `body` uses via `bg-background` below)
+   here, scoped to `.canvas-editor-container` (the wrapper div
+   components/canvas/CanvasEditor.tsx renders its `<Tldraw>` inside), makes
+   tldraw's canvas follow whichever theme is active - `--card` was
+   considered instead, but `--background` is the better match: it's what
+   `body` itself uses as the page backdrop, and the canvas is this app's
+   full-bleed page surface, not a raised/bordered "card" element. This is a
+   pure CSS `var()` reference, so it reacts live to lib/themes/apply.ts's
+   inline `--background` mutations on `document.documentElement` with no JS
+   needed here - custom properties inherit down the DOM tree, so this rule
+   picks up `--background` changes the instant `applyTheme`/
+   `clearThemeOverrides` mutate `<html>`'s inline style, including the
+   System/OS-following theme from subtask 11. The three-class selectors
+   below intentionally have higher specificity than tldraw.css's own
+   two-class `.tl-theme__light`/`.tl-theme__dark` selectors, so this wins
+   regardless of CSS import order. */
+.canvas-editor-container .tl-container.tl-theme__light,
+.canvas-editor-container .tl-container.tl-theme__dark {
+  --tl-color-background: var(--background);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

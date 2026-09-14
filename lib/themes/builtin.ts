@@ -145,5 +145,55 @@ export const GRUVBOX_DARK_THEME: Theme = {
   },
 };
 
+// A soft, warm light palette - gray/cream/beige tones with real tonal
+// variation across slots (not a single flat off-white reused everywhere),
+// mirroring how GRUVBOX_DARK_THEME varies its own bg0/bg1/bg2 tones. Text
+// stays dark (this is a light theme), and `radius` matches LIGHT_THEME /
+// DARK_THEME / GRUVBOX_DARK_THEME's `0.625rem` for the same reason noted
+// above - this is a color palette swap, not a layout change.
+export const OFF_WHITE_THEME: Theme = {
+  id: "off-white",
+  name: "Off-white",
+  variables: {
+    background: "oklch(0.965 0.005 85)",
+    foreground: "oklch(0.32 0.015 60)",
+    card: "oklch(0.98 0.006 90)",
+    "card-foreground": "oklch(0.32 0.015 60)",
+    popover: "oklch(0.99 0.004 90)",
+    "popover-foreground": "oklch(0.32 0.015 60)",
+    primary: "oklch(0.5 0.03 55)",
+    "primary-foreground": "oklch(0.98 0.005 90)",
+    secondary: "oklch(0.92 0.012 75)",
+    "secondary-foreground": "oklch(0.35 0.02 60)",
+    muted: "oklch(0.91 0.014 80)",
+    "muted-foreground": "oklch(0.5 0.015 65)",
+    accent: "oklch(0.88 0.02 70)",
+    "accent-foreground": "oklch(0.32 0.02 60)",
+    destructive: "oklch(0.56 0.19 27)",
+    border: "oklch(0.87 0.014 75)",
+    input: "oklch(0.9 0.012 78)",
+    ring: "oklch(0.7 0.02 65)",
+    "chart-1": "oklch(0.7 0.08 70)",
+    "chart-2": "oklch(0.62 0.09 50)",
+    "chart-3": "oklch(0.55 0.1 35)",
+    "chart-4": "oklch(0.68 0.07 95)",
+    "chart-5": "oklch(0.6 0.06 140)",
+    radius: "0.625rem",
+    sidebar: "oklch(0.94 0.01 80)",
+    "sidebar-foreground": "oklch(0.32 0.015 60)",
+    "sidebar-primary": "oklch(0.5 0.03 55)",
+    "sidebar-primary-foreground": "oklch(0.98 0.005 90)",
+    "sidebar-accent": "oklch(0.89 0.016 75)",
+    "sidebar-accent-foreground": "oklch(0.32 0.02 60)",
+    "sidebar-border": "oklch(0.86 0.014 75)",
+    "sidebar-ring": "oklch(0.7 0.02 65)",
+  },
+};
+
 // Collected list - the natural hand-off point for subtask 19's theme picker.
-export const BUILTIN_THEMES: Theme[] = [LIGHT_THEME, DARK_THEME, GRUVBOX_DARK_THEME];
+export const BUILTIN_THEMES: Theme[] = [
+  LIGHT_THEME,
+  DARK_THEME,
+  GRUVBOX_DARK_THEME,
+  OFF_WHITE_THEME,
+];

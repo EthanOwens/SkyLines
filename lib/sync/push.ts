@@ -3,7 +3,8 @@ import { db } from "@/lib/firebase";
 import { getDirtyFolders, markFolderSynced } from "@/lib/db/folders";
 import { getDirtyNotes, markNoteSynced } from "@/lib/db/notes";
 import { getDirtyNotebooks, markNotebookSynced } from "@/lib/db/notebooks";
-import type { Folder, Note, Notebook } from "@/types";
+import { getDirtyPages, markPageSynced } from "@/lib/db/pages";
+import type { Folder, Note, Notebook, Page } from "@/types";
 
 // Local -> Firestore push (spec.md subtask 11, M3 "sync engine": push side
 // only - pull/onSnapshot is subtask 12, tombstone cleanup is subtask 13,
@@ -23,6 +24,7 @@ import type { Folder, Note, Notebook } from "@/types";
 const FOLDERS_COLLECTION = "folders";
 const NOTES_COLLECTION = "notes";
 const NOTEBOOKS_COLLECTION = "notebooks";
+const PAGES_COLLECTION = "pages";
 
 function folderToFirestoreDoc(folder: Folder, updatedAt: number) {
   return {
@@ -57,9 +59,24 @@ function noteToFirestoreDoc(note: Note, updatedAt: number) {
     userId: note.userId,
     content: note.content ?? null,
     canvasData: note.canvasData ?? null,
+    order: note.order,
     createdAt: note.createdAt,
     updatedAt,
     deletedAt: note.deletedAt,
+  };
+}
+
+function pageToFirestoreDoc(page: Page, updatedAt: number) {
+  return {
+    noteId: page.noteId,
+    title: page.title,
+    userId: page.userId,
+    content: page.content ?? null,
+    canvasData: page.canvasData ?? null,
+    order: page.order,
+    createdAt: page.createdAt,
+    updatedAt,
+    deletedAt: page.deletedAt,
   };
 }
 
@@ -133,11 +150,36 @@ export async function pushDirtyNotebooks(userId: string): Promise<void> {
 }
 
 /**
- * Runs one push pass for a user: all dirty folders, notes, and notebooks.
+ * Pushes every dirty local page for `userId` to Firestore, writing each
+ * row's own `updatedAt` (its actual last-edit time, set locally by
+ * createPage/updatePage/deletePage) as the Firestore document's `updatedAt` -
+ * NOT a fresh push-time timestamp, since a future pull-sync's
+ * last-write-wins comparison needs `updatedAt` to reflect when the edit
+ * actually happened, not when it happened to get pushed. `syncedAt` is
+ * separate, purely local bookkeeping about when this push occurred, and
+ * uses its own `Date.now()` per row - mirrors `pushDirtyNotes`.
+ */
+export async function pushDirtyPages(userId: string): Promise<void> {
+  const dirtyPages = await getDirtyPages(userId);
+
+  for (const page of dirtyPages) {
+    await setDoc(
+      doc(db, PAGES_COLLECTION, page.id),
+      pageToFirestoreDoc(page, page.updatedAt),
+      { merge: true },
+    );
+    await markPageSynced(page.id, Date.now());
+  }
+}
+
+/**
+ * Runs one push pass for a user: all dirty folders, notes, notebooks, and
+ * pages.
  * No polling/scheduling/debouncing here - that's spec.md subtask 14.
  */
 export async function pushDirtyRows(userId: string): Promise<void> {
   await pushDirtyFolders(userId);
   await pushDirtyNotes(userId);
   await pushDirtyNotebooks(userId);
+  await pushDirtyPages(userId);
 }

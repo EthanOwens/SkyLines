@@ -18,7 +18,7 @@ const TABLE = "sync_conflicts";
  * relationally, so there's no need to normalize it into columns.
  */
 export async function recordSyncConflict(
-  tableName: "folders" | "notes" | "notebooks",
+  tableName: "folders" | "notes" | "notebooks" | "pages",
   rowId: string,
   losingRow: unknown,
 ): Promise<void> {
@@ -56,7 +56,7 @@ export type SyncConflict = {
  * what got backed up without reaching for raw SQL.
  */
 export async function getSyncConflicts(
-  tableName: "folders" | "notes" | "notebooks",
+  tableName: "folders" | "notes" | "notebooks" | "pages",
   rowId: string,
 ): Promise<SyncConflict[]> {
   const db = await getDb();

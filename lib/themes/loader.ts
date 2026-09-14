@@ -9,7 +9,7 @@
 // note that this has changed across Tauri versions.
 
 import { appConfigDir, join } from "@tauri-apps/api/path";
-import { exists, mkdir, readDir, readTextFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, readDir, readTextFile, remove, writeTextFile } from "@tauri-apps/plugin-fs";
 import { isTheme, type Theme } from "./types";
 
 const THEMES_SUBDIR = "themes";
@@ -83,4 +83,43 @@ export async function loadThemes(): Promise<LoadedThemesResult> {
   }
 
   return { dir, themes, skipped };
+}
+
+/**
+ * Resolves the filename `saveTheme`/`deleteThemeFile` use for a given theme
+ * id - `${id}.json`, kept in one place so both stay in sync. `loadThemes()`
+ * itself doesn't care about filenames (it reads every `.json` file and
+ * trusts the `id` inside the parsed content), but this convention keeps a
+ * theme's on-disk file predictably named after its id rather than its
+ * (user-editable, non-unique) `name`.
+ */
+function themeFileName(themeId: string): string {
+  return `${themeId}.json`;
+}
+
+/**
+ * Writes `theme` to `<app-config-dir>/themes/${theme.id}.json`, creating the
+ * themes directory first if needed (mirrors `loadThemes()`'s own
+ * `ensureThemesDir()` call). Overwrites any existing file for the same id -
+ * this is also how an already-saved theme's edits get persisted, not just
+ * brand-new themes.
+ */
+export async function saveTheme(theme: Theme): Promise<void> {
+  const dir = await ensureThemesDir();
+  const filePath = await join(dir, themeFileName(theme.id));
+  await writeTextFile(filePath, JSON.stringify(theme, null, 2));
+}
+
+/**
+ * Deletes the on-disk file for `themeId`, if any. Safe to call even if the
+ * file doesn't exist (e.g. a theme that was created but never saved) - this
+ * is a no-op in that case rather than throwing, since the caller's intent
+ * ("this theme shouldn't exist on disk") is already satisfied.
+ */
+export async function deleteThemeFile(themeId: string): Promise<void> {
+  const dir = await getThemesDir();
+  const filePath = await join(dir, themeFileName(themeId));
+  const fileExists = await exists(filePath);
+  if (!fileExists) return;
+  await remove(filePath);
 }

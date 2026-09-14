@@ -19,8 +19,9 @@ import {
   upsertNotebookFromRemote,
   type RemoteNotebookData,
 } from "@/lib/db/notebooks";
+import { getPageRowById, upsertPageFromRemote, type RemotePageData } from "@/lib/db/pages";
 import { recordSyncConflict } from "@/lib/db/syncConflicts";
-import type { Folder, Note, Notebook } from "@/types";
+import type { Folder, Note, Notebook, Page } from "@/types";
 
 // Firestore -> local pull (spec.md subtask 12, M3 "sync engine": pull side.
 // Push is subtask 11/lib/sync/push.ts, tombstone hard-delete cleanup is
@@ -34,6 +35,7 @@ import type { Folder, Note, Notebook } from "@/types";
 const FOLDERS_COLLECTION = "folders";
 const NOTES_COLLECTION = "notes";
 const NOTEBOOKS_COLLECTION = "notebooks";
+const PAGES_COLLECTION = "pages";
 
 /**
  * Minimal shape pull needs from a local row to decide what to do with an
@@ -141,6 +143,7 @@ function toRemoteNoteData(id: string, data: DocumentData): RemoteNoteData {
     userId: data.userId as string,
     content: (data.content as object | null) ?? null,
     canvasData: (data.canvasData as object | null) ?? null,
+    order: (data.order as number) ?? 0,
     createdAt: data.createdAt as number,
     updatedAt: data.updatedAt as number,
     deletedAt: (data.deletedAt as number | null) ?? null,
@@ -152,6 +155,21 @@ function toRemoteNotebookData(id: string, data: DocumentData): RemoteNotebookDat
     id,
     name: data.name as string,
     userId: data.userId as string,
+    order: (data.order as number) ?? 0,
+    createdAt: data.createdAt as number,
+    updatedAt: data.updatedAt as number,
+    deletedAt: (data.deletedAt as number | null) ?? null,
+  };
+}
+
+function toRemotePageData(id: string, data: DocumentData): RemotePageData {
+  return {
+    id,
+    noteId: data.noteId as string,
+    title: (data.title as string) ?? "Untitled",
+    userId: data.userId as string,
+    content: (data.content as object | null) ?? null,
+    canvasData: (data.canvasData as object | null) ?? null,
     order: (data.order as number) ?? 0,
     createdAt: data.createdAt as number,
     updatedAt: data.updatedAt as number,
@@ -267,6 +285,32 @@ async function applyNotebookChange(change: DocumentChange<DocumentData>): Promis
 }
 
 /**
+ * Same as `applyFolderChange`, for the `pages` collection - including
+ * skipping "removed" changes outright instead of resurrecting them (see the
+ * comment above `applyFolderChange`, including the subtask 13 confirmation
+ * that this remains correct).
+ */
+async function applyPageChange(change: DocumentChange<DocumentData>): Promise<void> {
+  if (change.type === "removed") {
+    return;
+  }
+
+  const data = change.doc.data();
+  if (!data) return;
+
+  const remote = toRemotePageData(change.doc.id, data);
+  const local = await getPageRowById(remote.id);
+  const decision = decidePull(
+    local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
+    remote.updatedAt,
+  );
+
+  await applyDecision<Page, RemotePageData>(decision, "pages", local, remote, (r, dirty, syncedAt) =>
+    upsertPageFromRemote(r, dirty, syncedAt),
+  );
+}
+
+/**
  * Shared "given a decision, do the actual writes" step for both tables.
  *
  * Why `conflict-local-wins` never calls `upsert`: the local row already
@@ -278,7 +322,7 @@ async function applyNotebookChange(change: DocumentChange<DocumentData>): Promis
  */
 async function applyDecision<TLocal, TRemote>(
   decision: PullDecision,
-  tableName: "folders" | "notes" | "notebooks",
+  tableName: "folders" | "notes" | "notebooks" | "pages",
   local: TLocal | null,
   remote: TRemote,
   upsert: (remote: TRemote, dirty: boolean, syncedAt: number | null) => Promise<void>,
@@ -439,6 +483,36 @@ export function subscribeNotebookPull(userId: string, hooks?: PullHooks): Unsubs
   );
 }
 
+/** Same as `subscribeFolderPull`, for the `pages` collection. */
+export function subscribePagePull(userId: string, hooks?: PullHooks): Unsubscribe {
+  const q = query(collection(db, PAGES_COLLECTION), where("userId", "==", userId));
+  let queue: Promise<void> = Promise.resolve();
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const changes = snapshot.docChanges();
+      if (changes.length > 0) hooks?.onActivity?.();
+      queue = queue
+        .then(async () => {
+          for (const change of changes) {
+            await applyPageChange(change);
+          }
+        })
+        .catch((err) => {
+          console.error("[sync/pull] failed to apply page changes", err);
+          hooks?.onApplyError?.(err);
+        })
+        .finally(() => {
+          if (changes.length > 0) hooks?.onIdle?.();
+        });
+    },
+    (err) => {
+      console.error("[sync/pull] pages onSnapshot error", err);
+      hooks?.onListenError?.(err);
+    },
+  );
+}
+
 /**
  * Starts all pull listeners for a user and returns a single combined
  * unsubscribe function. `hooks` (optional) are passed through unchanged to
@@ -448,9 +522,11 @@ export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
   const unsubscribeFolders = subscribeFolderPull(userId, hooks);
   const unsubscribeNotes = subscribeNotePull(userId, hooks);
   const unsubscribeNotebooks = subscribeNotebookPull(userId, hooks);
+  const unsubscribePages = subscribePagePull(userId, hooks);
   return () => {
     unsubscribeFolders();
     unsubscribeNotes();
     unsubscribeNotebooks();
+    unsubscribePages();
   };
 }

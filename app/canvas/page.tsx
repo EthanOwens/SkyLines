@@ -26,6 +26,7 @@ import { getNoteById } from "@/lib/db/notes";
 import { recordNoteOpened } from "@/lib/lastOpen";
 import { resolveNoteNotebookId } from "@/lib/notebookSync";
 import { CanvasEditor } from "@/components/canvas/CanvasEditor";
+import { PageSidebar } from "@/components/sidebar/PageSidebar";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 
@@ -107,7 +108,17 @@ function CanvasPageInner() {
     );
   }
 
-  return <CanvasEditor key={note.id} note={note} />;
+  return (
+    <div className="flex h-full w-full">
+      {/* spec.md M6 subtask 17 ("Page sidebar") - a new, dedicated sidebar
+          for this note's Pages, distinct from the notebook/folder tree
+          Sidebar (components/sidebar/Sidebar.tsx) rendered further out by
+          AppLayout.tsx. Only mounted here, once a note has actually loaded -
+          matches the spec's "appears once a note is open" requirement. */}
+      <PageSidebar note={note} />
+      <CanvasEditor key={note.id} note={note} />
+    </div>
+  );
 }
 
 export default function CanvasPage() {

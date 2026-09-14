@@ -47,8 +47,10 @@ import {
   stopEventPropagation,
   useEditor as useTldrawEditor,
   useIsEditing,
+  useValue,
   type RecordProps,
   type TLBaseShape,
+  type TLShapeId,
 } from "@tldraw/tldraw";
 import { useEditor as useTiptapEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -64,20 +66,63 @@ import { createLowlight, common } from "lowlight";
 import { TextStyle, FontSize } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
+import Highlight from "@tiptap/extension-highlight";
 import { useAppStore } from "@/stores/appStore";
-import { formatActions, selectFormatActionState } from "@/components/ribbon/formatActions";
+import { suppressReenterEditAfterEndingSession } from "./RichTextTool";
+import {
+  formatActions,
+  selectFormatActionState,
+  FONT_FAMILIES,
+  FONT_SIZES,
+  TEXT_COLORS,
+  HIGHLIGHT_COLORS,
+  applyFontFamily,
+  applyFontSize,
+  applyTextColor,
+  applyHighlightColor,
+  toggleHighlight,
+} from "@/components/ribbon/formatActions";
 import { cn } from "@/lib/utils";
-import { Link as LinkIcon } from "lucide-react";
+import { Link as LinkIcon, Highlighter } from "lucide-react";
 import "@/components/editor/editor.css";
 
 const lowlight = createLowlight(common);
+
+// spec.md (new spec) subtask 1 ("RichTextShape visual redesign"). tldraw
+// tracks the currently-hovered shape reactively via its own geometry-based
+// pointer hit-testing (see tldraw's own
+// node_modules/tldraw/src/lib/tools/selection-logic/updateHoveredShapeId.ts
+// - it hit-tests `editor.getShapeAtPoint()` against the raw pointer
+// position on every canvas pointer move, entirely independent of this
+// shape's own DOM `pointer-events` value), exposed as
+// `editor.getHoveredShapeId()` (@tldraw/editor's Editor.ts). There's no
+// ready-made `useIsHovered`-style hook exported alongside `useIsEditing`
+// (confirmed by searching @tldraw/editor's whole public `index.ts`), so this
+// mirrors `useIsEditing`'s own implementation
+// (node_modules/@tldraw/editor/src/lib/hooks/useIsEditing.ts) exactly: a
+// `useValue` subscription (tldraw's own reactive-signal hook, from
+// @tldraw/state-react from re-exported via `@tldraw/tldraw`) over
+// `getHoveredShapeId()`. Deliberately NOT a CSS `:hover`/DOM
+// mouseenter-mouseleave handler - this shape's outer container has
+// `pointer-events: none` while not editing (see this file's header comment
+// on why), which makes it fully transparent to DOM-level hover detection.
+function useIsHoveredShape(shapeId: TLShapeId) {
+  const editor = useTldrawEditor();
+  return useValue("isHovered", () => editor.getHoveredShapeId() === shapeId, [editor, shapeId]);
+}
 
 // Same subset the full-page editor's bubble menu uses (see
 // components/editor/RichTextEditor.tsx's identical constant) - kept
 // duplicated rather than imported from there since RichTextEditor.tsx is a
 // route-specific component slated for retirement (spec.md subtask 6), not a
 // shared module.
-const BUBBLE_MENU_ACTION_IDS = ["bold", "italic", "strike", "code"];
+//
+// spec.md M3 subtask 6 ("Bubble menu: add font family, font size,
+// highlight, text color, bullet/numbered toggles") added `bulletList`/
+// `orderedList` to this subset - both already existed in `formatActions`
+// (the Format tab already used them), so this just widens the filter
+// rather than duplicating their toggle logic.
+const BUBBLE_MENU_ACTION_IDS = ["bold", "italic", "strike", "code", "bulletList", "orderedList"];
 const bubbleMenuActions = formatActions.filter((a) => BUBBLE_MENU_ACTION_IDS.includes(a.id));
 
 export type RichTextShapeProps = {
@@ -137,7 +182,12 @@ export class RichTextShapeUtil extends BaseBoxShapeUtil<RichTextShape> {
 function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   const tldrawEditor = useTldrawEditor();
   const isEditing = useIsEditing(shape.id);
+  const isHovered = useIsHoveredShape(shape.id);
+  // Border/handle bar are shown on hover OR while editing (spec.md subtask
+  // 1's exact condition).
+  const showChrome = isHovered || isEditing;
   const setActiveEditor = useAppStore((s) => s.setActiveEditor);
+  const setPendingEditClickPoint = useAppStore((s) => s.setPendingEditClickPoint);
 
   const tiptapEditor = useTiptapEditor(
     {
@@ -153,6 +203,11 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
         FontFamily,
         FontSize,
         Color,
+        // spec.md M3 subtask 6. `multicolor: true` so `setHighlight({ color
+        // })` (via formatActions.ts's `applyHighlightColor`/
+        // `toggleHighlight`) can pick from `HIGHLIGHT_COLORS` rather than a
+        // single fixed highlight color.
+        Highlight.configure({ multicolor: true }),
       ],
       content: (shape.props.content as object) ?? "",
       editable: isEditing,
@@ -204,6 +259,9 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   // operations (setEditable/focus/isEmpty/deleteShapes) stay gated on
   // `tiptapEditor` being non-null.
   const wasEditingRef = useRef(isEditing);
+  // Set by the drag handle to skip the empty-delete check below when it
+  // ends editing to start a drag (avoids deleting the shape mid-drag).
+  const suppressEmptyDeleteRef = useRef(false);
 
   // Toggle the underlying ProseMirror editable state as edit-mode is
   // entered/exited (tldraw's own default select-tool double-click-to-edit
@@ -226,7 +284,41 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
       // toggles `contenteditable` but leaves real keyboard focus on
       // tldraw's own container, so typed keystrokes never reach the
       // editor.
-      tiptapEditor.commands.focus("end");
+      //
+      // spec.md subtask 2 ("Click-to-cursor, no double-click required").
+      // RichTextTool.tsx's `Idle.onPointerDown` records exactly where a
+      // click on THIS shape landed (client/viewport coordinates) right
+      // before it called `editor.setEditingShape()` - a one-shot,
+      // read-then-cleared signal, since this is a transient "where did the
+      // triggering click land" fact, not persisted document data (see
+      // `pendingEditClickPoint`'s own comment in stores/appStore.ts). If
+      // present and it's for this shape, resolve it to a ProseMirror
+      // document position via Tiptap/ProseMirror's own
+      // `EditorView.posAtCoords()` (expects client coordinates, exactly
+      // what was captured) and place the cursor there. Falls back to the
+      // previous "focus at the end" behavior whenever there's no pending
+      // click to apply - e.g. a freshly-created empty shape (no meaningful
+      // "click position" for a shape that didn't exist a moment ago - see
+      // RichTextTool.tsx's create-shape branch, which deliberately never
+      // sets `pendingEditClickPoint`), or `posAtCoords` failing to resolve
+      // a position (e.g. the click coordinates no longer correspond to any
+      // on-screen content by the time this effect runs).
+      const pendingClick = useAppStore.getState().pendingEditClickPoint;
+      let cursorPlaced = false;
+      if (pendingClick && pendingClick.shapeId === shape.id) {
+        setPendingEditClickPoint(null);
+        const resolved = tiptapEditor.view.posAtCoords({
+          left: pendingClick.clientX,
+          top: pendingClick.clientY,
+        });
+        if (resolved) {
+          tiptapEditor.commands.focus(resolved.pos);
+          cursorPlaced = true;
+        }
+      }
+      if (!cursorPlaced) {
+        tiptapEditor.commands.focus("end");
+      }
       // spec.md subtask 4 ("Wire the Format tab / bubble menu to the
       // focused shape's Tiptap instance"). Mirrors
       // components/editor/RichTextEditor.tsx's identical `setActiveEditor`
@@ -272,10 +364,12 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     // space character is still a text node) and for any non-text content
     // (e.g. an inserted image node), so neither case is wrongly deleted
     // here.
-    if (tiptapEditor.isEmpty) {
+    if (suppressEmptyDeleteRef.current) {
+      suppressEmptyDeleteRef.current = false;
+    } else if (tiptapEditor.isEmpty) {
       tldrawEditor.deleteShapes([shape.id]);
     }
-  }, [isEditing, tiptapEditor, tldrawEditor, shape.id, setActiveEditor]);
+  }, [isEditing, tiptapEditor, tldrawEditor, shape.id, setActiveEditor, setPendingEditClickPoint]);
 
   // Genuine unmount-cleanup path for `activeEditor`, kept SEPARATE from the
   // `isEditing`-keyed effect above (that effect's cleanup semantics are tied
@@ -341,22 +435,97 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
 
   return (
     <HTMLContainer id={shape.id}>
+      {/* spec.md subtask 1. Outer box: transparent background always (idle
+          state has NO visible fill/border/handle at all - "invisible except
+          for its actual text content"), `pointer-events: none` always (same
+          reasoning as this file's header comment - shape selection/dragging
+          for anything that ISN'T the drag-handle bar below stays driven by
+          tldraw's own geometry-based hit testing, not real DOM events; the
+          handle bar and the content area each explicitly opt back in to
+          real pointer events below, same pattern the original single-div
+          version of this component already used for the content area
+          alone). Dotted border drawn here (around the shape's FULL w x h
+          bounding box, per spec.md's exact wording) only while
+          hovered/editing, using this app's own `--border` theme CSS custom
+          property (see app/globals.css) rather than a hardcoded color, so
+          it follows the active theme like the rest of the app. */}
       <div
         style={{
           width: shape.props.w,
           height: shape.props.h,
-          pointerEvents: isEditing ? "all" : "none",
-          overflow: "auto",
-          background: "var(--color-panel, white)",
-          border: "1px solid var(--tl-color-low-border, #d0d0d0)",
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          boxSizing: "border-box",
+          pointerEvents: "none",
+          background: "transparent",
+          border: showChrome ? "1px dashed var(--border)" : "1px solid transparent",
           borderRadius: 4,
-          cursor: isEditing ? "text" : "inherit",
         }}
-        // Same technique tldraw's own Tiptap-hosting RichTextArea.tsx uses -
-        // see this file's header comment.
-        onPointerDownCapture={isEditing ? stopEventPropagation : undefined}
-        onTouchEndCapture={isEditing ? stopEventPropagation : undefined}
       >
+        {showChrome && (
+          // spec.md subtask 1's drag-handle bar. A thin strip along the top
+          // edge that opts back in to real `pointer-events` (`all`,
+          // overriding the outer box's `none` above) SPECIFICALLY on this
+          // element, and - critically - is a SIBLING of the content wrapper
+          // below, not a descendant of it, so it's never touched by that
+          // wrapper's own `onPointerDownCapture={stopEventPropagation}`
+          // (that capture listener only intercepts events targeting itself
+          // or ITS OWN descendants - a sibling's events never reach it).
+          // With no `stopPropagation` of its own, a pointer-down here simply
+          // bubbles up through the DOM to tldraw's own `tl-canvas` element,
+          // exactly like a pointer-down on any other `pointer-events: none`
+          // area of this shape - tldraw's own canvas-level pointer handling
+          // (`useCanvasEvents`) then does ITS OWN geometry-based hit test
+          // (`editor.getShapeAtPoint`, the same mechanism
+          // updateHoveredShapeId.ts above uses for hover) against the
+          // resulting page coordinates, finds this shape, and drives it
+          // through the Select tool's normal Idle -> PointingShape ->
+          // Translating state chart - tldraw's real shape-translate
+          // mechanics, not custom drag math (per spec.md's explicit
+          // instruction). A normal-flow flex child (NOT `position:
+          // absolute`) with a fixed height, so it occupies its own space at
+          // the top of the flex column instead of overlapping the content
+          // wrapper below it - the two previously shared the same y=0
+          // origin, which let this bar win hit-testing over the top strip
+          // of the content area even while editing, blocking cursor
+          // placement/selection at the very start of the text.
+          <div
+            style={{
+              flexShrink: 0,
+              height: 8,
+              pointerEvents: "all",
+              cursor: "grab",
+              background: "var(--muted-foreground)",
+              opacity: 0.4,
+              borderTopLeftRadius: 3,
+              borderTopRightRadius: 3,
+            }}
+            // End editing first so the drag reaches tldraw's real
+            // translate handling instead of EditingShape's no-op.
+            onPointerDown={() => {
+              if (isEditing) {
+                suppressEmptyDeleteRef.current = true;
+                tldrawEditor.setEditingShape(null);
+                suppressReenterEditAfterEndingSession();
+              }
+            }}
+          />
+        )}
+        <div
+          style={{
+            flex: "1 1 auto",
+            minHeight: 0,
+            pointerEvents: isEditing ? "all" : "none",
+            overflow: "auto",
+            background: "transparent",
+            cursor: isEditing ? "text" : "inherit",
+          }}
+          // Same technique tldraw's own Tiptap-hosting RichTextArea.tsx uses -
+          // see this file's header comment.
+          onPointerDownCapture={isEditing ? stopEventPropagation : undefined}
+          onTouchEndCapture={isEditing ? stopEventPropagation : undefined}
+        >
         {tiptapEditor && (
           <BubbleMenu
             editor={tiptapEditor}
@@ -393,42 +562,130 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
             // - a shape's bounding box is much smaller than a full page, so
             // this keeps the popover compact enough to comfortably fit
             // within/near a shape sized close to its 320x200 default.
-            className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-0.5 text-popover-foreground shadow-md"
+            // `flex-wrap` + a fixed `max-w` (spec.md M3 subtask 6) let the
+            // now-larger control set (font family/size selects, highlight
+            // toggle + swatches, text-color swatches, list toggles) wrap
+            // onto a few short rows instead of the Format tab's single wide
+            // strip, which wouldn't fit over a small shape.
+            className="flex max-w-[220px] flex-wrap items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
           >
-            {bubbleMenuState &&
-              bubbleMenuActions.map((action) => (
+            {bubbleMenuState && (
+              <>
+                {bubbleMenuActions.map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    title={action.tip}
+                    disabled={action.isDisabled?.(bubbleMenuState)}
+                    onClick={() => action.run(tiptapEditor)}
+                    className={cn(
+                      "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-50",
+                      action.isActive(bubbleMenuState)
+                        ? "bg-secondary text-secondary-foreground"
+                        : "hover:bg-accent hover:text-accent-foreground",
+                    )}
+                  >
+                    <action.icon className="h-3 w-3" />
+                  </button>
+                ))}
                 <button
-                  key={action.id}
                   type="button"
-                  title={action.tip}
-                  disabled={action.isDisabled?.(bubbleMenuState)}
-                  onClick={() => action.run(tiptapEditor)}
+                  title="Insert link"
+                  onClick={setLink}
                   className={cn(
-                    "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors disabled:pointer-events-none disabled:opacity-50",
-                    action.isActive(bubbleMenuState)
+                    "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    bubbleMenuState.link !== null
                       ? "bg-secondary text-secondary-foreground"
                       : "hover:bg-accent hover:text-accent-foreground",
                   )}
                 >
-                  <action.icon className="h-3 w-3" />
+                  <LinkIcon className="h-3 w-3" />
                 </button>
-              ))}
-            <button
-              type="button"
-              title="Insert link"
-              onClick={setLink}
-              className={cn(
-                "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors",
-                bubbleMenuState?.link !== null && bubbleMenuState?.link !== undefined
-                  ? "bg-secondary text-secondary-foreground"
-                  : "hover:bg-accent hover:text-accent-foreground",
-              )}
-            >
-              <LinkIcon className="h-3 w-3" />
-            </button>
+                <button
+                  type="button"
+                  title="Highlight"
+                  onClick={() => toggleHighlight(tiptapEditor)}
+                  className={cn(
+                    "inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                    bubbleMenuState.highlight !== null
+                      ? "bg-secondary text-secondary-foreground"
+                      : "hover:bg-accent hover:text-accent-foreground",
+                  )}
+                >
+                  <Highlighter className="h-3 w-3" />
+                </button>
+
+                {/* Full-width rows below (spec.md M3 subtask 6) - a select's
+                    intrinsic width and a row of color swatches don't fit
+                    alongside the icon-button strip above within this
+                    popover's 220px cap, so each gets its own flex-basis-100%
+                    row instead of being crammed into the first line. */}
+                <select
+                  aria-label="Font family"
+                  title="Font family"
+                  value={bubbleMenuState.fontFamily}
+                  onChange={(e) => applyFontFamily(tiptapEditor, e.target.value)}
+                  className="mt-0.5 h-6 w-full basis-full rounded-md border border-border bg-background px-1 text-[11px] text-foreground"
+                >
+                  {FONT_FAMILIES.map((f) => (
+                    <option key={f.value} value={f.value}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Font size"
+                  title="Font size"
+                  value={bubbleMenuState.fontSize}
+                  onChange={(e) => applyFontSize(tiptapEditor, e.target.value)}
+                  className="mt-0.5 h-6 w-full basis-full rounded-md border border-border bg-background px-1 text-[11px] text-foreground"
+                >
+                  {FONT_SIZES.map((f) => (
+                    <option key={f.value} value={f.value}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="mt-0.5 flex basis-full items-center gap-0.5" title="Highlight color">
+                  {HIGHLIGHT_COLORS.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      title={c.label}
+                      onClick={() => applyHighlightColor(tiptapEditor, c.value)}
+                      className={cn(
+                        "h-4 w-4 rounded-full border",
+                        bubbleMenuState.highlight === c.value
+                          ? "ring-2 ring-ring ring-offset-1"
+                          : "border-border",
+                      )}
+                      style={{ backgroundColor: c.value }}
+                    />
+                  ))}
+                </div>
+
+                <div className="mt-0.5 flex basis-full items-center gap-0.5" title="Text color">
+                  {TEXT_COLORS.map((c) => (
+                    <button
+                      key={c.value || "default"}
+                      type="button"
+                      title={c.label}
+                      onClick={() => applyTextColor(tiptapEditor, c.value)}
+                      className={cn(
+                        "h-4 w-4 rounded-full border",
+                        bubbleMenuState.color === c.value ? "ring-2 ring-ring ring-offset-1" : "border-border",
+                      )}
+                      style={{ backgroundColor: c.value || "transparent" }}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </BubbleMenu>
         )}
         <EditorContent editor={tiptapEditor} className="h-full px-2 py-1" />
+        </div>
       </div>
     </HTMLContainer>
   );

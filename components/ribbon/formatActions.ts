@@ -52,6 +52,10 @@ export interface FormatActionState {
   fontFamily: string;
   fontSize: string;
   color: string;
+  // `null` when no highlight mark is active at all; `""` when active but with
+  // no explicit `color` attribute set (falls back to the mark's own default
+  // styling); otherwise the active highlight's color.
+  highlight: string | null;
 }
 
 export function selectFormatActionState(editor: Editor): FormatActionState {
@@ -74,6 +78,9 @@ export function selectFormatActionState(editor: Editor): FormatActionState {
     fontFamily: (textStyle.fontFamily as string | undefined) ?? "",
     fontSize: (textStyle.fontSize as string | undefined) ?? "",
     color: (textStyle.color as string | undefined) ?? "",
+    highlight: editor.isActive("highlight")
+      ? ((editor.getAttributes("highlight").color as string | undefined) ?? "")
+      : null,
   };
 }
 
@@ -149,4 +156,34 @@ export function applyFontSize(editor: Editor, value: string) {
 export function applyTextColor(editor: Editor, value: string) {
   if (value) editor.chain().focus().setColor(value).run();
   else editor.chain().focus().unsetColor().run();
+}
+
+// Highlight-mark color swatches (spec.md M3 subtask 6, bubble menu). Uses
+// `@tiptap/extension-highlight`'s `multicolor: true` mode (registered in
+// RichTextShape.tsx's extensions list), so - unlike `TEXT_COLORS` above,
+// which stores its color on a shared `textStyle` mark - each swatch here
+// sets the `highlight` mark's own `color` attribute directly.
+export const HIGHLIGHT_COLORS: { label: string; value: string }[] = [
+  { label: "Yellow", value: "#fef08a" },
+  { label: "Green", value: "#bbf7d0" },
+  { label: "Blue", value: "#bfdbfe" },
+  { label: "Pink", value: "#fbcfe8" },
+  { label: "Orange", value: "#fed7aa" },
+];
+
+// The color a plain "toggle highlight" click (no explicit swatch picked)
+// applies - mirrors highlighter-pen tools elsewhere defaulting to yellow.
+export const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLORS[0].value;
+
+export function toggleHighlight(editor: Editor) {
+  if (editor.isActive("highlight")) {
+    editor.chain().focus().unsetHighlight().run();
+  } else {
+    editor.chain().focus().setHighlight({ color: DEFAULT_HIGHLIGHT_COLOR }).run();
+  }
+}
+
+export function applyHighlightColor(editor: Editor, value: string) {
+  if (value) editor.chain().focus().setHighlight({ color: value }).run();
+  else editor.chain().focus().unsetHighlight().run();
 }

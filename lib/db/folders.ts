@@ -254,7 +254,7 @@ export async function createFolder(
 
 export async function updateFolder(
   folderId: string,
-  updates: Partial<Pick<Folder, "name" | "parentId" | "order">>,
+  updates: Partial<Pick<Folder, "name" | "parentId" | "order" | "notebookId">>,
 ): Promise<void> {
   const db = await getDb();
   const now = Date.now();
@@ -274,6 +274,10 @@ export async function updateFolder(
   if (updates.order !== undefined) {
     setClauses.push(`order_index = $${i++}`);
     params.push(updates.order);
+  }
+  if (updates.notebookId !== undefined) {
+    setClauses.push(`notebook_id = $${i++}`);
+    params.push(updates.notebookId);
   }
 
   setClauses.push(`updated_at = $${i++}`);
@@ -314,35 +318,45 @@ async function getDescendantFolderIds(folderId: string): Promise<string[]> {
 
 /**
  * Soft-deletes a folder and recursively cascades that soft-delete to every
- * descendant subfolder (any depth) and every note inside the folder or any
- * of those descendants. This fixes the reference app's known bug (per
- * spec.md subtask 10 / SPEC_iter1.md) where folder-delete cascaded to direct
- * child notes but never recursed into child subfolders at all.
+ * descendant subfolder (any depth), every note inside the folder or any of
+ * those descendants, AND every page under any of those notes (a three-level
+ * cascade: folder -> notes -> pages). This fixes the reference app's known
+ * bug (per spec.md subtask 10 / SPEC_iter1.md) where folder-delete cascaded
+ * to direct child notes but never recursed into child subfolders at all,
+ * and additionally reaches pages so that `pages.note_id REFERENCES
+ * notes(id)` (an enforced FK with no `ON DELETE CASCADE`) never ends up
+ * pointing at a note whose tombstone lib/sync/cleanup.ts eventually
+ * hard-deletes while live `pages` rows still reference it.
  *
- * All affected rows (the folder, its descendant folders, and all notes
- * under any of them) get the same `deletedAt` timestamp, `dirty = 1`, and
- * `updatedAt`, matching the soft-delete pattern used elsewhere in this file
- * and in lib/db/notes.ts. Nothing is ever `DELETE FROM`-ed.
+ * All affected rows (the folder, its descendant folders, all notes under
+ * any of them, and all pages under any of those notes) get the same
+ * `deletedAt` timestamp, `dirty = 1`, and `updatedAt`, matching the
+ * soft-delete pattern used elsewhere in this file and in lib/db/notes.ts.
+ * Nothing is ever `DELETE FROM`-ed.
  *
- * Both `UPDATE`s below are sent as a SINGLE multi-statement `db.execute()`
- * call (one semicolon-joined `BEGIN; UPDATE ...; UPDATE ...; COMMIT;` string)
- * rather than as separate `db.execute()` calls wrapping a `BEGIN`/`COMMIT`
- * transaction. Separate calls don't work here: `@tauri-apps/plugin-sql`'s
- * SQLite backend pools connections, so a `db.execute("BEGIN")` followed by
- * further `db.execute(...)` calls isn't guaranteed to reuse the same pooled
- * connection, which surfaced as a real, reproducible `cannot commit - no
- * transaction is active` runtime error. Each `db.execute()` call is exactly
- * one `invoke()` IPC round-trip that acquires exactly one pooled connection
- * and streams the whole query string through it, and sqlx-sqlite's
- * `VirtualStatement` natively steps through multiple `;`-separated
- * statements sequentially on that one connection - so folding both `UPDATE`s
- * (plus `BEGIN`/`COMMIT`) into one call restores real atomicity without ever
- * needing two calls to coordinate a transaction across connections. The
- * named `$N` placeholders resolve directly from the literal number in the
- * SQL text against the single flat bind-values array regardless of which
- * sub-statement they're in, so both `UPDATE`s can keep reusing `$1`/`$2` for
- * the timestamps and `$3...` for the folder ids against the same
- * `[now, now, ...folderIds]` array.
+ * All three `UPDATE`s below are sent as a SINGLE multi-statement
+ * `db.execute()` call (one semicolon-joined `BEGIN; UPDATE ...; UPDATE ...;
+ * UPDATE ...; COMMIT;` string) rather than as separate `db.execute()` calls
+ * wrapping a `BEGIN`/`COMMIT` transaction. Separate calls don't work here:
+ * `@tauri-apps/plugin-sql`'s SQLite backend pools connections, so a
+ * `db.execute("BEGIN")` followed by further `db.execute(...)` calls isn't
+ * guaranteed to reuse the same pooled connection, which surfaced as a real,
+ * reproducible `cannot commit - no transaction is active` runtime error.
+ * Each `db.execute()` call is exactly one `invoke()` IPC round-trip that
+ * acquires exactly one pooled connection and streams the whole query string
+ * through it, and sqlx-sqlite's `VirtualStatement` natively steps through
+ * multiple `;`-separated statements sequentially on that one connection - so
+ * folding all three `UPDATE`s (plus `BEGIN`/`COMMIT`) into one call restores
+ * real atomicity without ever needing multiple calls to coordinate a
+ * transaction across connections. The named `$N` placeholders resolve
+ * directly from the literal number in the SQL text against the single flat
+ * bind-values array regardless of which sub-statement they're in, so all
+ * three `UPDATE`s can keep reusing `$1`/`$2` for the timestamps and
+ * `$3...` for the folder ids against the same `[now, now, ...folderIds]`
+ * array; the `pages` `UPDATE` reaches the affected notes via a `note_id IN
+ * (SELECT id FROM notes WHERE folder_id IN (...))` subquery rather than a
+ * separately-bound note-id list, since the note ids aren't known until the
+ * `notes` `UPDATE` itself runs.
  */
 export async function deleteFolder(folderId: string): Promise<void> {
   const db = await getDb();
@@ -355,6 +369,7 @@ export async function deleteFolder(folderId: string): Promise<void> {
     `BEGIN;
      UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id IN (${placeholders});
      UPDATE notes SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE folder_id IN (${placeholders});
+     UPDATE pages SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE note_id IN (SELECT id FROM notes WHERE folder_id IN (${placeholders}));
      COMMIT;`,
     [now, now, ...folderIds],
   );

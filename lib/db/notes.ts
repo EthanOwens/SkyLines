@@ -21,6 +21,7 @@ type NoteRow = {
   user_id: string;
   content: string | null;
   canvas_data: string | null;
+  order_index: number;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -39,6 +40,7 @@ function rowToNote(row: NoteRow): Note {
     content: row.content !== null ? (JSON.parse(row.content) as object | null) : null,
     canvasData:
       row.canvas_data !== null ? (JSON.parse(row.canvas_data) as object | null) : null,
+    order: row.order_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     dirty: row.dirty === 1,
@@ -155,6 +157,7 @@ export type RemoteNoteData = {
   userId: string;
   content: object | null;
   canvasData: object | null;
+  order: number;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
@@ -177,8 +180,8 @@ export async function upsertNoteFromRemote(
   const db = await getDb();
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      ON CONFLICT(id) DO UPDATE SET
        title = excluded.title,
        type = excluded.type,
@@ -187,6 +190,7 @@ export async function upsertNoteFromRemote(
        user_id = excluded.user_id,
        content = excluded.content,
        canvas_data = excluded.canvas_data,
+       order_index = excluded.order_index,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        deleted_at = excluded.deleted_at,
@@ -201,6 +205,7 @@ export async function upsertNoteFromRemote(
       remote.userId,
       remote.content === null ? null : JSON.stringify(remote.content),
       remote.canvasData === null ? null : JSON.stringify(remote.canvasData),
+      remote.order,
       remote.createdAt,
       remote.updatedAt,
       remote.deletedAt,
@@ -219,6 +224,21 @@ export async function upsertNoteFromRemote(
  * migration 4 comment in src-tauri/src/lib.rs for why), so this requirement
  * is enforced here at the application layer instead, by simply not offering
  * a way to omit it.
+ *
+ * M6 (spec.md subtask 14): every newly-created note atomically gets a
+ * default first page too - a note with zero pages should never be a
+ * reachable state (nothing currently reads from that page, since
+ * CanvasEditor.tsx still reads/writes `notes.canvas_data` directly until
+ * spec.md subtask 16 rewires it onto Pages, but the row must exist from the
+ * moment the note does). This is a single `BEGIN; INSERT notes; INSERT
+ * pages; COMMIT;` multi-statement `db.execute()` call rather than two
+ * separate awaited `db.execute()` calls (one calling `createPage` from
+ * lib/db/pages.ts) wrapped in their own `BEGIN`/`COMMIT` - see
+ * `deleteFolder` in lib/db/folders.ts for why: `@tauri-apps/plugin-sql`
+ * pools connections, so separate `db.execute()` calls aren't guaranteed to
+ * reuse the same pooled connection, which breaks `BEGIN`/`COMMIT`
+ * transactions spanning them. Folding both inserts into one call restores
+ * real atomicity.
  */
 export async function createNote(
   userId: string,
@@ -226,16 +246,23 @@ export async function createNote(
   notebookId: string,
   folderId: string | null = null,
   title = "Untitled",
+  order = 0,
 ): Promise<string> {
   const db = await getDb();
   const id = crypto.randomUUID();
+  const pageId = crypto.randomUUID();
   const now = Date.now();
 
   await db.execute(
-    `INSERT INTO ${TABLE}
-       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, NULL, 1, NULL)`,
-    [id, title, type, folderId, notebookId, userId, now, now],
+    `BEGIN;
+     INSERT INTO ${TABLE}
+       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, $8, NULL, 1, NULL);
+     INSERT INTO pages
+       (id, note_id, title, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($9, $1, 'Untitled', $6, NULL, NULL, 0, $8, $8, NULL, 1, NULL);
+     COMMIT;`,
+    [id, title, type, folderId, notebookId, userId, order, now, pageId],
   );
 
   notifyDataChange("local");
@@ -244,7 +271,9 @@ export async function createNote(
 
 export async function updateNote(
   noteId: string,
-  updates: Partial<Pick<Note, "title" | "content" | "canvasData" | "folderId">>,
+  updates: Partial<
+    Pick<Note, "title" | "content" | "canvasData" | "folderId" | "order" | "notebookId">
+  >,
 ): Promise<void> {
   const db = await getDb();
   const now = Date.now();
@@ -269,6 +298,14 @@ export async function updateNote(
     setClauses.push(`folder_id = $${i++}`);
     params.push(updates.folderId);
   }
+  if (updates.order !== undefined) {
+    setClauses.push(`order_index = $${i++}`);
+    params.push(updates.order);
+  }
+  if (updates.notebookId !== undefined) {
+    setClauses.push(`notebook_id = $${i++}`);
+    params.push(updates.notebookId);
+  }
 
   setClauses.push(`updated_at = $${i++}`);
   params.push(now);
@@ -284,15 +321,32 @@ export async function updateNote(
 }
 
 /**
- * Soft-deletes a single note: sets `deletedAt`/`dirty`, does not `DELETE
- * FROM` the row.
+ * Soft-deletes a single note and cascades that same soft-delete to every
+ * page under it (`pages.note_id REFERENCES notes(id)` is an enforced FK,
+ * and has no `ON DELETE CASCADE` - see lib/sync/cleanup.ts's tombstone
+ * hard-delete pass, which would otherwise eventually hit an FK violation
+ * hard-deleting an old `notes` tombstone while live `pages` rows still
+ * reference it). Sets `deletedAt`/`dirty` on both tables, does not `DELETE
+ * FROM` either row - mirrors `deleteFolder`'s folder-to-notes cascade in
+ * lib/db/folders.ts.
+ *
+ * Both `UPDATE`s below are sent as a SINGLE multi-statement `db.execute()`
+ * call (one semicolon-joined `BEGIN; UPDATE ...; UPDATE ...; COMMIT;`
+ * string) rather than as separate `db.execute()` calls wrapping a
+ * `BEGIN`/`COMMIT` transaction - see `deleteFolder` in lib/db/folders.ts for
+ * why: `@tauri-apps/plugin-sql` pools connections, so separate
+ * `db.execute()` calls aren't guaranteed to reuse the same pooled
+ * connection, which breaks `BEGIN`/`COMMIT` transactions spanning them.
  */
 export async function deleteNote(noteId: string): Promise<void> {
   const db = await getDb();
   const now = Date.now();
 
   await db.execute(
-    `UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id = $3`,
+    `BEGIN;
+     UPDATE ${TABLE} SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE id = $3;
+     UPDATE pages SET deleted_at = $1, updated_at = $2, dirty = 1 WHERE note_id = $3;
+     COMMIT;`,
     [now, now, noteId],
   );
   notifyDataChange("local");

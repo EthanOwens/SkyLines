@@ -1,15 +1,45 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { useEditorState } from "@tiptap/react";
+import {
+  DefaultColorStyle,
+  DefaultDashStyle,
+  DefaultFillStyle,
+  DefaultSizeStyle,
+  GeoShapeGeoStyle,
+  react,
+  useValue,
+  type Editor,
+  type StyleProp,
+  type TLDefaultColorStyle,
+  type TLDefaultDashStyle,
+  type TLDefaultFillStyle,
+  type TLDefaultSizeStyle,
+} from "@tldraw/tldraw";
+import { switchToToolExplicitly } from "@/components/canvas/RichTextTool";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
-import { setLastOpen } from "@/lib/lastOpen";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Image as ImageIcon, Link as LinkIcon } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Image as ImageIcon,
+  Link as LinkIcon,
+  MousePointer2,
+  Pencil,
+  Eraser,
+  Square,
+  Circle,
+  ArrowUpRight,
+  ChevronDown,
+} from "lucide-react";
 import {
   FONT_FAMILIES,
   FONT_SIZES,
@@ -19,13 +49,11 @@ import {
   applyTextColor,
   formatActions,
   selectFormatActionState,
+  type FormatActionState,
 } from "./formatActions";
 
-// Ribbon shell (spec.md subtask 8, "Ribbon shell"). Tab bar with File/Format
-// always shown, and Draw shown only when the currently-open note is a canvas
-// note (i.e. the route is /canvas). Each tab's real content is a separate,
-// later subtask (File: 9, Format: 10, Draw: 12) - this only builds the shell
-// and tab-switching, per this subtask's explicit scope.
+// Tab bar: File/Format always shown, Draw only when the open note is a
+// canvas note (route is /canvas).
 
 type RibbonTab = "file" | "format" | "draw";
 
@@ -46,12 +74,14 @@ function FormatBtn({
   tip,
   children,
   disabled,
+  className,
 }: {
   onClick: () => void;
   active?: boolean;
   tip: string;
   children: React.ReactNode;
   disabled?: boolean;
+  className?: string;
 }) {
   return (
     <Tooltip>
@@ -60,7 +90,7 @@ function FormatBtn({
           <Button
             variant={active ? "secondary" : "ghost"}
             size="icon"
-            className="h-7 w-7"
+            className={cn("h-7 w-7", className)}
             onClick={onClick}
             disabled={disabled}
           >
@@ -73,40 +103,48 @@ function FormatBtn({
   );
 }
 
-// Format tab's real content (spec.md subtask 10, "Format tab") - ports the
-// formatting actions that used to live in components/editor/EditorToolbar.tsx
-// (rendered inside RichTextEditor.tsx, above the Tiptap content) into the
-// ribbon, plus new font family / font size / text color controls. All
-// actions read/write `activeEditor` from stores/appStore.ts, which
-// RichTextEditor.tsx keeps in sync with its own `useEditor()` instance -
-// see RichTextEditor.tsx's `setActiveEditor` effect for why that indirection
-// is needed (Ribbon is a sibling of the note page, not a descendant).
-//
-// Renders a neutral placeholder when `activeEditor` is null - covers both
-// "no note open" (notebook-open placeholder page) and "canvas note open"
-// (components/canvas/CanvasEditor.tsx has no Tiptap instance at all; that's
-// the Draw tab's job, subtask 12).
+// Formatting actions read/write `activeEditor` from stores/appStore.ts,
+// which RichTextEditor.tsx keeps in sync with its own Tiptap instance
+// (Ribbon is a sibling, not a descendant, so needs this indirection).
+// Always renders the full control set - disabled/neutral when there's no
+// `activeEditor` (no note open, or a canvas note with no Tiptap instance),
+// rather than hiding controls.
+const NEUTRAL_FORMAT_STATE: FormatActionState = {
+  bold: false,
+  italic: false,
+  strike: false,
+  code: false,
+  heading1: false,
+  heading2: false,
+  heading3: false,
+  bulletList: false,
+  orderedList: false,
+  taskList: false,
+  blockquote: false,
+  link: null,
+  canUndo: false,
+  canRedo: false,
+  fontFamily: "",
+  fontSize: "",
+  color: "",
+  highlight: null,
+};
+
 function FormatTab() {
   const activeEditor = useAppStore((s) => s.activeEditor);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Tiptap's `editor` object instance does not change identity when its
-  // internal state changes (bold toggled, selection moved, etc.), and
-  // FormatTab lives outside RichTextEditor.tsx's own re-render cycle (it's
-  // rendered by AppLayout.tsx as a sibling, not a descendant) - so it needs
-  // its own explicit subscription to stay in sync, which `useEditorState` is
-  // Tiptap v3's documented mechanism for. The `editor: Editor | null`
-  // overload returns `null` when there's no editor instead of throwing, so
-  // this stays safe to call across notes closing/canvas routes/the
-  // notebook-open placeholder.
-  const state = useEditorState({
+  // Tiptap's `editor` instance doesn't change identity on internal state
+  // changes (bold toggled, selection moved), so this needs its own
+  // subscription (`useEditorState`) to stay in sync from outside
+  // RichTextEditor.tsx's own re-render cycle.
+  const liveState = useEditorState({
     editor: activeEditor,
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
   });
 
-  if (!activeEditor || !state) {
-    return <div className="flex items-center text-muted-foreground">No formatting available.</div>;
-  }
+  const state = activeEditor && liveState ? liveState : NEUTRAL_FORMAT_STATE;
+  const disabledAll = !activeEditor || !liveState;
 
   function insertImage(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -140,8 +178,8 @@ function FormatTab() {
           key={action.id}
           tip={action.tip}
           active={action.isActive(state)}
-          disabled={action.isDisabled?.(state)}
-          onClick={() => action.run(activeEditor)}
+          disabled={disabledAll || action.isDisabled?.(state)}
+          onClick={() => activeEditor && action.run(activeEditor)}
         >
           <action.icon className="h-3.5 w-3.5" />
         </FormatBtn>
@@ -149,10 +187,14 @@ function FormatTab() {
 
       <Separator orientation="vertical" className="mx-1 h-5" />
 
-      <FormatBtn tip="Insert image" onClick={() => fileInputRef.current?.click()}>
+      <FormatBtn
+        tip="Insert image"
+        disabled={disabledAll}
+        onClick={() => fileInputRef.current?.click()}
+      >
         <ImageIcon className="h-3.5 w-3.5" />
       </FormatBtn>
-      <FormatBtn tip="Insert link" active={state.link !== null} onClick={setLink}>
+      <FormatBtn tip="Insert link" active={state.link !== null} disabled={disabledAll} onClick={setLink}>
         <LinkIcon className="h-3.5 w-3.5" />
       </FormatBtn>
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={insertImage} />
@@ -161,9 +203,10 @@ function FormatTab() {
 
       <select
         aria-label="Font family"
-        className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
+        className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         value={state.fontFamily}
-        onChange={(e) => applyFontFamily(activeEditor, e.target.value)}
+        disabled={disabledAll}
+        onChange={(e) => activeEditor && applyFontFamily(activeEditor, e.target.value)}
       >
         {FONT_FAMILIES.map((f) => (
           <option key={f.value} value={f.value}>
@@ -174,9 +217,10 @@ function FormatTab() {
 
       <select
         aria-label="Font size"
-        className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground"
+        className="h-7 rounded-md border border-border bg-background px-1.5 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         value={state.fontSize}
-        onChange={(e) => applyFontSize(activeEditor, e.target.value)}
+        disabled={disabledAll}
+        onChange={(e) => activeEditor && applyFontSize(activeEditor, e.target.value)}
       >
         {FONT_SIZES.map((f) => (
           <option key={f.value} value={f.value}>
@@ -194,9 +238,10 @@ function FormatTab() {
               render={
                 <button
                   type="button"
-                  onClick={() => applyTextColor(activeEditor, c.value)}
+                  disabled={disabledAll}
+                  onClick={() => activeEditor && applyTextColor(activeEditor, c.value)}
                   className={cn(
-                    "h-5 w-5 rounded-full border",
+                    "h-5 w-5 rounded-full border disabled:cursor-not-allowed disabled:opacity-50",
                     state.color === c.value ? "ring-2 ring-ring ring-offset-1" : "border-border",
                   )}
                   style={{ backgroundColor: c.value || "transparent" }}
@@ -211,29 +256,304 @@ function FormatTab() {
   );
 }
 
+// Draw tab: the sole tldraw tool-switcher, since CanvasEditor.tsx's
+// `<Tldraw>` suppresses the native toolbar/style panel chrome. Reuses
+// `activeCanvasEditor` from stores/appStore.ts. Colors/fills/dashes/sizes
+// below mirror tldraw's own `STYLES` values; swatch hexes are each color's
+// light-mode value (kept static, not theme-reactive - out of scope here).
+const DRAW_COLORS: { label: string; value: TLDefaultColorStyle; hex: string }[] = [
+  { label: "Black", value: "black", hex: "#1d1d1d" },
+  { label: "Grey", value: "grey", hex: "#9fa8b2" },
+  { label: "Light violet", value: "light-violet", hex: "#e085f4" },
+  { label: "Violet", value: "violet", hex: "#ae3ec9" },
+  { label: "Blue", value: "blue", hex: "#4465e9" },
+  { label: "Light blue", value: "light-blue", hex: "#4ba1f1" },
+  { label: "Yellow", value: "yellow", hex: "#f1ac4b" },
+  { label: "Orange", value: "orange", hex: "#e16919" },
+  { label: "Green", value: "green", hex: "#099268" },
+  { label: "Light green", value: "light-green", hex: "#4cb05e" },
+  { label: "Light red", value: "light-red", hex: "#f87777" },
+  { label: "Red", value: "red", hex: "#e03131" },
+];
+
+const DRAW_FILLS: { label: string; value: TLDefaultFillStyle }[] = [
+  { label: "None", value: "none" },
+  { label: "Semi", value: "semi" },
+  { label: "Solid", value: "solid" },
+];
+
+const DRAW_DASHES: { label: string; value: TLDefaultDashStyle }[] = [
+  { label: "Draw", value: "draw" },
+  { label: "Dashed", value: "dashed" },
+  { label: "Dotted", value: "dotted" },
+  { label: "Solid", value: "solid" },
+];
+
+const DRAW_SIZES: { label: string; value: TLDefaultSizeStyle }[] = [
+  { label: "Small", value: "s" },
+  { label: "Medium", value: "m" },
+  { label: "Large", value: "l" },
+  { label: "Extra large", value: "xl" },
+];
+
+// Small CSS-drawn icons (no matching lucide-react icon for tldraw's own
+// fill/dash concepts) rendered at the same h-3.5 w-3.5 size as the other
+// Draw tab icons above.
+function FillIcon({ variant }: { variant: TLDefaultFillStyle }) {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+      <rect
+        x="2.5"
+        y="2.5"
+        width="11"
+        height="11"
+        rx="2"
+        fill={variant === "none" ? "none" : "currentColor"}
+        fillOpacity={variant === "solid" ? 1 : variant === "semi" ? 0.35 : 0}
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+function DashIcon({ variant }: { variant: TLDefaultDashStyle }) {
+  const dashArray =
+    variant === "dashed" ? "3 2" : variant === "dotted" ? "0.1 2.2" : undefined;
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+      <path
+        d={variant === "draw" ? "M2 10.5c1.5-5 3-6.5 4-2s2 5.5 3 1 2.5-5.5 4-1.5" : "M2 8h12"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={variant === "dotted" ? 2.25 : 1.5}
+        strokeLinecap={variant === "dotted" || variant === "draw" ? "round" : "butt"}
+        strokeDasharray={dashArray}
+      />
+    </svg>
+  );
+}
+
+function DrawTab() {
+  const activeCanvasEditor = useAppStore((s) => s.activeCanvasEditor);
+
+  // `getCurrentToolId()` is a tldraw signal, not a store event, so this
+  // needs `useValue` (not `editor.store.listen`) to stay in sync with tool
+  // changes that happen outside this tab too.
+  const liveToolId = useValue(
+    "ribbon draw tab: current tool id",
+    () => activeCanvasEditor?.getCurrentToolId() ?? null,
+    [activeCanvasEditor],
+  );
+  const geoStyle = useValue(
+    "ribbon draw tab: current geo style",
+    () => activeCanvasEditor?.getSharedStyles().getAsKnownValue(GeoShapeGeoStyle) ?? null,
+    [activeCanvasEditor],
+  );
+
+  // Same reactive-read pattern as `geoStyle` above, for the other three
+  // style props the deleted native panel exposed. `getAsKnownValue` returns
+  // null on a mixed/no-relevant-shape selection - same "no highlight"
+  // fallback as `geoStyle`.
+  const colorStyle = useValue(
+    "ribbon draw tab: current color style",
+    () => activeCanvasEditor?.getSharedStyles().getAsKnownValue(DefaultColorStyle) ?? null,
+    [activeCanvasEditor],
+  );
+  const fillStyle = useValue(
+    "ribbon draw tab: current fill style",
+    () => activeCanvasEditor?.getSharedStyles().getAsKnownValue(DefaultFillStyle) ?? null,
+    [activeCanvasEditor],
+  );
+  const dashStyle = useValue(
+    "ribbon draw tab: current dash style",
+    () => activeCanvasEditor?.getSharedStyles().getAsKnownValue(DefaultDashStyle) ?? null,
+    [activeCanvasEditor],
+  );
+  const sizeStyle = useValue(
+    "ribbon draw tab: current size style",
+    () => activeCanvasEditor?.getSharedStyles().getAsKnownValue(DefaultSizeStyle) ?? null,
+    [activeCanvasEditor],
+  );
+
+  if (!activeCanvasEditor) {
+    return <div className="flex items-center text-muted-foreground">No canvas available.</div>;
+  }
+
+  // Every deliberate tool switch must go through `switchToToolExplicitly`
+  // (not a raw `setCurrentTool`) - see RichTextTool.tsx for why.
+  function setTool(id: string) {
+    if (!activeCanvasEditor) return;
+    switchToToolExplicitly(activeCanvasEditor, id);
+  }
+
+  function setGeoTool(geo: "rectangle" | "ellipse") {
+    if (!activeCanvasEditor) return;
+    activeCanvasEditor.run(() => {
+      activeCanvasEditor.setStyleForNextShapes(GeoShapeGeoStyle, geo);
+      switchToToolExplicitly(activeCanvasEditor, "geo");
+    });
+  }
+
+  const isGeo = (geo: "rectangle" | "ellipse") => liveToolId === "geo" && geoStyle === geo;
+
+  // Mirrors tldraw's own native style panel logic: restyle selected shapes
+  // AND the next-shape style, so a subsequently drawn shape keeps it too.
+  function setStyle<T>(style: StyleProp<T>, value: T) {
+    if (!activeCanvasEditor) return;
+    activeCanvasEditor.run(() => {
+      if (activeCanvasEditor.isIn("select")) {
+        activeCanvasEditor.setStyleForSelectedShapes(style, value);
+      }
+      activeCanvasEditor.setStyleForNextShapes(style, value);
+      activeCanvasEditor.updateInstanceState({ isChangingStyle: true });
+    });
+  }
+
+  return (
+    <div className="flex items-center gap-0.5 overflow-x-auto">
+      <FormatBtn tip="Select" active={liveToolId === "rich-text"} onClick={() => setTool("rich-text")}>
+        <MousePointer2 className="h-3.5 w-3.5" />
+      </FormatBtn>
+      <div className="flex items-center">
+        <FormatBtn tip="Pencil" active={liveToolId === "draw"} onClick={() => setTool("draw")}>
+          <Pencil className="h-3.5 w-3.5" />
+        </FormatBtn>
+        {/* Quick color caret next to the Pencil button - separate trigger
+            from the full color grid below, same DRAW_COLORS/setStyle. */}
+        <Tooltip>
+          <DropdownMenu>
+            <TooltipTrigger
+              render={
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-5 shrink-0 px-0"
+                      aria-label="Pencil color"
+                    >
+                      <ChevronDown className="h-2.5 w-2.5" />
+                    </Button>
+                  }
+                />
+              }
+            />
+            <DropdownMenuContent align="start" className="w-auto min-w-0 p-1.5">
+              <div className="grid grid-cols-4 gap-1">
+                {DRAW_COLORS.map((c) => (
+                  <Tooltip key={c.value}>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          onClick={() => setStyle(DefaultColorStyle, c.value)}
+                          className={cn(
+                            "h-5 w-5 rounded-full border border-border",
+                            colorStyle === c.value && "ring-2 ring-ring ring-offset-1",
+                          )}
+                          style={{ backgroundColor: c.hex }}
+                        />
+                      }
+                    />
+                    <TooltipContent>{c.label}</TooltipContent>
+                  </Tooltip>
+                ))}
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <TooltipContent>Pencil color</TooltipContent>
+        </Tooltip>
+      </div>
+      <FormatBtn tip="Eraser" active={liveToolId === "eraser"} onClick={() => setTool("eraser")}>
+        <Eraser className="h-3.5 w-3.5" />
+      </FormatBtn>
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      <FormatBtn tip="Rectangle" active={isGeo("rectangle")} onClick={() => setGeoTool("rectangle")}>
+        <Square className="h-3.5 w-3.5" />
+      </FormatBtn>
+      <FormatBtn tip="Ellipse" active={isGeo("ellipse")} onClick={() => setGeoTool("ellipse")}>
+        <Circle className="h-3.5 w-3.5" />
+      </FormatBtn>
+      <FormatBtn tip="Arrow" active={liveToolId === "arrow"} onClick={() => setTool("arrow")}>
+        <ArrowUpRight className="h-3.5 w-3.5" />
+      </FormatBtn>
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      <div className="flex items-center gap-1">
+        {DRAW_COLORS.map((c) => (
+          <Tooltip key={c.value}>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => setStyle(DefaultColorStyle, c.value)}
+                  className={cn(
+                    "h-5 w-5 rounded-full border border-border",
+                    colorStyle === c.value && "ring-2 ring-ring ring-offset-1",
+                  )}
+                  style={{ backgroundColor: c.hex }}
+                />
+              }
+            />
+            <TooltipContent>{c.label}</TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      {DRAW_FILLS.map((f) => (
+        <FormatBtn
+          key={f.value}
+          tip={`Fill: ${f.label}`}
+          active={fillStyle === f.value}
+          onClick={() => setStyle(DefaultFillStyle, f.value)}
+        >
+          <FillIcon variant={f.value} />
+        </FormatBtn>
+      ))}
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      {DRAW_DASHES.map((d) => (
+        <FormatBtn
+          key={d.value}
+          tip={`Stroke: ${d.label}`}
+          active={dashStyle === d.value}
+          onClick={() => setStyle(DefaultDashStyle, d.value)}
+        >
+          <DashIcon variant={d.value} />
+        </FormatBtn>
+      ))}
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      {DRAW_SIZES.map((s) => (
+        <FormatBtn
+          key={s.value}
+          tip={`Size: ${s.label}`}
+          active={sizeStyle === s.value}
+          onClick={() => setStyle(DefaultSizeStyle, s.value)}
+          className="w-8 text-xs font-medium"
+        >
+          {s.value.toUpperCase()}
+        </FormatBtn>
+      ))}
+    </div>
+  );
+}
+
 export function Ribbon() {
   const pathname = usePathname();
-  const router = useRouter();
-  const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
+  const activeCanvasEditor = useAppStore((s) => s.activeCanvasEditor);
   const normalizedPathname = normalizePathname(pathname);
   const isCanvasRoute = normalizedPathname === "/canvas";
 
   const [activeTab, setActiveTab] = useState<RibbonTab>("file");
-
-  // Shared by both File tab actions (spec.md subtask 9, "File tab"): the
-  // notebook picker (app/page.tsx) already has a complete list/create-
-  // notebook UI, so both "swap notebook" and "new notebook" just clear the
-  // current selection (in-memory store + persisted last-open state) and
-  // send the user back to "/" rather than duplicating that UI here. Clearing
-  // the persisted state (not just the store) is required - otherwise
-  // AppShell.tsx's restore effect would just re-select the same notebook (or
-  // navigate straight back into the last note) the next time "/" is
-  // reached, defeating the point of swapping.
-  function returnToPicker() {
-    setSelectedNotebook(null);
-    setLastOpen({ notebookId: null, folderId: null, noteId: null });
-    router.push("/");
-  }
 
   // If the Draw tab is currently active and the route navigates away from
   // /canvas (e.g. the user opens a plain note), fall back to File rather
@@ -245,6 +565,44 @@ export function Ribbon() {
     { id: "format", label: "Format" },
     ...(isCanvasRoute ? ([{ id: "draw", label: "Draw" }] as const) : []),
   ];
+
+  // Switching to File/Format always returns the canvas to the `rich-text`
+  // tool - deferred while a drag gesture is in flight or a selection is
+  // non-empty (would otherwise strand resize/rotate/Delete on the wrong
+  // tool), matching RichTextTool.tsx's own watcher logic.
+  useEffect(() => {
+    if (effectiveTab === "draw") return;
+    if (!activeCanvasEditor) return;
+
+    const shouldDeferReturnToRichText = (editor: Editor) =>
+      editor.inputs.getIsPointing() ||
+      editor.inputs.getIsDragging() ||
+      editor.isInAny(
+        "select.translating",
+        "select.brushing",
+        "select.resizing",
+        "select.rotating",
+      ) ||
+      (editor.isIn("select") && editor.getSelectedShapeIds().length > 0);
+
+    if (!shouldDeferReturnToRichText(activeCanvasEditor)) {
+      switchToToolExplicitly(activeCanvasEditor, "rich-text");
+      return;
+    }
+
+    const stop = react("ribbon: deferred return to rich-text after in-flight gesture", () => {
+      if (shouldDeferReturnToRichText(activeCanvasEditor)) return;
+      stop();
+      activeCanvasEditor.disposables.delete(stop);
+      switchToToolExplicitly(activeCanvasEditor, "rich-text");
+    });
+    activeCanvasEditor.disposables.add(stop);
+
+    return () => {
+      stop();
+      activeCanvasEditor.disposables.delete(stop);
+    };
+  }, [effectiveTab, activeCanvasEditor]);
 
   return (
     <div className="flex h-24 flex-col border-b border-border bg-background">
@@ -267,21 +625,10 @@ export function Ribbon() {
       </div>
       <div className="flex-1 px-3 py-2 text-sm text-muted-foreground">
         {effectiveTab === "file" && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={returnToPicker}>
-              Swap Notebook
-            </Button>
-            <Button variant="outline" size="sm" onClick={returnToPicker}>
-              New Notebook
-            </Button>
-          </div>
+          <div className="flex items-center text-muted-foreground">No actions available.</div>
         )}
         {effectiveTab === "format" && <FormatTab />}
-        {effectiveTab === "draw" && (
-          <div className="flex items-center">
-            Drawing tools are available directly on the canvas below.
-          </div>
-        )}
+        {effectiveTab === "draw" && <DrawTab />}
       </div>
     </div>
   );

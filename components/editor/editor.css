@@ -1,12 +1,25 @@
 /* TipTap editor prose styles */
 .tiptap.ProseMirror {
   outline: none;
+  /* spec.md M5 subtask 8. Base/default (unset) text color follows the
+     active theme's `--foreground` variable, same as the placeholder/
+     blockquote/link rules below - overrides Tailwind Typography's
+     `prose`/`dark:prose-invert` fixed color tokens (which never resolve to
+     this app's theme, since nothing here ever toggles a `.dark` class).
+     Set directly on this outer contenteditable root rather than
+     `--tw-prose-body` so it also covers plain, unstyled text even when the
+     `prose` classes' own color plumbing isn't in play. Any manually-chosen
+     text color (Tiptap's Color extension, via applyTextColor) is applied as
+     an inline `style="color: ..."` directly on the affected text's own
+     element, which always wins over this inherited value regardless of
+     selector specificity - so explicit colors are unaffected. */
+  color: var(--foreground);
 }
 
 .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
   pointer-events: none;
   height: 0;
 }
@@ -34,7 +47,7 @@
 
 /* Code blocks */
 .tiptap pre {
-  background: hsl(var(--muted));
+  background: var(--muted);
   border-radius: 0.375rem;
   padding: 0.75rem 1rem;
   overflow-x: auto;
@@ -47,7 +60,7 @@
 
 /* Links */
 .tiptap a {
-  color: hsl(var(--primary));
+  color: var(--primary);
   text-decoration: underline;
   cursor: pointer;
 }
@@ -61,14 +74,14 @@
 
 /* Blockquote */
 .tiptap blockquote {
-  border-left: 3px solid hsl(var(--border));
+  border-left: 3px solid var(--border);
   padding-left: 1rem;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
 }
 
 /* Horizontal rule */
 .tiptap hr {
   border: none;
-  border-top: 1px solid hsl(var(--border));
+  border-top: 1px solid var(--border);
   margin: 1.5rem 0;
 }

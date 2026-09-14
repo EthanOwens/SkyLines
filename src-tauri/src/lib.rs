@@ -111,8 +111,22 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
                 // (`tauri://drag-enter` / `-over` / `-drop` / `-leave` on
                 // the JS side, all funneled into this single
                 // `WindowEvent::DragDrop` variant on the Rust side) and
-                // does nothing further. `dragDropEnabled` is set on the
-                // window in tauri.conf.json so these events actually fire.
+                // does nothing further.
+                //
+                // Currently INERT (M1, spec.md subtask 3): `dragDropEnabled`
+                // is now `false` in tauri.conf.json, so this handler never
+                // fires - no OS-level `WindowEvent::DragDrop` events are
+                // delivered at all. This was flipped off because Tauri's
+                // native OS-level window drag-drop and the webview's own
+                // native HTML5 `dragover`/`drop` DOM events are mutually
+                // exclusive on Windows/WebView2: leaving it `true` was
+                // silently breaking the sidebar's HTML5 drag-and-drop
+                // (lib/dnd/sidebar.ts and friends), which is the feature
+                // that's actually built and in use today. Left in place
+                // (rather than deleted) as a placeholder for if/when a real
+                // file-import feature re-enables `dragDropEnabled` - at
+                // which point the sidebar's HTML5 DnD would need to be
+                // reconciled with this native path instead.
                 //
                 // Deliberately using `writeln!` to a raw stderr handle
                 // instead of println!/eprintln! - see the global shortcut
@@ -439,6 +453,74 @@ pub fn run() {
                 -- it (see the UPDATE above, which already sets dirty = 1 /
                 -- updated_at alongside notebook_id in one statement).
                 CREATE INDEX idx_notes_notebook ON notes(notebook_id);
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        // spec.md subtask 7 (M4, "Sidebar drag-and-drop"): sidebar reordering
+        // needs a persisted sibling-order field for notes the same way
+        // `folders.order_index`/`notebooks.order_index` already have one -
+        // confirmed genuinely missing (notes.ts's `getNotes` only ever
+        // ordered by `updated_at DESC`, and no `order`/`orderIndex` field
+        // exists anywhere on the `notes` table or the `Note` type). Unlike
+        // migrations 3/4's `notebook_id` backfills, a real constant
+        // `DEFAULT 0` is sensible here (SQLite's `ALTER TABLE ... ADD
+        // COLUMN` allows a `NOT NULL` column with a literal constant
+        // default), so this is a plain single-statement additive migration
+        // with no backfill UPDATE needed.
+        tauri_plugin_sql::Migration {
+            version: 5,
+            description: "add notes.order_index",
+            sql: "
+                ALTER TABLE notes ADD COLUMN order_index INTEGER NOT NULL DEFAULT 0;
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        // M6 (spec.md subtask 13): Pages are a real new entity - a Note
+        // ("notesheet") becomes a lightweight container that groups one or
+        // more Pages, each an independent canvas (its own `RichTextShape`s,
+        // ink, etc.) - the actual editable content moves down one level,
+        // from Note to Page. This mirrors the `notes` table's exact
+        // sync-bookkeeping column shape (id, title, user_id, order_index,
+        // content, canvas_data, created_at, updated_at, deleted_at, dirty,
+        // synced_at), swapping `folder_id`/`type` for a single required
+        // `note_id` FK (a page always belongs to a note, unlike a note's
+        // nullable `folder_id`). `user_id` is kept (not dropped in favor of
+        // joining through `notes`) so that subtask 14/15's data-access and
+        // Firestore-pull code can filter/query pages with the exact same
+        // flat `WHERE user_id = $1` / `where("userId", "==", userId)`
+        // pattern already used for notebooks/folders/notes - Firestore has
+        // no server-side joins, so this column is required, not optional.
+        // Both `content` and `canvas_data`
+        // are kept (rather than just `canvas_data`) to mirror `notes`'
+        // exact shape per spec.md's literal wording for the `Page` type -
+        // `notes.content`/`notes.canvas_data` are themselves left in place,
+        // untouched, consistent with this migration list's established
+        // non-destructive precedent (migrations 1-5 above never drop or
+        // repurpose a column). No backfill is needed here: subtask 14's
+        // atomic "new note always gets a default first page" and subtask
+        // 18's migration-of-existing-content into a page are separate,
+        // later subtasks - this migration only creates the empty table.
+        tauri_plugin_sql::Migration {
+            version: 6,
+            description: "create pages table",
+            sql: "
+                CREATE TABLE pages (
+                  id          TEXT PRIMARY KEY,
+                  note_id     TEXT NOT NULL REFERENCES notes(id),
+                  title       TEXT NOT NULL DEFAULT 'Untitled',
+                  user_id     TEXT NOT NULL,
+                  order_index INTEGER NOT NULL DEFAULT 0,
+                  content     TEXT,
+                  canvas_data TEXT,
+                  created_at  INTEGER NOT NULL,
+                  updated_at  INTEGER NOT NULL,
+                  deleted_at  INTEGER,
+                  dirty       INTEGER NOT NULL DEFAULT 1,
+                  synced_at   INTEGER
+                );
+
+                CREATE INDEX idx_pages_note       ON pages(note_id);
+                CREATE INDEX idx_pages_user_dirty ON pages(user_id, dirty);
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },

@@ -15,7 +15,8 @@ import { getSelectedThemeId } from "@/lib/themes/selection";
 import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
 import { loadThemes } from "@/lib/themes/loader";
 import { BUILTIN_THEMES } from "@/lib/themes/builtin";
-import { DEFAULT_THEME_VALUE } from "@/components/topbar/AccountMenu";
+import { getSystemTheme } from "@/lib/themes/system";
+import { SYSTEM_THEME_VALUE } from "@/components/topbar/AccountMenu";
 
 // New (spec.md subtask 4, "Root app shell"): the actual gatekeeper wiring
 // AuthProvider + the sync engine + the data hooks into real app lifecycle,
@@ -91,29 +92,49 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (shouldRedirect) router.replace("/login");
   }, [shouldRedirect, router]);
 
-  // Theme restore (spec.md subtask 19, "Theme picker"). Runs once on mount,
-  // independent of auth/user - the persisted theme choice is per-device UI
-  // state (like lastOpen.ts/quickAccessPrefs.ts), not user data, so there's
-  // no reason to gate it on a signed-in user. It IS gated on `isSpikeRoute`,
-  // though: applyTheme()/clearThemeOverrides() mutate document.documentElement's
+  // Theme restore (spec.md subtask 19, "Theme picker"; extended by subtask
+  // 11 for "System"). Runs once on mount, independent of auth/user - the
+  // persisted theme choice is per-device UI state (like lastOpen.ts/
+  // quickAccessPrefs.ts), not user data, so there's no reason to gate it on
+  // a signed-in user. It IS gated on `isSpikeRoute`, though:
+  // applyTheme()/clearThemeOverrides() mutate document.documentElement's
   // inline styles globally, so letting this run on a /spike-* harness would
   // silently reapply a previous session's theme choice there, breaking those
   // harnesses' assumption of a clean/default baseline (see isSpikeRoute's
-  // comment above). If the persisted id matches a built-in theme, apply it
-  // immediately (synchronously available, no disk I/O) to minimize any flash
-  // of default styling before this effect even runs React's commit phase.
-  // Then asynchronously load user themes, merge them into `availableThemes`,
-  // and if the persisted id turns out to match a *user* theme (not found
-  // among built-ins), apply it once that load resolves. If the persisted id
-  // matches nothing at all (deleted user theme file, corrupted localStorage,
-  // etc.), fall back to Default (no override applied) rather than leaving a
-  // stale/partial override active.
+  // comment above). If the persisted id is SYSTEM_THEME_VALUE or matches a
+  // built-in theme, apply it immediately (synchronously available, no disk
+  // I/O) to minimize any flash of default styling before this effect even
+  // runs React's commit phase. Then asynchronously load user themes, merge
+  // them into `availableThemes`, and if the persisted id turns out to match
+  // a *user* theme (not found among built-ins or "System"), apply it once
+  // that load resolves. If the persisted id matches nothing at all (deleted
+  // user theme file, corrupted localStorage, etc.), fall back to no override
+  // applied rather than leaving a stale/partial override active.
   useEffect(() => {
     if (isSpikeRoute) return;
 
     const persistedId = getSelectedThemeId();
 
-    if (persistedId) {
+    if (persistedId === SYSTEM_THEME_VALUE || !persistedId) {
+      // "System" (spec.md subtask 11): re-evaluate the OS's *current*
+      // preference on every restore rather than replaying whatever it was
+      // when the user first selected "System" - applyTheme() below always
+      // reads the live matchMedia state via getSystemTheme(), and
+      // AccountMenu.tsx's own matchMedia listener picks up from here once it
+      // mounts (gated on `selectedThemeId === SYSTEM_THEME_VALUE`, set here).
+      //
+      // A falsy `persistedId` (nothing ever persisted - e.g. a brand-new
+      // user who has never opened the theme dropdown) is treated the same
+      // as an explicit System selection rather than left as untracked
+      // `null`/no-override state: the store's initial `selectedThemeId` is
+      // `null`, which AccountMenu.tsx's radio group already displays as
+      // "System" checked, so this makes that displayed selection actually
+      // true (live OS-synced) and persists it explicitly going forward so
+      // this same gap doesn't silently recur on every future reload.
+      clearThemeOverrides();
+      applyTheme(getSystemTheme());
+      setSelectedThemeId(SYSTEM_THEME_VALUE);
+    } else if (persistedId) {
       const builtin = BUILTIN_THEMES.find((t) => t.id === persistedId);
       if (builtin) {
         clearThemeOverrides();
@@ -128,7 +149,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       .then(({ themes: userThemes }) => {
         if (cancelled) return;
         // Exclude any user theme whose id collides with either the reserved
-        // "__default__" sentinel (AccountMenu.tsx's DEFAULT_THEME_VALUE,
+        // "__system__" sentinel (AccountMenu.tsx's SYSTEM_THEME_VALUE,
         // which lib/themes/types.ts's isTheme() doesn't itself reject) or a
         // built-in theme's id - either collision would give the radio group
         // two items sharing the same `value`, permanently hiding the user
@@ -136,7 +157,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         // error surfaced. Treated the same as any other unusable theme file
         // (silently excluded), matching lib/themes/loader.ts's own handling.
         const usableUserThemes = userThemes.filter(
-          (t) => t.id !== DEFAULT_THEME_VALUE && !BUILTIN_THEMES.some((b) => b.id === t.id),
+          (t) => t.id !== SYSTEM_THEME_VALUE && !BUILTIN_THEMES.some((b) => b.id === t.id),
         );
         setAvailableThemes([...BUILTIN_THEMES, ...usableUserThemes]);
         setUserThemesLoaded(true);
