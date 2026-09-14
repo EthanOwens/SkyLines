@@ -3,7 +3,7 @@
 // engine subtask 17 built - these are ordinary in-memory `Theme` values
 // (not read from `<app-config-dir>/themes` via lib/themes/loader.ts, which
 // is reserved for user-authored theme files), imported directly from app
-// code, and each defines ALL 31 `ThemeVariableKey`s (a complete base theme,
+// code, and each defines ALL 27 `ThemeVariableKey`s (a complete base theme,
 // not a partial override set) so any one of them is enough on its own to
 // fully paint the app.
 //
@@ -37,11 +37,6 @@ export const LIGHT_THEME: Theme = {
     border: "oklch(0.922 0 0)",
     input: "oklch(0.922 0 0)",
     ring: "oklch(0.708 0 0)",
-    "chart-1": "oklch(0.809 0.105 251.813)",
-    "chart-2": "oklch(0.623 0.214 259.815)",
-    "chart-3": "oklch(0.546 0.245 262.881)",
-    "chart-4": "oklch(0.488 0.243 264.376)",
-    "chart-5": "oklch(0.424 0.199 265.638)",
     radius: "0.625rem",
     sidebar: "oklch(0.985 0 0)",
     "sidebar-foreground": "oklch(0.145 0 0)",
@@ -77,11 +72,6 @@ export const DARK_THEME: Theme = {
     border: "oklch(1 0 0 / 10%)",
     input: "oklch(1 0 0 / 15%)",
     ring: "oklch(0.556 0 0)",
-    "chart-1": "oklch(0.809 0.105 251.813)",
-    "chart-2": "oklch(0.623 0.214 259.815)",
-    "chart-3": "oklch(0.546 0.245 262.881)",
-    "chart-4": "oklch(0.488 0.243 264.376)",
-    "chart-5": "oklch(0.424 0.199 265.638)",
     radius: "0.625rem",
     sidebar: "oklch(0.205 0 0)",
     "sidebar-foreground": "oklch(0.985 0 0)",
@@ -128,11 +118,6 @@ export const GRUVBOX_DARK_THEME: Theme = {
     border: "#504945",
     input: "#3c3836",
     ring: "#7c6f64",
-    "chart-1": "#83a598",
-    "chart-2": "#8ec07c",
-    "chart-3": "#fabd2f",
-    "chart-4": "#fe8019",
-    "chart-5": "#d3869b",
     radius: "0.625rem",
     sidebar: "#1d2021",
     "sidebar-foreground": "#ebdbb2",
@@ -173,11 +158,6 @@ export const OFF_WHITE_THEME: Theme = {
     border: "oklch(0.87 0.014 75)",
     input: "oklch(0.9 0.012 78)",
     ring: "oklch(0.7 0.02 65)",
-    "chart-1": "oklch(0.7 0.08 70)",
-    "chart-2": "oklch(0.62 0.09 50)",
-    "chart-3": "oklch(0.55 0.1 35)",
-    "chart-4": "oklch(0.68 0.07 95)",
-    "chart-5": "oklch(0.6 0.06 140)",
     radius: "0.625rem",
     sidebar: "oklch(0.94 0.01 80)",
     "sidebar-foreground": "oklch(0.32 0.015 60)",

@@ -23,11 +23,6 @@ export type ThemeVariableKey =
   | "border"
   | "input"
   | "ring"
-  | "chart-1"
-  | "chart-2"
-  | "chart-3"
-  | "chart-4"
-  | "chart-5"
   | "radius"
   | "sidebar"
   | "sidebar-foreground"
@@ -60,11 +55,6 @@ export const THEME_VARIABLE_KEYS: readonly ThemeVariableKey[] = [
   "border",
   "input",
   "ring",
-  "chart-1",
-  "chart-2",
-  "chart-3",
-  "chart-4",
-  "chart-5",
   "radius",
   "sidebar",
   "sidebar-foreground",
