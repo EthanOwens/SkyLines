@@ -7,8 +7,10 @@ import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { createNote } from "@/lib/db/notes";
 import { createFolder } from "@/lib/db/folders";
+import { createStickyNote } from "@/lib/db/stickyNotes";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { nextOrderValue } from "@/lib/dnd/sidebar";
+import { openStickyNoteWindow } from "@/lib/stickyWindow";
 import { useAppStore } from "@/stores/appStore";
 import { FolderTree } from "./FolderTree";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -37,6 +39,7 @@ import {
   CloudOff,
   Loader2,
   CheckCircle2,
+  StickyNote as StickyNoteIcon,
 } from "lucide-react";
 
 // Ported from ../note_taking_app/components/sidebar/Sidebar.tsx (spec.md
@@ -126,6 +129,14 @@ export function Sidebar({ user }: Props) {
     }
   }
 
+  // Temporary trigger for spec.md subtask 8's own verification - the real
+  // UI entry points (Ctrl+K dialog, home page, ribbon button) land in
+  // subtasks 11/14/15 and will call the same openStickyNoteWindow() helper.
+  async function newStickyNote() {
+    const id = await createStickyNote(user.uid);
+    await openStickyNoteWindow(id);
+  }
+
   async function newFolder() {
     const notebookId = await resolveNotebookId();
     // See the comment in newNote above - same reasoning, scoped under the
@@ -181,6 +192,16 @@ export function Sidebar({ user }: Props) {
           />
           <TooltipContent side="right">New folder</TooltipContent>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button variant="ghost" size="icon" onClick={newStickyNote} className="h-8 w-8">
+                <StickyNoteIcon className="h-4 w-4" />
+              </Button>
+            }
+          />
+          <TooltipContent side="right">New sticky note</TooltipContent>
+        </Tooltip>
       </div>
     );
   }
@@ -224,6 +245,16 @@ export function Sidebar({ user }: Props) {
             }
           />
           <TooltipContent>New folder</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={newStickyNote}>
+                <StickyNoteIcon className="h-4 w-4" />
+              </Button>
+            }
+          />
+          <TooltipContent>New sticky note</TooltipContent>
         </Tooltip>
       </div>
 

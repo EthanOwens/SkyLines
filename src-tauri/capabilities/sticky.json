@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sticky",
+  "description": "Capability for sticky note pop-out windows (spec.md subtask 8), each labeled \"sticky-<id>\" by lib/stickyWindow.ts. default.json's capability only covers the \"main\" window, so these windows need their own grant to get any permissions at all - in particular sql:* for lib/db/stickyNotes.ts's CRUD.",
+  "windows": ["sticky-*"],
+  "permissions": [
+    "core:default",
+    "sql:default",
+    "sql:allow-execute",
+    "sql:allow-select"
+  ]
+}

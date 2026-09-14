@@ -70,6 +70,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // `publicRoute`.
   const isSpikeRoute = normalizedPathname?.startsWith("/spike-") ?? false;
 
+  // spec.md subtask 8 ("Sticky note pop-out window"): the sticky note route
+  // only ever loads inside its own dedicated pop-out Tauri window (see
+  // lib/stickyWindow.ts), never inside the main window's sidebar/ribbon
+  // shell - still auth-gated like every other real route, but rendered
+  // without AppLayout below.
+  const isStickyRoute = normalizedPathname === "/sticky";
+
   // Only wire the real signed-in user's uid into these hooks off of public
   // routes. Spike routes sign in with real Firebase accounts and drive the
   // sync engine / push logic manually to test it in isolation; since
@@ -78,8 +85,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // (lib/sync/engine.ts's startSyncEngine is a module-level singleton),
   // racing with and clobbering the spike harness's own manual control.
   // Passing `undefined` makes each hook no-op per its own `if (!userId)
-  // return;` guard.
-  const syncUserId = publicRoute ? undefined : user?.uid;
+  // return;` guard. Also excluded on `isStickyRoute`: each Tauri
+  // WebviewWindow is its own JS runtime, so the sticky pop-out would
+  // otherwise boot a second, fully independent sync engine plus live
+  // notes/folders/notebooks subscriptions that StickyNoteEditor.tsx never
+  // reads (it only calls getStickyNoteById/updateStickyNote directly).
+  const syncUserId = publicRoute || isStickyRoute ? undefined : user?.uid;
 
   useSyncEngine(syncUserId);
   useNotes(syncUserId);
@@ -273,7 +284,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // already handled loading/redirect, and public routes like /login and
   // every /spike-* harness manage their own full-page layout and must not
   // get the shell wrapped around them here).
-  if (publicRoute) {
+  if (publicRoute || isStickyRoute) {
     return <>{children}</>;
   }
 

@@ -14,6 +14,7 @@
     "sql:allow-execute",
     "sql:allow-select",
     "shell:allow-open",
+    "core:webview:allow-create-webview-window",
     "deep-link:default",
     "global-shortcut:allow-register",
     {
