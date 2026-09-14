@@ -42,6 +42,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import {
   BaseBoxShapeUtil,
+  createShapePropsMigrationIds,
+  createShapePropsMigrationSequence,
   HTMLContainer,
   T,
   stopEventPropagation,
@@ -131,6 +133,14 @@ export type RichTextShapeProps = {
   // Tiptap JSON document, or `null` for an empty shape - mirrors
   // `Note.content`'s `object | null` (types/index.ts).
   content: object | null;
+  // spec.md subtask 4 ("per-shape last-edited timestamp"). Plain millisecond
+  // Unix timestamp, same representation lib/db/pages.ts's `created_at`/
+  // `updated_at` columns already use - NOT rendered by this file (that's a
+  // later subtask); just kept up to date on every content edit below so it's
+  // available for that subtask to read. Persisted for free as part of
+  // `shape.props`, via tldraw's own snapshot mechanism (see this file's
+  // header comment) - no separate DB column.
+  lastEditedAt: number;
 };
 
 // Augments tldraw's own `TLShape` union (see @tldraw/tlschema's
@@ -147,6 +157,45 @@ declare module "@tldraw/tlschema" {
 
 export type RichTextShape = TLBaseShape<"rich-text", RichTextShapeProps>;
 
+// spec.md subtask 4's backward-compatibility mechanism. Existing shapes
+// already saved to disk (in a page's `canvasData` snapshot, from before
+// `lastEditedAt` was added) don't have this prop at all - tldraw's own
+// props validator (`static override props` below, run on every shape record
+// loaded via `editor.loadSnapshot()`) rejects a record whose props object is
+// missing ANY key the validator declares, since `RecordProps` validates
+// every declared key as required unless the validator itself is
+// `.optional()`. Rather than making `lastEditedAt` optional in the type
+// (which would push "never edited" handling onto every future reader,
+// including subtask 5's renderer), this follows the exact pattern tldraw's
+// own built-in shapes use for adding a new required prop to an existing
+// shape type (see e.g. @tldraw/tlschema's TLNoteShape.ts `AddFontSizeAdjustment`/
+// `AddScale`/`AddLabelColor` migrations, which backfill a default onto old
+// prop objects with `props.foo = <default>` BEFORE the props validator ever
+// runs): a `TLPropsMigrationSequence`, registered via `static override
+// migrations` below, that backfills `lastEditedAt` onto any pre-existing
+// record that doesn't have it yet.
+const Versions = createShapePropsMigrationIds("rich-text", {
+  AddLastEditedAt: 1,
+});
+
+export const richTextShapeMigrations = createShapePropsMigrationSequence({
+  sequence: [
+    {
+      id: Versions.AddLastEditedAt,
+      up: (props) => {
+        // `0` (not `Date.now()`) so migrated-up old shapes are
+        // indistinguishable from a real "never edited" epoch, rather than
+        // silently backdating them to whenever this migration happened to
+        // run.
+        props.lastEditedAt = 0;
+      },
+      down: (props) => {
+        delete props.lastEditedAt;
+      },
+    },
+  ],
+});
+
 export class RichTextShapeUtil extends BaseBoxShapeUtil<RichTextShape> {
   static override type = "rich-text" as const;
 
@@ -160,14 +209,21 @@ export class RichTextShapeUtil extends BaseBoxShapeUtil<RichTextShape> {
     w: T.number,
     h: T.number,
     content: T.jsonValue.nullable() as unknown as T.Validatable<object | null>,
+    lastEditedAt: T.number,
   };
+
+  static override migrations = richTextShapeMigrations;
 
   override canEdit() {
     return true;
   }
 
   override getDefaultProps(): RichTextShape["props"] {
-    return { w: 320, h: 200, content: null };
+    // A freshly-created shape has never actually been edited yet - `Date.now()`
+    // here (rather than `0`, the migrated-up-from-legacy sentinel above)
+    // reflects that the shape itself was just created "now", matching how a
+    // brand-new shape is the most-recently-touched thing on the canvas.
+    return { w: 320, h: 200, content: null, lastEditedAt: Date.now() };
   }
 
   component(shape: RichTextShape) {
@@ -224,7 +280,10 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
         tldrawEditor.updateShape<RichTextShape>({
           id: shape.id,
           type: "rich-text",
-          props: { content: editor.getJSON() },
+          // `lastEditedAt` updates atomically with `content` in this same
+          // shape-update transaction, on every edit (not just on blur) - per
+          // spec.md subtask 4's explicit decision.
+          props: { content: editor.getJSON(), lastEditedAt: Date.now() },
         });
       },
     },
