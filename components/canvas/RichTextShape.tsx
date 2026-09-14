@@ -90,6 +90,23 @@ import "@/components/editor/editor.css";
 
 const lowlight = createLowlight(common);
 
+// spec.md subtask 5 ("faded short-form timestamp"). No existing
+// date-formatting helper elsewhere in the codebase (checked lib/ for
+// `toLocaleDateString`/`Intl.DateTimeFormat`/a `formatDate`-style util) -
+// this is small/local enough not to warrant a shared module. `Intl.
+// DateTimeFormat` (rather than string-concatenating `toLocaleDateString()` +
+// `toLocaleTimeString()`) so the two are always in a single consistent
+// order/format like the spec's own "Sep 5, 2:55 PM" example.
+const shortTimestampFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+function formatShortTimestamp(ms: number) {
+  return shortTimestampFormatter.format(new Date(ms));
+}
+
 // spec.md (new spec) subtask 1 ("RichTextShape visual redesign"). tldraw
 // tracks the currently-hovered shape reactively via its own geometry-based
 // pointer hit-testing (see tldraw's own
@@ -745,6 +762,34 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
         )}
         <EditorContent editor={tiptapEditor} className="h-full px-2 py-1" />
         </div>
+        {/* spec.md subtask 5. Faded short-form last-edited timestamp -
+            gated on `showChrome` (same hover-or-editing condition as the
+            drag-handle bar/dashed border above) for consistency with this
+            shape's existing chrome pattern, rather than always-on clutter
+            over the shape's small default 320x200 size. Absolutely
+            positioned in the bottom-right corner (its own row, below the
+            8px handle bar at top) so it never overlaps the handle bar or
+            crowds the text content area above it; `pointer-events: none`
+            since it's a purely informational label, not interactive.
+            `lastEditedAt === 0` is the migration's sentinel for a
+            pre-existing shape that's never actually been edited since this
+            feature shipped (see `richTextShapeMigrations` above) - skipped
+            entirely rather than rendering a garbage "Jan 1, 1970" date. */}
+        {showChrome && shape.props.lastEditedAt !== 0 && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 2,
+              right: 4,
+              pointerEvents: "none",
+              color: "var(--muted-foreground)",
+              opacity: 0.6,
+            }}
+            className="select-none text-[10px] leading-none"
+          >
+            {formatShortTimestamp(shape.props.lastEditedAt)}
+          </div>
+        )}
       </div>
     </HTMLContainer>
   );
