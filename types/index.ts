@@ -97,4 +97,27 @@ export interface Page {
   deletedAt: number | null;
 }
 
+// StickyNote (spec.md subtask 7): a top-level entity of its own, not scoped
+// to a Note/Page the way Page is scoped via `noteId` - a sticky note lives
+// independently, its own pop-out window. Mirrors `Note`'s sync-bookkeeping
+// shape minus the folder/notebook/type/order fields (sticky notes don't
+// live in the folder tree), plus `topBarColor` (nullable - null means "use
+// the active theme's --primary", per spec.md subtask 9's fallback, not
+// implemented here) and `pinned`.
+export interface StickyNote {
+  id: string;
+  userId: string;
+  title: string;
+  content?: object | null; // TipTap JSON doc
+  topBarColor: string | null;
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+  // Sync bookkeeping (mirrors sqlite `sticky_notes` columns
+  // dirty/synced_at/deleted_at, added per spec.md subtask 7).
+  dirty: boolean;
+  syncedAt: number | null;
+  deletedAt: number | null;
+}
+
 export type SyncStatus = "saved" | "syncing" | "offline" | "error";

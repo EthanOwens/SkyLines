@@ -524,6 +524,42 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
+        // spec.md subtask 7 ("Sticky notes"): sticky notes are their own
+        // top-level entity (not scoped to a note/page the way `pages` are
+        // scoped to `notes` via `note_id`), so this mirrors `notes`' exact
+        // sync-bookkeeping column shape (id, title, user_id, content,
+        // created_at, updated_at, deleted_at, dirty, synced_at) minus the
+        // folder/notebook/type/order columns notes has (sticky notes don't
+        // live in the folder tree), plus two sticky-note-specific columns:
+        // `top_bar_color` (nullable TEXT CSS color string - NULL means "use
+        // the active theme's --primary", per spec.md subtask 9; that
+        // fallback-resolution logic is out of scope here, this migration
+        // only needs the column to be nullable) and `pinned` (INTEGER 0/1,
+        // following the same boolean-as-integer convention `dirty` already
+        // uses on every table in this file rather than a native BOOLEAN
+        // type). No backfill needed: this is a brand new table.
+        tauri_plugin_sql::Migration {
+            version: 7,
+            description: "create sticky_notes table",
+            sql: "
+                CREATE TABLE sticky_notes (
+                  id             TEXT PRIMARY KEY,
+                  user_id        TEXT NOT NULL,
+                  title          TEXT NOT NULL DEFAULT 'Untitled',
+                  content        TEXT,
+                  top_bar_color  TEXT,
+                  pinned         INTEGER NOT NULL DEFAULT 0,
+                  created_at     INTEGER NOT NULL,
+                  updated_at     INTEGER NOT NULL,
+                  deleted_at     INTEGER,
+                  dirty          INTEGER NOT NULL DEFAULT 1,
+                  synced_at      INTEGER
+                );
+
+                CREATE INDEX idx_sticky_notes_user_dirty ON sticky_notes(user_id, dirty);
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
     ];
 
     // M5 (spec.md subtask 21): Google sign-in uses a system-browser +
