@@ -62,6 +62,27 @@ interface Props {
   note: Note;
 }
 
+// Long-form "Wednesday, September 5, 2026 2:55 PM" stamp for the page
+// header's last-edited line - deliberately separate from RichTextShape.tsx's
+// own short-form timestamp formatter (different format, different file).
+// Formatted as two separate calls rather than one combined formatter:
+// Intl's default en-US pattern inserts "at" between date and time when both
+// are requested from a single formatter.
+const longDateFormatter = new Intl.DateTimeFormat(undefined, {
+  weekday: "long",
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+const longTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+function formatLongLastEdited(ms: number) {
+  const d = new Date(ms);
+  return `${longDateFormatter.format(d)} ${longTimeFormatter.format(d)}`;
+}
+
 export function CanvasEditor({ note }: Props) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Whether a debounced save is pending, so it can be flushed synchronously
@@ -145,7 +166,9 @@ export function CanvasEditor({ note }: Props) {
       // above and would otherwise get clobbered.
       const freshPages = useAppStore.getState().pages;
       setPages(
-        freshPages.map((p) => (p.id === selectedPage.id ? { ...p, title: trimmed } : p)),
+        freshPages.map((p) =>
+          p.id === selectedPage.id ? { ...p, title: trimmed, updatedAt: Date.now() } : p,
+        ),
       );
     }
   }
@@ -232,7 +255,17 @@ export function CanvasEditor({ note }: Props) {
           pendingSaveRef.current = true;
           saveTimer.current = setTimeout(() => {
             const snapshot = editor.getSnapshot();
-            void updatePage(page.id, { canvasData: snapshot as unknown as object });
+            void updatePage(page.id, { canvasData: snapshot as unknown as object }).then(() => {
+              // `updatePage` only writes to the DB - without this, the
+              // in-memory `pages` store (and the header's `updatedAt`
+              // display) would go stale until something else refreshes it.
+              const freshPages = useAppStore.getState().pages;
+              setPages(
+                freshPages.map((p) =>
+                  p.id === page.id ? { ...p, updatedAt: Date.now() } : p,
+                ),
+              );
+            });
             pendingSaveRef.current = false;
           }, 800);
         },
@@ -250,7 +283,14 @@ export function CanvasEditor({ note }: Props) {
         if (pendingSaveRef.current) {
           pendingSaveRef.current = false;
           const snapshot = editor.getSnapshot();
-          void updatePage(page.id, { canvasData: snapshot as unknown as object });
+          void updatePage(page.id, { canvasData: snapshot as unknown as object }).then(() => {
+            const freshPages = useAppStore.getState().pages;
+            setPages(
+              freshPages.map((p) =>
+                p.id === page.id ? { ...p, updatedAt: Date.now() } : p,
+              ),
+            );
+          });
         }
       };
     },
@@ -285,6 +325,9 @@ export function CanvasEditor({ note }: Props) {
             }
           }}
         />
+      </div>
+      <div className="shrink-0 px-4 py-1 text-xs text-muted-foreground">
+        {formatLongLastEdited(selectedPage.updatedAt)}
       </div>
       <div className="canvas-editor-canvas relative flex-1">
       {/* Hides tldraw's own native toolbar/menu/style-panel chrome so
