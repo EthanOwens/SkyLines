@@ -22,10 +22,12 @@ import { TextStyle, FontSize } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import { useAppStore } from "@/stores/appStore";
+import { useAuthContext } from "@/components/AuthProvider";
 import type { Note } from "@/types";
 import { formatActions, selectFormatActionState } from "@/components/ribbon/formatActions";
 import { cn } from "@/lib/utils";
 import { Link as LinkIcon } from "lucide-react";
+import { LinkOrStickyDialog } from "./LinkOrStickyDialog";
 import "./editor.css";
 
 // Subset of the Format tab's actions (spec.md subtask 11, "Bubble menu") -
@@ -48,6 +50,8 @@ interface Props {
 export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
   const [title, setTitle] = useState(note.title || "Untitled");
   const setActiveEditor = useAppStore((s) => s.setActiveEditor);
+  const { user } = useAuthContext();
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
 
   const editor = useEditor({
     extensions: [
@@ -127,15 +131,8 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
 
   const setLink = useCallback(() => {
     if (!editor) return;
-    const prev = bubbleMenuState?.link ?? "https://";
-    const url = window.prompt("URL", prev);
-    if (url === null) return;
-    if (url === "") {
-      editor.chain().focus().extendMarkRange("link").unsetLink().run();
-    } else {
-      editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
-    }
-  }, [editor, bubbleMenuState]);
+    setLinkDialogOpen(true);
+  }, [editor]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -208,6 +205,14 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
         />
         <EditorContent editor={editor} className="flex-1" />
       </div>
+
+      <LinkOrStickyDialog
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        editor={editor}
+        currentUrl={bubbleMenuState?.link ?? null}
+        userId={user?.uid ?? null}
+      />
     </div>
   );
 }

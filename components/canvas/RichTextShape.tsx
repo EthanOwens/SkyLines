@@ -39,7 +39,7 @@
 // text-selection drags inside the editor from being reinterpreted as a
 // shape-drag gesture by tldraw's canvas-level pointer handling.
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BaseBoxShapeUtil,
   createShapePropsMigrationIds,
@@ -70,6 +70,8 @@ import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import { useAppStore } from "@/stores/appStore";
+import { useAuthContext } from "@/components/AuthProvider";
+import { LinkOrStickyDialog } from "@/components/editor/LinkOrStickyDialog";
 import { suppressReenterEditAfterEndingSession } from "./RichTextTool";
 import {
   formatActions,
@@ -261,6 +263,8 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   const showChrome = isHovered || isEditing;
   const setActiveEditor = useAppStore((s) => s.setActiveEditor);
   const setPendingEditClickPoint = useAppStore((s) => s.setPendingEditClickPoint);
+  const { user } = useAuthContext();
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
 
   const tiptapEditor = useTiptapEditor(
     {
@@ -499,15 +503,8 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
 
   const setLink = useCallback(() => {
     if (!tiptapEditor) return;
-    const prev = bubbleMenuState?.link ?? "https://";
-    const url = window.prompt("URL", prev);
-    if (url === null) return;
-    if (url === "") {
-      tiptapEditor.chain().focus().extendMarkRange("link").unsetLink().run();
-    } else {
-      tiptapEditor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
-    }
-  }, [tiptapEditor, bubbleMenuState]);
+    setLinkDialogOpen(true);
+  }, [tiptapEditor]);
 
   return (
     <HTMLContainer id={shape.id}>
@@ -791,6 +788,13 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           </div>
         )}
       </div>
+      <LinkOrStickyDialog
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        editor={tiptapEditor}
+        currentUrl={bubbleMenuState?.link ?? null}
+        userId={user?.uid ?? null}
+      />
     </HTMLContainer>
   );
 }
