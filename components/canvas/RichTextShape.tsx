@@ -72,6 +72,7 @@ import Highlight from "@tiptap/extension-highlight";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthContext } from "@/components/AuthProvider";
 import { LinkOrStickyDialog } from "@/components/editor/LinkOrStickyDialog";
+import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { suppressReenterEditAfterEndingSession } from "./RichTextTool";
 import {
   formatActions,
@@ -292,6 +293,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
         attributes: {
           class: "tiptap prose prose-sm dark:prose-invert max-w-none focus:outline-none h-full",
         },
+        ...stickyLinkClickEditorProps(),
       },
       onUpdate({ editor }) {
         // Writes the new Tiptap content back into the shape's own props via

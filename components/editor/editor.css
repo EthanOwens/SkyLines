@@ -65,6 +65,41 @@
   cursor: pointer;
 }
 
+/* Sticky note embed references (spec.md subtask 12) - a plain Tiptap `Link`
+   mark whose href uses the `sticky:<id>` scheme (spec.md subtask 11), styled
+   as a pill/chip so it visibly reads as an embedded reference rather than a
+   hyperlink. Selector specificity (`.tiptap a[href^="sticky:"]`, one class +
+   one attribute selector) is higher than the plain `.tiptap a` rule above
+   (one class + one tag selector) regardless of source order, so `color`/
+   `text-decoration` are reliably overridden here. */
+.tiptap a[href^="sticky:"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.05em 0.5em;
+  border-radius: 999px;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  text-decoration: none;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tiptap a[href^="sticky:"]::before {
+  content: "";
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.tiptap a[href^="sticky:"]:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
 /* Images */
 .tiptap img {
   max-width: 100%;

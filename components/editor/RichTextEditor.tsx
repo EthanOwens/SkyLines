@@ -28,6 +28,7 @@ import { formatActions, selectFormatActionState } from "@/components/ribbon/form
 import { cn } from "@/lib/utils";
 import { Link as LinkIcon } from "lucide-react";
 import { LinkOrStickyDialog } from "./LinkOrStickyDialog";
+import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import "./editor.css";
 
 // Subset of the Format tab's actions (spec.md subtask 11, "Bubble menu") -
@@ -78,6 +79,7 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
       attributes: {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[60vh] px-1",
       },
+      ...stickyLinkClickEditorProps(),
     },
     onUpdate({ editor }) {
       onChange(editor.getJSON());
