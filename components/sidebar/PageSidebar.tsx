@@ -129,7 +129,7 @@ export function PageSidebar({ note }: Props) {
 
   if (collapsed) {
     return (
-      <div className="flex h-full w-10 shrink-0 flex-col items-center gap-2 border-r border-border bg-sidebar py-3">
+      <div className="flex h-full w-10 shrink-0 flex-col items-center gap-2 bg-sidebar py-3">
         <Tooltip>
           <TooltipTrigger
             render={
@@ -145,7 +145,7 @@ export function PageSidebar({ note }: Props) {
   }
 
   return (
-    <div className="flex h-full w-52 shrink-0 flex-col border-r border-border bg-sidebar">
+    <div className="flex h-full w-52 shrink-0 flex-col bg-sidebar">
       <div className="flex h-12 items-center justify-between px-3">
         <span className="text-sm font-semibold text-sidebar-foreground">Pages</span>
         <div className="flex items-center gap-1">

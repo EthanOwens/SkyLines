@@ -38,7 +38,6 @@ import {
   Square,
   Circle,
   ArrowUpRight,
-  Type,
   ChevronDown,
 } from "lucide-react";
 import {
@@ -413,7 +412,7 @@ function DrawTab() {
 
   return (
     <div className="flex items-center gap-0.5 overflow-x-auto">
-      <FormatBtn tip="Select" active={liveToolId === "select"} onClick={() => setTool("select")}>
+      <FormatBtn tip="Select" active={liveToolId === "rich-text"} onClick={() => setTool("rich-text")}>
         <MousePointer2 className="h-3.5 w-3.5" />
       </FormatBtn>
       <div className="flex items-center">
@@ -544,16 +543,6 @@ function DrawTab() {
           {s.value.toUpperCase()}
         </FormatBtn>
       ))}
-
-      <Separator orientation="vertical" className="mx-1 h-5" />
-
-      <FormatBtn
-        tip="Back to text"
-        active={liveToolId === "rich-text"}
-        onClick={() => setTool("rich-text")}
-      >
-        <Type className="h-3.5 w-3.5" />
-      </FormatBtn>
     </div>
   );
 }

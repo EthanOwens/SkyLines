@@ -1,295 +1,219 @@
-# Skylines — Canvas/sidebar bug fixes, page confinement, style panel retirement, theme editor
+# Skylines — Bullet formatting, theme editor cleanup, timestamps, Sticky Notes
 
 ## Goal
 
-A second batch of fixes and features on top of the prior "Canvas polish,
-sidebar management, theming, and Pages" spec: fix a critical bug where
-switching pages within a note silently shares/overwrites canvas content
-across pages, fix a marquee-select interaction bug and a sidebar
-drag-and-drop regression, add folder-scoped note/folder creation, clean up
-dead File-tab buttons, add per-page canvas confinement with a synced title
-header, fix rich-text default color to follow the active theme, retire
-tldraw's native floating style panel in favor of ribbon-integrated controls,
-and build a full in-app theme editor (color-wheel editing, live preview,
-file-backed persistence, undo history).
+Verify/fix bullet-list auto-formatting across all text-editing surfaces,
+clean up the theme editor's cluttered variable list, add last-edited
+timestamps to canvas text boxes and pages, and build a full Sticky Notes
+feature: pop-out, always-on-top mini windows embeddable into any text area
+via Ctrl+K, with their own formatting chrome, a home page for browsing/
+creating them, and screenshot-to-sticky-note capture.
 
 ## Non-Goals
 
-- **Don't touch the Tiptap bubble menu** (built in the prior spec's M3,
-  subtasks 4-6 — bold/italic/highlight/lists/font/color that appears when
-  selecting text inside a `RichTextShape`). Planning's "menu with a grid of
-  colors/sizes in the top right of the canvas" was confirmed via screenshot
-  to be tldraw's own native `StylePanel`, a completely separate UI surface —
-  not this bubble menu. The bubble menu is untouched by this spec.
-- **Don't wire up Tailwind's `.dark` class toggling app-wide.** The
-  default-text-color fix (subtask 8) is a targeted CSS fix using the active
-  theme's `--foreground` variable directly. The broader discovery that no
-  `dark:` variant anywhere in the app has ever activated (since nothing
-  toggles a `.dark` class) is a real but separately-scoped issue, explicitly
-  left alone per this spec's own decision — nothing else in the app
-  currently depends on `dark:` variants working.
-- **Don't rebuild the sidebar drag-and-drop mechanism's core logic**
-  (`lib/dnd/sidebar.ts`) beyond fixing whatever the "no-drop cursor" bug's
-  actual root cause turns out to be — this is a bug fix, not a redesign of
-  the DnD system built in the prior spec's M4.
-- **Don't build a generic, app-wide undo/redo system.** The theme editor's
-  Ctrl+Z history (subtask 19) is scoped only to that editor's own
-  in-session edit history, not a global undo mechanism, and is unrelated to
-  tldraw's/Tiptap's own existing undo/redo (which stay untouched).
-- **Don't touch the sync engine, auth, notebook-level CRUD beyond the
-  File-tab button removal, or `../note_taking_app`.**
+- **Don't touch the theme editor's color-editing mechanics** (color wheel,
+  Save/Discard, undo/redo, context menu, file persistence) — only which
+  variables are shown and how they're grouped.
+- **Don't change existing plain-URL hyperlink behavior** — Ctrl+K's new
+  dialog adds sticky-note options alongside the existing URL path, it
+  doesn't change how a plain URL link is parsed/rendered/clicked.
+- **Don't build real-time multi-device sync for sticky notes beyond this
+  app's existing local-first + debounced Firestore push pattern** — reuse
+  `lib/sync/engine.ts`'s established mechanism (dirty/synced_at columns,
+  `notifyDataChange`), not a new sync system.
+- **Sticky notes are desktop-only for this spec.** Multi-window management
+  (pop-out windows, always-on-top, focus/blur chrome) doesn't translate
+  cleanly to the existing Android build target — Android behavior for
+  sticky notes is explicitly out of scope; the feature can be gated to
+  desktop only.
+- **Screenshot capture targets Windows first.** Cross-platform screen
+  capture APIs differ significantly (macOS/Linux need separate permission
+  models and APIs) — only Windows needs to work for this spec; macOS/Linux
+  support is a stretch goal, not a blocker.
+- **Don't touch `../note_taking_app`** or any other sibling project.
 
 ## Subtasks
 
-### M1 — Critical canvas bug fixes
+### M1 — Bullet-list formatting
 
-1. **Fix pages sharing/overwriting canvas content.** `CanvasEditor.tsx`
-   currently renders `<Tldraw>` with no `key` tied to `selectedPageId` (only
-   `key={note.id}` further up in `app/canvas/page.tsx`), and `handleMount`'s
-   `useEvent`-wrapped `onMount` only ever fires once per editor instance —
-   so switching pages never reloads the canvas, and the autosave listener
-   keeps writing to whichever page was selected at first mount, regardless
-   of which page is currently selected. Fix by giving `<Tldraw>` a `key`
-   derived from `selectedPage.id`, so switching pages fully remounts the
-   editor (fresh `onMount`, fresh snapshot load, fresh autosave closure
-   correctly scoped to the new page) — same remount-on-switch pattern
-   already used for note-switching. Verify the loading-spinner state
-   (`pagesLoading`/`!selectedPage`) still displays correctly during a page
-   switch's brief remount, and that unmount-flush logic for the
-   previously-selected page still fires correctly on the outgoing instance
-   before the new one mounts.
-2. **Fix resize/rotate handles after a marquee-select handoff.** A marquee
-   selection made via `RichTextTool.tsx`'s handoff to tldraw's own
-   `select.brushing` correctly persists after `watchForReturnToSelectIdle`
-   switches back to the `rich-text` tool (confirmed: tldraw selection state
-   is independent of the active tool). However, `RichTextTool`'s
-   `Idle.onPointerDown` currently ignores `info.target` and always does its
-   own hit-test, so grabbing a selection's resize/rotate handle after this
-   handoff gets reinterpreted as a shape-translate drag instead of an actual
-   resize/rotate. Fix `Idle.onPointerDown` (and/or add a new state) to
-   detect `info.target === "selection"` and hand off to tldraw's own
-   `select` tool's resizing/rotating child states correctly, mirroring the
-   existing `handOffToBrushing`/`handOffToTranslating` pattern. Also verify
-   (and fix if broken) that Delete and Format-tab/bubble-menu actions
-   correctly operate on a multi-shape selection while the `rich-text` tool
-   is active — confirm live, don't assume.
-3. **Fix sidebar drag-and-drop showing a "no-drop" cursor.** Static analysis
-   found no code-level cause — every `dragover` handler correctly calls
-   `preventDefault()`, `dropEffect`/`effectAllowed` are correctly paired,
-   and the `ContextMenu` wrapper added in the prior spec's M4 subtask 8
-   correctly forwards all drag-related props unchanged. This needs live
-   debugging (CDP) to find the actual root cause — candidate hypotheses to
-   check first: a WebView2 (Tauri/Windows)-specific quirk with custom
-   MIME-type visibility during `dragover` (would make `isSidebarDragEvent()`
-   silently return `false`), or a timing/ordering issue between
-   `ContextMenuTrigger`'s own event wiring and native drag events. Fix
-   whatever the actual cause turns out to be.
+1. **Verify and fix bullet-list auto-formatting in both existing editors.**
+   Tiptap's `StarterKit` (already used by both `RichTextEditor.tsx` and
+   `RichTextShape.tsx`) includes `@tiptap/extension-list`, which already
+   provides: a `wrappingInputRule` that auto-converts `-`/`*`/`+` + space
+   into a bullet list, `Enter` continuing the list via `splitListItem`, and
+   `Tab`/`Shift-Tab` bound to `sinkListItem`/`liftListItem` for indent/
+   outdent. Live-test all of this in both editors (full-page notes and
+   canvas text boxes) and fix whatever's actually broken or missing (e.g.
+   confirm Backspace at the start of an empty list item outdents/exits the
+   list rather than just deleting a character — verify against Tiptap's
+   actual default keymap rather than assuming). Do not build bullet-list
+   behavior from scratch if it already works — this subtask is a
+   verify-and-patch pass, not a rewrite.
 
-### M2 — Sidebar: folder selection for scoped creation
+### M2 — Theme editor cleanup
 
-4. **Click-to-select a folder, scoping "New Note"/"New Folder" creation.**
-   Currently there is no "selected folder" concept anywhere — the sidebar
-   toolbar's "+" buttons always create at the notebook root, and per-folder
-   creation only happens via that folder's own inline "+"/context-menu
-   actions. Add a persisted "selected folder" UI state (e.g.
-   `stores/appStore.ts`): clicking a folder row highlights it (visually,
-   faintly, distinct from hover) and keeps it selected across renders;
-   clicking empty space/the notebook root clears the selection back to
-   root-scoped. The sidebar toolbar's "New Note"/"New Folder" buttons create
-   under the selected folder when one is selected, or at the notebook root
-   when none is. Existing per-row inline creation actions are unaffected.
+2. **Remove the 5 dead theme variables.** `chart-1` through `chart-5`
+   (`ThemeVariableKey` in `lib/themes/types.ts`, `app/globals.css`'s
+   `:root`/`.dark` blocks, `lib/themes/builtin.ts`'s palettes, and the
+   corresponding `ThemeColorField` rows in `ThemeEditor.tsx`) are confirmed
+   dead — a codebase-wide search found no `chart-*` Tailwind class anywhere
+   in `components/`, since this app has no chart/graph feature. Remove all
+   five entirely from the theme system (type union, validation array, CSS
+   variable declarations, built-in palettes, and the editor's field list) —
+   not just hide them in the UI.
+3. **Group the theme editor's remaining color fields.** `ThemeEditor.tsx`'s
+   right sidebar currently renders all 26 remaining `ThemeVariableKey`s as
+   one flat list. Reorganize into labeled sections matching how they're
+   actually used: Base & Text (`background`/`foreground`), Card, Popover,
+   Primary/Secondary/Accent, Destructive, Border/Input/Focus Ring, Radius,
+   Sidebar. Purely a presentation/grouping change — the fields, their
+   editing behavior, and the underlying data model are untouched.
 
-### M3 — File tab cleanup
+### M3 — Last-edited timestamps
 
-5. **Delete "Swap Notebook" and "New Notebook" buttons.** Both currently
-   call the same `returnToPicker` function (functional, but "New Notebook"
-   doesn't actually create a notebook — it's mislabeled). Per explicit
-   instruction, just delete both buttons from the File tab; it's fine for
-   the File tab to end up with fewer/no actions for now.
+4. **Add a per-shape last-edited timestamp to canvas text boxes.**
+   `RichTextShape.tsx`'s shape props gain a new field (e.g.
+   `lastEditedAt: number`), updated to `Date.now()` on every content change
+   via the existing `onUpdate` handler (per explicit decision: updates live
+   on every edit, not just on blur) — persisted the same way the rest of
+   `shape.props` already is (part of the page's `canvasData` snapshot, no
+   separate DB column needed).
+5. **Render the faded short-form timestamp on each text box.** A small,
+   muted, faded date+time string (short form, e.g. "Sep 5, 2:55 PM") shown
+   somewhere on the shape — exact placement/visibility rules (always shown
+   vs. only on hover/edit like the existing chrome) are implementation-time
+   visual judgment, following this app's existing shadcn/Tailwind
+   conventions.
+6. **Add the long-form last-edited line under the page title.** The canvas
+   page header (`CanvasEditor.tsx`) already has a border-bottom line below
+   the title (from the prior spec's M4 subtask 7). Render a long-form
+   date/time stamp under that line (e.g. "Wednesday, September 5, 2026
+   2:55 PM") reflecting the page's own `updated_at` (already tracked in
+   `lib/db/pages.ts`'s schema — no new data needed), updating live as the
+   page's title or canvas content changes.
 
-### M4 — Canvas confinement + page title header
+### M4 — Sticky Notes
 
-6. **Per-page canvas confinement, expandable on overflow.** Each page's
-   canvas should default to a bounded (not infinitely pannable)
-   top-and-bottom area — matching a normal document page's feel — but if
-   shape content is moved/resized/created beyond the current bounds, the
-   confined area expands to include it, rather than clipping/blocking the
-   user. Implement using tldraw's camera-constraints API
-   (`editor.setCameraOptions`) verified against the actual installed
-   tldraw version at implementation time — this needs custom logic tracking
-   the union of a default page-sized bound and the current shapes' actual
-   bounds, reactively updating the camera constraints as shapes change.
-7. **Page title header on the canvas.** Render a title header above the
-   confined canvas area, with a horizontal line below it (a border, not
-   `text-decoration: underline`). The header's text is the page's title,
-   editable inline directly on the canvas. Editing the title either on the
-   canvas header or in the Page sidebar (`PageItem.tsx`) updates both
-   immediately (both read from/write through the same shared
-   `stores/appStore.ts` `pages` state already established in the prior
-   spec's M6, so this is a matter of wiring the canvas-side edit through the
-   same `updatePage` + shared-state-refresh path the sidebar rename already
-   uses, not building a second, separate sync mechanism).
-
-### M5 — Theme-aware default text color
-
-8. **Fix rich-text default (unset) color to follow the active theme.**
-   `RichTextShape.tsx`'s Tiptap content currently uses Tailwind Typography's
-   `prose`/`dark:prose-invert` classes, which supply their own fixed color
-   tokens completely independent of this app's `--foreground` theme
-   variable — and since nothing in the theme engine ever toggles a `.dark`
-   class (a separate, out-of-scope discovery — see Non-Goals),
-   `dark:prose-invert` never activates for any theme, so rich text always
-   renders with the same light-mode color regardless of active theme. Fix
-   by overriding the rich-text editor's base/default text color (only the
-   *unset* case — text with an explicit manually-chosen color, via
-   `applyTextColor`, must be untouched) to inherit `hsl(var(--foreground))`
-   directly, matching how `editor.css`'s placeholder/blockquote/link rules
-   already correctly reference theme variables.
-
-### M6 — Retire tldraw's native style panel into the ribbon
-
-9. **Hide tldraw's native floating style panel.** Currently rendered via
-   `CanvasEditor.tsx`'s `StylePanelWithoutOpacity` (built in the prior
-   spec's M5 subtask 10, which deliberately kept the panel alive while only
-   removing its opacity slider). This subtask goes further: remove the
-   panel from ever appearing over the canvas at all (verify the exact
-   mechanism — likely setting the `components` prop's `StylePanel` slot to
-   `null` — against the installed tldraw version).
-10. **Rebuild equivalent color/fill/dash/size controls in the ribbon's Draw
-    tab.** The deleted native panel's controls (12-color grid, fill style,
-    dash/stroke style, S/M/L/XL size) need an equivalent home in
-    `Ribbon.tsx`'s `DrawTab`. Mirror tldraw's own dual-purpose reactive
-    resolution (`editor.getSharedStyles()`, already used by `DrawTab`'s
-    existing geo-style highlighting from the prior spec's M2 subtask 4): the
-    controls apply to the current selection's style when shapes are
-    selected, or to the "next shape" style when a drawing tool is active
-    with nothing selected — matching exactly what the native panel already
-    did, just relocated into the ribbon.
-11. **Pencil color dropdown.** Add a small color-swatch dropdown ("carrot")
-    next to the Pencil/draw tool button in the Draw tab specifically, for
-    quickly changing the draw tool's current color without needing the full
-    style control set from subtask 10 — a fast, dedicated affordance layered
-    on top of it.
-
-### M7 — Theme editor
-
-12. **"Edit themes" entry point.** Add an item at the bottom of the existing
-    theme picker (`AccountMenu.tsx`'s theme radio group) that opens a new
-    Theme Editor (dialog or dedicated view — implementation's choice of
-    exact presentation).
-13. **Theme Editor shell/layout.** Left sidebar (theme list), right sidebar
-    (color editor), center (live preview), Save/Discard footer — build the
-    overall structural layout first, before wiring real behavior into each
-    region.
-14. **Left sidebar: theme list + create-new-theme.** Lists all available
-    themes (built-in + user-created from `lib/themes/loader.ts`), clicking
-    one loads it into the editor for viewing/editing. A "create new theme"
-    button (dotted border, visually distinct from existing theme entries)
-    clones a sensible default palette into a new, unsaved theme.
-15. **Right sidebar: color-wheel editor.** A color-wheel-based picker for
-    every one of the 31 `ThemeVariableKey` values in the theme currently
-    loaded for editing. Exact color-wheel component/library choice is an
-    implementation-time decision (no color-picker library is currently
-    installed — verify current best options rather than guessing).
-16. **Center: live mini-preview.** A bounded mock mini-canvas (a simple,
-    hand-built preview area — not a real embedded tldraw instance) showing a
-    movable, editable default text box, updating live as right-sidebar
-    colors change, to demonstrate the theme's variables in a representative
-    miniature UI.
-17. **Save/Discard + unsaved-changes handling.** "Save" persists the edited
-    theme to its JSON file (extending `lib/themes/loader.ts`, which
-    currently only reads, with a writer/save function) and applies it live
-    if it's the currently-active theme. "Discard" reverts in-editor changes.
-    Closing the editor or switching to a different theme while there are
-    unsaved changes shows a save/discard/cancel confirmation prompt. A
-    newly-created theme that's never saved is deleted if the editor closes
-    without saving it.
-18. **Left-sidebar theme context menu + undo.** Right-clicking a theme in
-    the left sidebar offers: copy theme values, paste theme values (onto
-    another theme), delete. Ctrl+Z undoes value edits, deletions, and full
-    theme-value pastes — scoped to the current theme-editor session's
-    in-memory history, not a persisted/cross-session undo log and not a
-    general app-wide undo system.
-19. **Open themes folder in file explorer.** A button at the bottom of the
-    left sidebar opens the themes directory (wherever
-    `lib/themes/loader.ts` reads/writes user theme JSON files) in the OS's
-    file explorer, via Tauri's shell/opener plugin.
+7. **Sticky note data model + migration.** A new `sticky_notes` SQLite table
+   (mirroring `lib/db/pages.ts`'s established local-first pattern: `id`,
+   `user_id`, `title`, `content` as Tiptap JSON, `top_bar_color`, `pinned`,
+   `created_at`/`updated_at`/`deleted_at`, `dirty`, `synced_at`), added via
+   a new migration in `src-tauri/src/lib.rs` alongside the existing ones,
+   plus a new `lib/db/stickyNotes.ts` CRUD module matching
+   `lib/db/pages.ts`'s exact function-naming/shape conventions.
+8. **Sticky note pop-out window.** A real, separate Tauri window (created
+   at runtime via `@tauri-apps/api/window`'s `WebviewWindow`, not a
+   pre-declared config window — each sticky note gets its own), sized to a
+   9:16 aspect ratio, rendering a new dedicated route (e.g.
+   `app/sticky/page.tsx` reading the note id via a query param, same
+   pattern `app/canvas/page.tsx` already uses) with none of the main app's
+   ribbon/sidebar chrome — just a Tiptap editor bound to that note's
+   content, autosaving the same debounced way the other editors do.
+9. **Sticky note top bar.** Appears on window focus, hides on blur (the
+   whole window also shrinks in height while unfocused, per spec). Pin
+   button (real OS-level always-on-top via Tauri's `setAlwaysOnTop`, over
+   the whole desktop per explicit decision — not just this app's own
+   windows), Exit button (autosave if dirty, then close the window), and a
+   3-dot menu with Delete and "Change top bar color" (a color picker scoped
+   to just this note; defaults to the active theme's `--primary`).
+10. **Sticky note bottom bar.** Also focus/blur-gated like the top bar. A
+    compact subset of `formatActions.ts`'s existing actions: bold, italic,
+    underline, strikethrough, bullet list, and a checkbox/task list toggle
+    (reusing Tiptap's `TaskList`/`TaskItem`, already used elsewhere in this
+    app's editors) — mirrors `FormatTab`'s established
+    read-state-then-render-buttons pattern, not a new formatting system.
+11. **Ctrl+K dialog.** Replace the bare `window.prompt("URL", prev)` in both
+    `RichTextEditor.tsx` and `RichTextShape.tsx` with a real dialog
+    (`components/ui/dialog.tsx`) offering three choices: paste a URL
+    (existing behavior, preserved exactly), create a new sticky note
+    (creates a `sticky_notes` row, opens its pop-out window immediately,
+    and embeds a reference at the cursor), or pick an existing sticky note
+    from a searchable list to embed.
+12. **Sticky note embed rendering.** A distinct, clickable inline mark/node
+    in the Tiptap document (visually distinct from a plain hyperlink — not
+    just a blue underlined link) that opens the referenced sticky note's
+    pop-out window on click, reusing whatever of the existing `Link`
+    extension's click-interception conventions make sense but with its own
+    click behavior (open/focus a Tauri window, not navigate a URL).
+13. **Nested sticky-note embedding.** Confirm a sticky note's own editor
+    (subtask 8) includes the same embed extension from subtask 12, so an
+    embed inside an already-open sticky note correctly opens another
+    pop-out window on click — live-verify this rather than assuming it
+    falls out for free.
+14. **Sticky notes home page.** A new view listing all sticky notes as
+    collapsed preview cards (title/first line of content, top-bar color
+    swatch) — clicking a card opens that note's pop-out window (subtask 8).
+15. **Ribbon entry point.** A new tab/button on the far right of the ribbon
+    (alongside File/Format/Draw) that opens the home page from subtask 14.
+16. **Screenshot-to-sticky-note capture.** On the home page, a "screenshot"
+    action that lets the user pick an open OS window and captures it (needs
+    a native Rust screen-capture dependency added to `src-tauri/Cargo.toml`
+    — verify the current best-maintained cross-platform crate at
+    implementation time rather than guessing, per this project's
+    established discipline), shows a live preview, and lets the user
+    double-click it to create a new sticky note whose content is that
+    captured image, openable and drawable-on (reusing this app's existing
+    tldraw-based canvas machinery for the drawing surface, unless
+    implementation-time investigation finds a lighter-weight approach makes
+    more sense — flagged as the single highest-risk/most likely to need a
+    scope renegotiation subtask in this entire spec, given it's genuinely
+    new engineering territory for this app).
 
 ## Key Decisions
 
-- **Theme editor is bundled into this spec, not split into a separate
-  later one** — explicit user choice, despite being the largest single
-  chunk of work here (subtasks 12-19).
-- **"The menu in the top right of the canvas" (planning.md's item 9) is
-  tldraw's own native `StylePanel`, confirmed via screenshot** (12-color
-  grid, fill/dash icon rows, S/M/L/XL size buttons — an exact match) — not
-  the Tiptap bubble menu built in the prior spec. The bubble menu is
-  untouched.
-- **Page-switch bug fix uses a full `<Tldraw>` remount keyed by
-  `selectedPage.id`**, not an imperative store-swap — simpler, and
-  consistent with the existing note-switch remount pattern, at the cost of
-  a brief re-init flash on every page switch (accepted tradeoff).
-- **Dark-mode text-color fix stays targeted** (CSS override using
-  `--foreground` directly) rather than also wiring up `.dark` class
-  toggling app-wide — explicit user choice; nothing else currently depends
-  on `dark:` variants working.
-- **The sidebar DnD "no-drop cursor" bug has no confirmed root cause from
-  static analysis alone** — subtask 3 explicitly requires live/CDP
-  debugging as part of the fix, not further static investigation.
-- **Theme editor's undo (Ctrl+Z) is a hand-rolled, in-session-only history
-  stack**, not a reuse of any existing undo mechanism in the app (tldraw's
-  and Tiptap's own undo/redo are separate, unrelated, and untouched) and
-  not persisted across editor-close/reopen.
+- **Sticky Notes is included in this same spec**, not split into its own
+  later one, despite being by far the largest single feature here (subtasks
+  7-16) — explicit user choice, made after being told this upfront.
+- **The bullet-list item (subtask 1) is a verify-and-fix pass, not new
+  construction** — Tiptap's `StarterKit` already ships this behavior via
+  `@tiptap/extension-list`, confirmed by reading the installed package
+  source before writing this spec.
+- **`chart-1` through `chart-5` are removed entirely from the theme
+  system**, not just hidden in the editor UI — confirmed genuinely unused
+  anywhere in this app's actual component code via a codebase-wide search.
+- **Per-text-box timestamps update on every content change**, not just on
+  blur — explicit user choice.
+- **Screenshot capture is built as a real subtask now**, not deferred to a
+  future spec, despite being flagged as the highest-risk/most novel piece
+  of engineering in this entire spec (a genuinely new native OS-integration
+  capability for this app) — explicit user choice, made after being told
+  the tradeoff upfront.
+- **Ctrl+K's existing bare `window.prompt("URL")` is replaced with a real
+  dialog** offering URL / new sticky / existing sticky — explicit user
+  choice, needed since a native `prompt()` can't offer more than one text
+  input.
+- **Pin makes a sticky note always-on-top over the entire desktop**
+  (other applications too), not just over this app's own windows —
+  explicit user choice, matching how OS-level sticky-note/widget apps
+  conventionally behave.
+- **Sticky notes are desktop-only; screenshot capture targets Windows
+  first** — both explicit scope-limiting decisions made during planning to
+  keep an already-large spec from also taking on cross-platform screen
+  capture and mobile multi-window support in the same pass.
 
 ## Open Questions
 
-- Exact tldraw camera-constraints API/mechanism for per-page confinement
-  with dynamic expansion-on-overflow (subtask 6) is nontrivial custom
-  composition, not a single documented tldraw feature — left to
-  implementation-time verification against the installed tldraw version,
-  following this project's established discipline of reading actual
-  installed source rather than guessing at API shape.
-- Exact color-wheel library choice for the theme editor's right sidebar
-  (subtask 15) — no such dependency currently exists in this project;
-  implementation should verify current best-fit options rather than
-  defaulting to the first one considered.
-- Exact visual treatment of "a line below the title, not an underline"
-  (subtask 7) and the folder highlight-on-select styling (subtask 4) are
-  left to implementation-time visual judgment, following this app's
-  existing shadcn/Tailwind design tokens.
-- Whether the Theme Editor should be a modal dialog or a dedicated
-  full-screen view is left to implementation-time judgment, given no strong
-  signal either way from planning.md's wording.
+- Exact visual placement/visibility rule for the per-text-box faded
+  timestamp (subtask 5) — always visible vs. only on hover/edit — left to
+  implementation-time visual judgment.
+- Exact Rust crate for native screen capture (subtask 16) — no such
+  dependency exists in this project today; implementation should verify
+  current best-maintained, actively-supported options rather than
+  defaulting to the first one found, per this project's established
+  discipline (e.g. the theme editor's `react-colorful`/`culori` picks).
+- Exact drawing-surface implementation for "draw on a captured screenshot"
+  (subtask 16) — reusing the existing tldraw-based canvas machinery
+  (`RichTextShape.tsx`'s sibling infrastructure) is the default assumption,
+  but a lighter-weight, purpose-built drawing surface may turn out to be a
+  better fit once the screenshot-capture mechanism itself is understood —
+  left to implementation-time judgment.
+- Whether the sticky-note embed (subtask 12) should be a Tiptap mark (like
+  `Link`) or a custom node — left to implementation-time judgment based on
+  which fits Tiptap's actual API better for "clickable, non-editable inline
+  reference that isn't real text content."
+- Whether "Delete" on a sticky note (subtask 9's 3-dot menu) should warn
+  when other documents still have embeds pointing at it — not addressed by
+  planning.md; left as an open question for the implementor to flag if it
+  turns out to matter, rather than guessed at now.
 
 ## Progress
-
-- Subtask 1 (Fix pages sharing/overwriting canvas content) — done. `<Tldraw>` in `CanvasEditor.tsx` now has `key={selectedPage.id}`, forcing a full remount on every page switch (mirroring the existing `key={note.id}` note-switch pattern) — the actual fix, since tldraw's own `onMount` only ever fired once per editor/store instance, so switching pages previously never reloaded the canvas and the autosave listener kept silently overwriting whichever page was selected at first mount. Reviewer caught a real bug this fix itself enabled: the legacy `note.content` → `RichTextShape` migration branch was previously unreachable more than once (since `onMount` never re-fired at all), but now that it genuinely does, every page with no `canvasData` and zero shapes — including a brand-new blank page — would get a duplicate copy of old note-level content silently injected. Fixed by gating the migration to only the note's first page (`page.id === pages[0]?.id`), keeping `note.content` permanently untouched, consistent with this codebase's non-destructive-migration philosophy. `tsc --noEmit` and `npm run build` pass.
-- Subtask 2 (Fix resize/rotate handles after marquee-select) — done, after six review rounds. `watchForReturnToSelectIdle` (`RichTextTool.tsx`) now only auto-returns to `rich-text` once the tool is in `select.idle` AND the selection is empty, not idle alone; `installRichTextToolAutoReturn` (a separate, pre-existing watcher for the click-to-create-then-edit flow) got the same treatment via a new `react()`-based watcher. Net effect: as long as any selection persists (marquee-select, shape-drag, or a click-away that detours into a marquee), the tool stays on tldraw's real `select` tool, so resize/rotate handles, native Delete, and further drag-to-move all just work natively — no custom hand-off code needed. The subtask's original approach (a new `handOffToSelectionHandle` hand-off function) was found to be permanently dead code — tldraw only makes handles interactive while `currentTool` is genuinely `select`, and a `target: "selection"` event can only reach this tool's state while `currentTool` is `rich-text`; those conditions are mutually exclusive — and was removed. Five real bugs were found and fixed across the review rounds, each closing one timing gap in tldraw's internal state machine only to expose the next (round 1: the dead hand-off code; round 2: `watchForReturnToSelectIdle` needed the empty-selection gate to avoid stranding a persisted selection; rounds 3-5: `installRichTextToolAutoReturn`'s own fix went through a broken `queueMicrotask` approach, then a `react()` watcher missing the same empty-selection gate, before landing correctly). Round 6 independently re-traced the full mechanism end-to-end against the actual tldraw source and found no further issues. **Process note**: no live CDP verification was performed at any point (no browser tooling available) — given how subtle this turned out to be, a manual pass is worth prioritizing: marquee-select multiple shapes and confirm resize/rotate/Delete work, and confirm clicking away from an edited shape still lets a second click create a new one. `tsc --noEmit` and `npm run build` pass at every stage.
-- Subtask 3 (Fix sidebar drag-and-drop "no-drop" cursor) — done. Root cause found via live user testing (planning-phase static analysis had found nothing wrong in the sidebar's own DnD code): `src-tauri/tauri.conf.json`'s window config had `dragDropEnabled: true`, deliberately added in an earlier, unrelated spec as inert plumbing for a never-built file-import feature. On Windows/WebView2, this and the webview's own native HTML5 `dragover`/`drop` DOM events are mutually exclusive — reviewer traced the exact mechanism in Tauri's vendored `wry` crate source: enabling it installs a Win32 `IDropTarget` on the WebView2 host that only recognizes file (`CF_HDROP`) payloads, leaving the drop-effect at `DROPEFFECT_NONE` for any non-file (in-page) drag payload and never letting the event reach the page's own DOM listeners — exactly the "no-drop cursor over every row" symptom, while leaving unrelated interactions (right-click) untouched. Fixed by setting `dragDropEnabled: false`; `lib.rs`'s now-inert `WindowEvent::DragDrop` handler comment updated to explain why, left in place as a placeholder per this codebase's existing convention for not-yet-built future work. No TypeScript/React code was touched — the sidebar's own `lib/dnd/sidebar.ts` and all its consumers were already correct. Reviewer confirmed via repo-wide grep that nothing depends on Tauri's native file-drop events today. `cargo check` passes.
-- Subtask 4 (Click-to-select a folder, scoping "New Note"/"New Folder" creation) — done. `selectedFolderId`/`setSelectedFolder` turned out to already exist in `stores/appStore.ts` as unused dead scaffolding; this diff is their first real consumer. `FolderItem.tsx`'s row click now both toggles expand/collapse (existing) and sets the folder as selected (new), with a faint highlight distinct from hover/drop-target styling; `FolderTree.tsx`'s container clears the selection on empty-space clicks; `Sidebar.tsx`'s toolbar `newNote`/`newFolder` create under the selected folder when set, falling back to the notebook root when not. Reviewer caught two real issues: (1) High — nothing cleared `selectedFolderId` when switching notebooks, so a folder selected in Notebook A could still be targeted by the toolbar after switching to Notebook B, creating a note/folder whose `notebook_id` says B but is nested under a folder belonging to A (no validation anywhere would have caught this) — fixed by resetting `selectedFolderId` inside `setSelectedNotebook` itself, covering every call site. (2) Medium — `NoteItem.tsx`'s row click didn't stop propagation (unlike `FolderItem.tsx`'s, updated for the same reason in this diff), so clicking any note bubbled up and silently cleared the folder selection, undermining the whole feature — fixed by adding the same `e.stopPropagation()`. **Process note**: no live CDP verification was performed (implementor judged the authenticated Tauri session out of time budget). `tsc --noEmit` and `npm run build` pass.
-- Subtask 5 (Delete "Swap Notebook" and "New Notebook" buttons) — done. Both removed from the ribbon's File tab, along with the now-unused `returnToPicker` function and its dependencies (`useRouter`, a `setSelectedNotebook` subscription, `setLastOpen` import) — none used elsewhere in the file. The File tab now shows a plain "No actions available." placeholder, matching `DrawTab`'s own existing empty-state pattern in the same file. Reviewer found no functional issues: confirmed `Button` is still used elsewhere in the file, confirmed nothing else in the repo references the removed buttons/function, confirmed `setSelectedNotebook`/`setLastOpen` are only un-consumed here (the shared store field/module are untouched), and confirmed `tsc --noEmit` passes clean. One cosmetic-only nit: the implementor's stated "matches `FolderTree.tsx`'s empty state" justification didn't actually hold — the real match is `DrawTab`'s own local pattern, the more relevant precedent anyway. Not worth a fix.
-
-M3 (File tab cleanup) is now complete.
-
-- Subtask 6 (Per-page canvas confinement, expandable on overflow) — done. `applyPageCameraConstraints` (`CanvasEditor.tsx`) sets tldraw's camera `constraints` to a default 850×1100 "page-sized" bound (`behavior: 'inside'`, clamping pan within the viewport while leaving zoom unrestricted). A `react()` watcher, set up fresh on every mount (matching subtask 1's per-page remount), tracks `editor.getCurrentPageBounds()` and grows — never shrinks — the confined area whenever shape content extends past it, via `Box.Common`'s union semantics; torn down alongside the file's other listeners on cleanup. Reviewer found no defects after checking eight angles against the actual installed tldraw source: no feedback loop (`getCurrentPageBounds()` is pure shape geometry, camera-independent), no jarring zoom-reset on re-application (`initialZoom`/`origin` only apply on a genuine `resetCamera()`, not this reactive re-clamp), zoom-out stays unrestricted, all `Box`/camera APIs used correctly, the growth-only guarantee holds mathematically, and no interference with shape creation/marquee-select/shape-drag. **Remaining concern (inherent, non-blocking)**: while zoomed out far enough to see the whole confined area, a bounds expansion can slightly shift the camera to stay valid against the new constraint math — expected tldraw behavior, not a defect in this diff. **Process note**: no live CDP verification was performed (no browser tooling available) — worth a manual pass confirming panning feels bounded and edge-expansion is smooth. `tsc --noEmit` and `npm run build` pass.
-- Subtask 7 (Page title header on the canvas) — done. `CanvasEditor.tsx` now renders an inline-editable title header above the confined canvas area, showing the selected page's title with a `border-bottom` line below it (a real border, not `text-decoration: underline`), restructured into a `flex flex-col` layout with the canvas as a sibling below. Committing an edit (blur or Enter) writes through `updatePage` then the shared `stores/appStore.ts` `pages` state, so the sidebar's `PageItem.tsx` picks it up live with no separate wiring, and vice versa. Reviewer caught two real issues: (1) Moderate — `commitTitle`'s store update closed over `pages` from render time, so a concurrent `PageSidebar.tsx` `refresh()` (from drag-reorder/add/delete/paste) landing during the `await updatePage(...)` window could get silently overwritten by the stale snapshot — fixed by reading `useAppStore.getState().pages` fresh immediately before mapping. (2) Minor — an unused `titleInputRef` (dead code) was removed. Reviewer separately confirmed the prior theming subtask's CSS selector still matches the new DOM nesting, tldraw's keyboard shortcuts can't be triggered from the title input (it's outside tldraw's listener subtree), the empty-title fallback mirrors `PageItem.tsx` exactly, and mid-edit page switches commit to the correct (old) page via blur-before-select ordering. **Process note**: no live CDP verification was performed (no browser tooling available). `tsc --noEmit` and `npm run build` pass.
-
-M4 (Canvas confinement + page title header) is now complete.
-
-- Subtask 8 (Fix rich-text default color to follow the active theme) — done. `.tiptap.ProseMirror` in `components/editor/editor.css` gained `color: var(--foreground)`. Confirmed `@tailwindcss/typography` isn't actually installed in this project — the `prose`/`dark:prose-invert` classes have been dead weight all along — so the fix uses a direct inherited `color` rule, scoped correctly to `RichTextShape.tsx`'s Tiptap instances only (the retired full-page editor doesn't carry the `.tiptap` class). Reviewer caught a critical issue that made the original fix a no-op: this app's theme CSS variables store complete color values (`oklch(...)`/hex), not bare HSL components, so wrapping them in `hsl(var(--x))` — as spec.md itself incorrectly prescribed — produces invalid CSS the browser silently drops, leaving the bug completely unfixed with no visible sign anything was wrong. This turned out to be a pre-existing, file-wide bug present since `editor.css`'s introduction, well before this session: all five other theme-variable references in the file (placeholder color, code block background, link color, blockquote border/color, horizontal rule border) had the identical mistake and had never actually applied any theme color for the file's entire lifetime. Fixed by replacing every `hsl(var(--x))` in the file with plain `var(--x)`, matching the correct pattern subtask 12 already established (`--tl-color-background: var(--background)`). Reviewer confirmed explicit manually-set text colors (via `applyTextColor`) still correctly override the new default, since those apply as inline styles on the text's own element. **Process note**: no live CDP verification was performed (no browser tooling available) — worth a manual pass across a couple of themes. `tsc --noEmit` and `npm run build` pass.
-- Subtask 9 (Hide tldraw's native floating style panel) — done. `CanvasEditor.tsx`'s `StylePanelWithoutOpacity` component and its picker imports removed entirely; `<Tldraw>`'s `components.StylePanel` set to `null`. Reviewer found no issues: independently verified against the actual installed tldraw source that `StylePanel: null` genuinely fully suppresses the panel via a simple `&&` short-circuit with no fallback branch, confirmed explicit `null` (not omission, which would fall back to tldraw's own default panel) is the type-sanctioned opt-out, confirmed no orphaned references anywhere in the codebase, and confirmed the updated comments accurately describe the new state. As explicitly scoped, there's now no UI at all to restyle a shape until the next subtask builds the ribbon replacement — intentional, mirroring the Draw tab rebuild's established pattern. **Process note**: no live CDP verification was performed (no browser tooling available). `tsc --noEmit` passes.
-- Subtask 10 (Rebuild equivalent color/fill/dash/size controls in the ribbon's Draw tab) — done. `DrawTab` gained a 12-swatch color grid, 3 fill-style buttons, 4 dash-style buttons, and 4 S/M/L/XL size buttons, using `editor.getSharedStyles()`/`useValue` for reactive reading (mirroring the existing geo-shape button pattern) and a new `setStyle` helper applying to both the current selection (`setStyleForSelectedShapes`, when the select tool is active) and the next shape to be drawn (`setStyleForNextShapes`). `FormatBtn` gained an optional `className` prop for the wider size buttons. Reviewer found no issues after checking all 12 color values/hexes against tldraw's actual palette source, confirming `setStyleForSelectedShapes` safely no-ops when nothing is selected, confirming the new `setStyle` function is a byte-for-byte match of tldraw's own native `onValueChange` handler, confirming `isChangingStyle: true` auto-clears via tldraw's own internal timeout, confirming `getAsKnownValue`'s mixed/absent-value handling is safe, and confirming the layout fits using an already-established `overflow-x-auto` pattern. **Remaining concern**: as scoped, only the core color/fill/dash/size controls were rebuilt — font/text-align/label-align/geo-shape/arrow-kind/arrowhead/spline controls the old native panel also had are not covered here; color swatches use static light-mode hex values rather than theme-following ones, per the theming non-goal. **Process note**: no live CDP verification was performed (no browser tooling available). `tsc --noEmit` and `npm run build` pass.
-- Subtask 11 (Pencil color dropdown) — done. A small caret button next to the Pencil tool in `DrawTab` opens a `DropdownMenu` with a compact 4-column grid of the same `DRAW_COLORS` swatches from subtask 10, wired to the same `setStyle` helper — built with the existing `DropdownMenu` primitive, no separate lightweight `Popover` existed to reach for instead. The Pencil button's own click handler is untouched. Reviewer found no functional bugs after tracing the nested `TooltipTrigger`/`DropdownMenuTrigger` render-prop composition against the actual installed `@base-ui/react` source (confirmed Base UI correctly chains handlers/merges props across nested primitives, not a naive clobber), confirmed the tooltip closes rather than sticking open when the dropdown opens, confirmed `DRAW_COLORS`/`setStyle`/`colorStyle` are reused (not duplicated), and confirmed the Pencil button and caret are fully independent siblings with no event cross-talk. One minor UX nit — the caret's click target was only 14px wide — widened directly (`w-3.5` → `w-5`). **Process note**: no live CDP verification was performed (no browser tooling available). `tsc --noEmit` and `npm run build` pass.
-
-M6 (Retire tldraw's native style panel into the ribbon) is now complete.
-
-- Subtask 12 ("Edit themes" entry point) — done. New `components/theme/ThemeEditor.tsx` — a minimal controlled dialog (built on the app's existing shadcn/base-ui `Dialog` primitives) showing a placeholder heading, ready for subtask 13 to fill out. `AccountMenu.tsx`'s theme submenu gained a separator + "Edit themes..." item opening it via local state; the component's return was wrapped in a fragment so the dialog renders as a permanent sibling of the dropdown, independent of its open/closed lifecycle. Reviewer found no issues after tracing the actual `@base-ui/react` source for the "open a dialog from a click inside a nested dropdown submenu item" interaction — confirmed this diff uses the recommended pattern (external `open` state set from the item's `onClick`) rather than the known-risky anti-pattern (nesting a trigger inside the menu item), confirmed Base UI's focus-restore logic has a built-in guard for this exact composition, confirmed no portal/z-index stacking issues, and confirmed the dialog's state is fully independent of the menu's lifecycle. **Process note**: no live CDP verification was performed (no browser tooling available) — reviewer suggested a manual keyboard-nav smoke test as a sanity check despite finding no concrete failure path in source. `tsc --noEmit` and `npm run build` pass.
-- Subtask 13 (Theme Editor shell/layout) — done. `ThemeEditor.tsx` now has a real four-region structural layout (left sidebar theme list, center live preview, right sidebar color editor, footer Save/Discard — all placeholders for subtasks 14-19 to fill in), resized to `h-[85vh] max-w-5xl`. Established the internal state model future subtasks build on: `editingThemeId` (which theme is loaded) and `draftVariables` (a working copy of its variables), seeded on dialog-open from the app's currently-active theme, falling back to the first available theme when that doesn't resolve (e.g. "System" is selected). Reviewer found no real bugs: confirmed the "System"/`null` sentinel correctly falls through to the fallback rather than trying to load a nonexistent theme, confirmed the empty-`availableThemes` edge case renders gracefully, confirmed `draftVariables`' shallow copy has no reference-sharing risk back into the store, and confirmed the dialog's custom sizing correctly overrides the `Dialog` primitive's defaults with no residual conflicts. One cosmetic-only nit (an inert `eslint-disable` comment referencing tooling not installed in this repo) — not worth removing. **Remaining concerns**: Save/Discard currently just close the dialog with no persistence, explicitly deferred to subtask 17. No live CDP verification was performed (the app requires the Tauri runtime to get past login). `tsc --noEmit` and `npm run build` pass.
-- Subtask 14 (Left sidebar: theme list + create-new-theme) — done. The left sidebar's placeholder replaced with a real scrollable list of `availableThemes` plus an optional local-only `unsavedNewTheme`, each row clickable to load into the editor and highlighted when active. A "New theme" button with a dashed border clones `LIGHT_THEME`'s palette into a fresh `Theme` (`crypto.randomUUID()` id), stores it locally, and immediately selects it — extracted `loadThemeForEditing` as a shared helper used by both the seeding effect and row clicks. The dialog-open effect now also resets `unsavedNewTheme` on open, setting up cleanly for subtask 17's discard-on-close. Reviewer found no real bugs: confirmed the unsaved draft genuinely never leaks into the shared `availableThemes` store (no stray `setAvailableThemes` call), confirmed `ThemeEditor` stays persistently mounted so there's no stale-closure race across open/close cycles, confirmed re-clicking "New theme" cleanly replaces rather than appends the draft, and confirmed `isTheme()`'s validation doesn't reject a UUID id. **Remaining concerns**: one forward-looking, non-blocking note for subtask 17 — nothing yet constrains `Theme.id` to be filename-safe if a future save step uses it verbatim as a filename. No live CDP verification was performed. `tsc --noEmit` passes.
-- Subtask 15 (Right sidebar: color-wheel editor) — done. Added `react-colorful` (picker UI) and `culori` (+`@types/culori`, color-space conversion) as new dependencies, both verified genuine. New `lib/themes/color.ts` bridges this app's OKLCH/hex theme storage and the picker's hex-based UI, writing edits back normalized to `oklch(...)`. New `components/theme/ThemeColorField.tsx` — a checkerboard-backed swatch button (showing alpha) opening a `DropdownMenu` popover with the wheel + hex input. `ThemeEditor.tsx`'s right sidebar now lists all 31 `ThemeVariableKey`s, reading from `draftVariables` (falling back to the loaded theme's value) and writing only to local draft state; `radius` gets a plain text input since it's a CSS length, not a color. Reviewer caught a real, verified fidelity issue: `culori`'s default RGB converter doesn't gamut-map, so out-of-sRGB-gamut OKLCH colors (confirmed present in this app's shipped themes — `destructive` in both Light/Dark, `chart-1`, `chart-2`) got naively per-channel-clamped, visibly shifting the displayed swatch's hue from the true color. Fixed by switching to `culori`'s `toGamut('rgb', 'oklch')`, the CSS Color 4-recommended perceptually-aware gamut mapping, instead of a naive clamp. **Remaining concerns**: reviewer confirmed untouched fields never get lossy hex-round-tripped values written into the draft (conversion is display-only until edited), confirmed the missing-key fallback degrades gracefully, confirmed the alpha write-back format is valid CSS (a different but equally-valid notation from this app's existing style), and confirmed the color wheel's drag gestures don't get intercepted by the dropdown's dismissal logic. No live CDP verification was performed — worth a manual pass once subtask 16's live preview exists to compare against. `tsc --noEmit` and `npm run build` pass.
-- Subtask 16 (Center: live mini-preview) — done. New `components/theme/ThemePreview.tsx` — a bounded 420×280 mock mini-canvas whose visual elements (background, mock sidebar strip, mock card, and a movable/editable text box) are styled purely via inline `style` references to `var(--x)`, with all 31 theme variables scoped to the preview's own root element as inline custom properties — never touching `document.documentElement` or `lib/themes/apply.ts`. Reads the same `draftVariables`/`editingTheme` state the right sidebar already uses, so it updates live for free via normal React re-rendering. Reviewer caught one real, minor edge-case bug: the drag handle only reset drag state on `pointerup`, not `pointercancel` (which browsers can fire instead, e.g. a touch gesture reinterpreted as a scroll), which could leave the drag offset stuck set and cause a later unrelated pointer move to incorrectly resume dragging — fixed by wiring `onPointerCancel` to the same reset handler. **Remaining concerns**: none blocking. Reviewer separately confirmed the critical global-theme-isolation requirement holds throughout (no Tailwind semantic-color utility classes that could leak the real app theme, no CSS resets interrupting custom-property inheritance), confirmed pointer capture correctly tracks fast drags outside the handle's small bounds, and confirmed the box/sidebar visual overlap is purely cosmetic. No live CDP verification was performed (no browser tooling available). `tsc --noEmit` passes.
-- Subtask 17 (Save/Discard + unsaved-changes handling) — done. `lib/themes/loader.ts` gained `saveTheme`/`deleteThemeFile` writers alongside its existing reader. New `components/ui/alert-dialog.tsx` (this repo's first `AlertDialog` primitive, wrapping `@base-ui/react/alert-dialog`) powers a Save/Discard/Cancel confirmation prompt. `ThemeEditor.tsx` gained real dirty-tracking, `persistDraft`/`revertDraft`, and interception on both dialog-close and theme-row switching — either routes through the confirmation prompt when the draft is dirty; Save writes to disk, refreshes `availableThemes`, and applies live if currently active; a never-saved new theme is dropped on close with no file ever existing. Reviewer caught a real, significant bug: editing and saving a *built-in* theme silently lost the edit on the very next reload — the save wrote the file correctly, but the immediate `availableThemes` refresh used the same id-collision filter `AppShell.tsx` uses at boot, which discarded the just-written file because its id matched a built-in's; the live UI looked like Save worked (since `applyTheme` still ran) but the edit vanished the moment the editor reopened. Fixed by auto-forking: saving over a built-in now creates a new theme with a fresh id and "(Copy)" suffix instead of overwriting the built-in id, with the editor state following the fork and deliberately skipping the live-apply. **Remaining concerns**: reviewer flagged one minor, confirmed-harmless inconsistency — the confirmation prompt's "Discard" (for a close action) doesn't call `revertDraft()` the way the footer's own Discard does, but since `ThemeEditor` stays persistently mounted and always fully re-seeds on next open, this never produces a visible bug. No live CDP verification was performed (file I/O requires the real Tauri runtime). `tsc --noEmit` and `npm run build` pass.
-- Subtask 18 (Left-sidebar theme context menu + undo) — done. Each theme row in the left sidebar now has a right-click context menu (`ContextMenu`/`DropdownMenu` primitives, same pattern as `NoteItem.tsx`) offering Copy theme values, Paste theme values, and Delete. Copy stores the right-clicked theme's `variables` in an in-memory, session-scoped clipboard; Paste loads the target theme into the editor with the copied variables as its new draft (routed through the existing dirty-check confirmation flow via a new `PendingAction` "paste" variant, so an unsaved edit elsewhere isn't silently clobbered); Delete removes the on-disk file (`deleteThemeFile`) and refreshes `availableThemes`, hidden for built-in themes (no file to delete) and the in-progress unsaved new theme. An in-session Ctrl+Z/Cmd+Z undo stack (`undoHistoryRef`, capped at 50 snapshots, rebuilt fresh each dialog-open) covers value edits, deletes, and pastes; the keydown listener is scoped to only fire while the dialog is open and ignores input/textarea/contenteditable targets so it doesn't hijack native text-field undo. Reviewer caught two real issues, both fixed: (1) High — a single color-wheel drag or hex-input keystroke stream pushed one undo snapshot per raw `onChange` event, silently evicting older Delete/Paste snapshots out of the 50-entry cap with no user-visible warning; fixed by coalescing consecutive edits to the same key into one snapshot. (2) Medium — `handleUndo`'s on-disk restore of a deleted theme's file was fire-and-forget with no error handling, risking the UI showing a theme as "restored" while its file write actually failed; fixed by making `handleUndo` async, awaiting the write in a try/catch, and pushing the snapshot back onto the stack (so Ctrl+Z can be retried) on failure. **Remaining concerns**: no toast/error-surfacing convention exists elsewhere in this codebase for save failures, so a failed restore only `console.error`s rather than showing a user-visible error. No live CDP verification was performed (no browser tooling available). `tsc --noEmit` passes.
-- Subtask 19 (Open themes folder in file explorer) — done. Added an "Open themes folder" button at the bottom of the left sidebar, below "New theme". Calls the already-exported `ensureThemesDir()` (`lib/themes/loader.ts`) then `openPath()` from `@tauri-apps/plugin-opener` (already installed/registered — no new dependencies needed). Added the `opener:allow-open-path` ACL permission scoped to `$APPCONFIG/themes` in `src-tauri/capabilities/default.json`, since the existing `opener:default` set only grants `open-url`/`reveal-item-in-dir`, not `open-path`. Reviewer flagged one minor issue, fixed directly (no fixer subagent needed): the handler had no error handling, so an `openPath` rejection would become an unhandled promise rejection with nothing surfaced — wrapped in try/catch + `console.error`, matching `handleUndo`'s established convention elsewhere in this file. Reviewer separately confirmed `ensureThemesDir()` is idempotent (checks `exists()` before `mkdir`) and the ACL scope syntax is correct against the actual installed `tauri-plugin-opener` schema. **Remaining concerns**: `handleDeleteTheme` (from subtask 18) has the same pre-existing error-handling gap, left untouched as out of scope for this subtask. No live CDP/Tauri-runtime verification was performed (no browser tooling available). `tsc --noEmit` and `cargo check` pass.
-
-M7 (Theme editor) is now complete. All 19 subtasks in this spec are done.
