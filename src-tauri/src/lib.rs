@@ -620,6 +620,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_deep_link::init())
+        // spec.md subtask 16 ("Screenshot-to-sticky-note capture"): wraps
+        // xcap for cross-platform window enumeration/capture - see
+        // components/sticky/ScreenshotCapture.tsx for the picker/preview UI.
+        .plugin(tauri_plugin_screenshots::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:skylines.db", migrations)

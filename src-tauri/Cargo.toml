@@ -27,6 +27,7 @@ tauri-plugin-shell = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-screenshots = "2"
 
 # `devtools` is intentionally Android-only: it's needed to attach a CDP
 # inspector to a release-profile Android build (release profiles strip the

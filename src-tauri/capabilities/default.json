@@ -17,6 +17,11 @@
     "core:webview:allow-create-webview-window",
     "deep-link:default",
     "global-shortcut:allow-register",
+    "screenshots:default",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "$APPDATA/tauri-plugin-screenshots/*" }]
+    },
     {
       "identifier": "fs:allow-mkdir",
       "allow": [{ "path": "$APPCONFIG/themes" }]

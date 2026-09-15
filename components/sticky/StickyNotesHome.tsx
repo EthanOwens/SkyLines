@@ -13,7 +13,7 @@
 // somewhere (not a full page route) is a Dialog - see ThemeEditor.tsx.
 
 import { useEffect, useState } from "react";
-import { Plus, StickyNote as StickyNoteIcon } from "lucide-react";
+import { Camera, Plus, StickyNote as StickyNoteIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +25,7 @@ import { useAuthContext } from "@/components/AuthProvider";
 import { getStickyNotes, createStickyNote } from "@/lib/db/stickyNotes";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
 import { extractPlainText } from "@/lib/tiptap/extractText";
+import { ScreenshotCapture } from "./ScreenshotCapture";
 import type { StickyNote } from "@/types";
 
 interface StickyNotesHomeProps {
@@ -36,6 +37,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
   const { user } = useAuthContext();
   const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
   const [creating, setCreating] = useState(false);
+  const [screenshotOpen, setScreenshotOpen] = useState(false);
 
   // Reload the list every time the dialog opens, same "always fresh on
   // open" seeding pattern ThemeEditor.tsx/LinkOrStickyDialog.tsx already
@@ -66,6 +68,26 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
     }
   }
 
+  // A captured screenshot becomes a new sticky note's content as a single
+  // Tiptap `image` node - StickyNoteEditor.tsx's editor already has
+  // `Image.configure({ inline: false, allowBase64: true })`, so a base64
+  // data URL `src` renders straight away with no further conversion.
+  async function handleScreenshotCaptured(dataUrl: string) {
+    if (!user || creating) return;
+    setCreating(true);
+    try {
+      const content = {
+        type: "doc",
+        content: [{ type: "image", attrs: { src: dataUrl } }],
+      };
+      const id = await createStickyNote(user.uid, "Untitled", content);
+      await openStickyNoteWindow(id);
+      setStickyNotes(await getStickyNotes(user.uid));
+    } finally {
+      setCreating(false);
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[70vh] w-full max-w-2xl flex-col gap-0 p-0 sm:max-w-2xl">
@@ -74,16 +96,26 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!user || creating}
-            onClick={() => void handleCreateNewStickyNote()}
-            className="w-fit"
-          >
-            <Plus className="mr-1.5 h-4 w-4" />
-            New sticky note
-          </Button>
+          <div className="flex w-fit gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!user || creating}
+              onClick={() => void handleCreateNewStickyNote()}
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              New sticky note
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!user || creating}
+              onClick={() => setScreenshotOpen(true)}
+            >
+              <Camera className="mr-1.5 h-4 w-4" />
+              Screenshot
+            </Button>
+          </div>
 
           {stickyNotes.length === 0 ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
@@ -124,6 +156,12 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
           )}
         </div>
       </DialogContent>
+
+      <ScreenshotCapture
+        open={screenshotOpen}
+        onOpenChange={setScreenshotOpen}
+        onCapture={(dataUrl) => void handleScreenshotCaptured(dataUrl)}
+      />
     </Dialog>
   );
 }
