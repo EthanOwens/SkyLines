@@ -7,11 +7,8 @@ import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { createNote } from "@/lib/db/notes";
 import { createFolder } from "@/lib/db/folders";
-import { createStickyNote } from "@/lib/db/stickyNotes";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { nextOrderValue } from "@/lib/dnd/sidebar";
-import { openStickyNoteWindow } from "@/lib/stickyWindow";
-import { StickyNotesHome } from "@/components/sticky/StickyNotesHome";
 import { useAppStore } from "@/stores/appStore";
 import { FolderTree } from "./FolderTree";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -40,8 +37,6 @@ import {
   CloudOff,
   Loader2,
   CheckCircle2,
-  StickyNote as StickyNoteIcon,
-  LayoutGrid,
 } from "lucide-react";
 
 // Ported from ../note_taking_app/components/sidebar/Sidebar.tsx (spec.md
@@ -85,10 +80,6 @@ export function Sidebar({ user }: Props) {
   const folders = useAppStore((s) => s.folders);
   const [creating, setCreating] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  // Temporary trigger for spec.md subtask 14's own verification - the real
-  // entry point (a ribbon tab/button) lands in subtask 15 and will open this
-  // same StickyNotesHome dialog.
-  const [stickyHomeOpen, setStickyHomeOpen] = useState(false);
 
   // When a notebook is currently open in the sidebar (selectedNotebookId),
   // new notes/canvases/folders must land in THAT notebook - not just
@@ -135,14 +126,6 @@ export function Sidebar({ user }: Props) {
     }
   }
 
-  // Temporary trigger for spec.md subtask 8's own verification - the real
-  // UI entry points (Ctrl+K dialog, home page, ribbon button) land in
-  // subtasks 11/14/15 and will call the same openStickyNoteWindow() helper.
-  async function newStickyNote() {
-    const id = await createStickyNote(user.uid);
-    await openStickyNoteWindow(id);
-  }
-
   async function newFolder() {
     const notebookId = await resolveNotebookId();
     // See the comment in newNote above - same reasoning, scoped under the
@@ -167,7 +150,6 @@ export function Sidebar({ user }: Props) {
   if (!sidebarOpen) {
     return (
       <div className="flex h-full w-12 flex-col items-center gap-2 border-r border-border bg-sidebar py-3">
-        <StickyNotesHome open={stickyHomeOpen} onOpenChange={setStickyHomeOpen} />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -199,16 +181,6 @@ export function Sidebar({ user }: Props) {
           />
           <TooltipContent side="right">New folder</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button variant="ghost" size="icon" onClick={newStickyNote} className="h-8 w-8">
-                <StickyNoteIcon className="h-4 w-4" />
-              </Button>
-            }
-          />
-          <TooltipContent side="right">New sticky note</TooltipContent>
-        </Tooltip>
       </div>
     );
   }
@@ -218,7 +190,6 @@ export function Sidebar({ user }: Props) {
       ref={sidebarRef}
       className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-sidebar"
     >
-      <StickyNotesHome open={stickyHomeOpen} onOpenChange={setStickyHomeOpen} />
       {/* Header */}
       <div className="flex h-12 items-center justify-between px-3">
         <span className="text-sm font-semibold text-sidebar-foreground">Skylines</span>
@@ -253,26 +224,6 @@ export function Sidebar({ user }: Props) {
             }
           />
           <TooltipContent>New folder</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={newStickyNote}>
-                <StickyNoteIcon className="h-4 w-4" />
-              </Button>
-            }
-          />
-          <TooltipContent>New sticky note</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setStickyHomeOpen(true)}>
-                <LayoutGrid className="h-4 w-4" />
-              </Button>
-            }
-          />
-          <TooltipContent>Sticky notes</TooltipContent>
         </Tooltip>
       </div>
 

@@ -19,6 +19,7 @@ import {
   type TLDefaultSizeStyle,
 } from "@tldraw/tldraw";
 import { switchToToolExplicitly } from "@/components/canvas/RichTextTool";
+import { StickyNotesHome } from "@/components/sticky/StickyNotesHome";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
 import { Button } from "@/components/ui/button";
@@ -554,6 +555,7 @@ export function Ribbon() {
   const isCanvasRoute = normalizedPathname === "/canvas";
 
   const [activeTab, setActiveTab] = useState<RibbonTab>("file");
+  const [stickyHomeOpen, setStickyHomeOpen] = useState(false);
 
   // If the Draw tab is currently active and the route navigates away from
   // /canvas (e.g. the user opens a plain note), fall back to File rather
@@ -606,6 +608,7 @@ export function Ribbon() {
 
   return (
     <div className="flex h-24 flex-col border-b border-border bg-background">
+      <StickyNotesHome open={stickyHomeOpen} onOpenChange={setStickyHomeOpen} />
       <div className="flex h-9 items-center gap-1 border-b border-border px-2">
         {tabs.map((tab) => (
           <button
@@ -622,6 +625,16 @@ export function Ribbon() {
             {tab.label}
           </button>
         ))}
+        {/* Not a RibbonTab - opens the StickyNotesHome dialog (subtask 14)
+            rather than swapping in ribbon-panel content, since a dialog
+            doesn't fit the tab/panel shape the other tabs use. */}
+        <button
+          type="button"
+          onClick={() => setStickyHomeOpen(true)}
+          className="ml-auto rounded-t-md px-3 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+        >
+          Sticky notes
+        </button>
       </div>
       <div className="flex-1 px-3 py-2 text-sm text-muted-foreground">
         {effectiveTab === "file" && (
