@@ -29,6 +29,7 @@ import { TextStyle, FontSize } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import { updateStickyNote } from "@/lib/db/stickyNotes";
+import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import type { StickyNote } from "@/types";
 import { StickyNoteTopBar } from "./StickyNoteTopBar";
 import { StickyNoteBottomBar } from "./StickyNoteBottomBar";
@@ -79,6 +80,7 @@ export function StickyNoteEditor({ note }: Props) {
       attributes: {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[80vh] px-1",
       },
+      ...stickyLinkClickEditorProps(),
     },
     onUpdate({ editor }) {
       const content = editor.getJSON();
