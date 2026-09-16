@@ -11,9 +11,14 @@
 // Window-focus tracking (real Tauri `Window.onFocusChanged`, not a DOM
 // focus/blur event - see StickyNoteTopBar.tsx's header comment for why) is
 // owned here, not duplicated per-bar, since both the top and bottom bars
-// need the same "only show while the OS window is focused" gating. The
-// shrink-window-on-blur/restore-on-focus logic that originated alongside it
-// (spec.md subtask 9) stays bundled with it here rather than being split out.
+// need the same "only show while the OS window is focused" gating.
+//
+// spec.md subtask 3 reworked focus/blur: losing OS focus no longer resizes
+// the window at all - it just fades the bottom bar and slims the top bar via
+// CSS transitions (see the `focused` prop passed to both). Resizing the
+// actual window to COLLAPSED_HEIGHT is now a manual, independent `collapsed`
+// toggle (double-click the top bar), which is why `collapsed` is tracked
+// separately from `focused` below.
 
 import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
@@ -55,9 +60,17 @@ interface Props {
 export function StickyNoteEditor({ note }: Props) {
   const [title, setTitle] = useState(note.title || "Untitled");
   const [focused, setFocused] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContentRef = useRef<object | null>(null);
   const originalSizeRef = useRef<import("@tauri-apps/api/dpi").LogicalSize | null>(null);
+  // Mirrors `collapsed` inside the mount-only effect below (see its
+  // `onResized` handler), since that effect's closure can't see state
+  // updates that happen after it's set up.
+  const collapsedRef = useRef(false);
+  useEffect(() => {
+    collapsedRef.current = collapsed;
+  }, [collapsed]);
 
   const editor = useEditor({
     extensions: [
@@ -93,11 +106,13 @@ export function StickyNoteEditor({ note }: Props) {
     },
   });
 
-  // Sets up the real Tauri window-focus listener + shrink/restore + applies
-  // the note's persisted `pinned` state to the actual OS window on mount.
-  // Shared by both StickyNoteTopBar (spec.md subtask 9) and
-  // StickyNoteBottomBar (spec.md subtask 10) via the `focused` prop below,
-  // rather than each bar subscribing to the same Tauri event separately.
+  // Sets up the real Tauri window-focus listener + applies the note's
+  // persisted `pinned` state to the actual OS window on mount. Shared by
+  // both StickyNoteTopBar (spec.md subtask 9) and StickyNoteBottomBar
+  // (spec.md subtask 10) via the `focused` prop below, rather than each bar
+  // subscribing to the same Tauri event separately. Focus changes no longer
+  // resize the window (spec.md subtask 3) - that's now `toggleCollapsed`
+  // below, triggered manually by double-clicking the top bar.
   useEffect(() => {
     let cancelled = false;
     let unlistenFocus: (() => void) | undefined;
@@ -106,7 +121,6 @@ export function StickyNoteEditor({ note }: Props) {
 
     async function setup() {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      const { LogicalSize } = await import("@tauri-apps/api/dpi");
       const win = getCurrentWindow();
 
       const scaleFactor = await win.scaleFactor();
@@ -121,28 +135,21 @@ export function StickyNoteEditor({ note }: Props) {
         await win.setAlwaysOnTop(true);
       }
 
-      unlistenFocus = await win.onFocusChanged(async ({ payload: isFocused }) => {
+      unlistenFocus = await win.onFocusChanged(({ payload: isFocused }) => {
         isFocusedRef.current = isFocused;
         setFocused(isFocused);
-        if (isFocused) {
-          if (originalSizeRef.current) {
-            await win.setSize(originalSizeRef.current);
-          }
-        } else {
-          const currentSize = (await win.outerSize()).toLogical(scaleFactor);
-          originalSizeRef.current = currentSize;
-          await win.setSize(new LogicalSize(currentSize.width, COLLAPSED_HEIGHT));
-        }
       });
 
       // Keeps `originalSizeRef` in sync if the user resizes the window
-      // while it's focused, so a subsequent blur/refocus cycle restores the
-      // size they actually resized to, not a stale one from before the
-      // resize. Resizes caused by our own shrink-on-blur are correctly
-      // ignored here since `isFocusedRef` is already false by the time
-      // that `setSize` call's resulting event fires.
+      // while it's focused, so a subsequent collapse/restore cycle restores
+      // the size they actually resized to, not a stale one from before the
+      // resize. Resizes caused by our own collapse-toggle are ignored via
+      // `collapsedRef` - a collapse can now happen while the window IS
+      // focused (it's a manual double-click, not tied to OS focus anymore),
+      // so the old `isFocusedRef`-only guard could no longer tell those
+      // apart from a genuine user resize.
       unlistenResize = await win.onResized(async () => {
-        if (!isFocusedRef.current) return;
+        if (!isFocusedRef.current || collapsedRef.current) return;
         originalSizeRef.current = (await win.outerSize()).toLogical(scaleFactor);
       });
     }
@@ -169,6 +176,29 @@ export function StickyNoteEditor({ note }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.id]);
+
+  // Toggled by double-clicking StickyNoteTopBar's root div. Performs the
+  // exact resize-to-COLLAPSED_HEIGHT / restore-to-`originalSizeRef` behavior
+  // that used to run automatically on blur/focus (spec.md subtask 3 made it
+  // manual instead).
+  async function toggleCollapsed() {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    const win = getCurrentWindow();
+    const scaleFactor = await win.scaleFactor();
+
+    if (collapsed) {
+      setCollapsed(false);
+      if (originalSizeRef.current) {
+        await win.setSize(originalSizeRef.current);
+      }
+    } else {
+      const currentSize = (await win.outerSize()).toLogical(scaleFactor);
+      originalSizeRef.current = currentSize;
+      setCollapsed(true);
+      await win.setSize(new LogicalSize(currentSize.width, COLLAPSED_HEIGHT));
+    }
+  }
 
   function handleTitleBlur() {
     const trimmed = title.trim() || "Untitled";
@@ -200,7 +230,14 @@ export function StickyNoteEditor({ note }: Props) {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden">
-      <StickyNoteTopBar note={note} title={title} focused={focused} onBeforeExit={flushPendingSave} />
+      <StickyNoteTopBar
+        note={note}
+        title={title}
+        focused={focused}
+        collapsed={collapsed}
+        onToggleCollapsed={toggleCollapsed}
+        onBeforeExit={flushPendingSave}
+      />
       <div className="flex flex-1 flex-col overflow-y-auto px-4 py-4">
         <input
           className="mb-2 w-full bg-transparent text-lg font-bold text-foreground outline-none placeholder:text-muted-foreground"
@@ -211,7 +248,7 @@ export function StickyNoteEditor({ note }: Props) {
         />
         <EditorContent editor={editor} className="flex-1" />
       </div>
-      <StickyNoteBottomBar editor={editor} focused={focused} />
+      <StickyNoteBottomBar editor={editor} focused={focused} collapsed={collapsed} />
     </div>
   );
 }

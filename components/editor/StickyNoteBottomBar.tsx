@@ -10,10 +10,18 @@
 // this app's editors), so it's intentionally omitted despite being named in
 // spec.md.
 //
-// Focus/blur-gated the same way as StickyNoteTopBar.tsx: only shown while
-// the OS window is focused. The `focused` prop and the underlying Tauri
-// `Window.onFocusChanged` listener are owned by StickyNoteEditor.tsx and
-// shared with the top bar, rather than this component subscribing again.
+// Focus-gated the same way as StickyNoteTopBar.tsx. The `focused` prop and
+// the underlying Tauri `Window.onFocusChanged` listener are owned by
+// StickyNoteEditor.tsx and shared with the top bar, rather than this
+// component subscribing again.
+//
+// spec.md subtask 3: unfocused no longer unmounts this bar - it stays
+// mounted and fades/collapses via CSS transition instead, so losing focus
+// looks like a passive animation rather than a hard pop. When the note is
+// manually `collapsed` (double-click on the top bar - see
+// StickyNoteEditor.tsx's `toggleCollapsed`) this bar is hidden outright
+// instead, since the actual OS window is resized down to COLLAPSED_HEIGHT
+// and there's no room for it regardless of focus.
 //
 // Reads live editor state via Tiptap's `useEditorState` + `formatActions`'s
 // own `selectFormatActionState` selector - mirrors Ribbon.tsx's `FormatTab`
@@ -35,6 +43,8 @@ interface Props {
   editor: Editor | null;
   /** Whether the OS window is currently focused - owned by StickyNoteEditor.tsx (shared with StickyNoteTopBar.tsx). */
   focused: boolean;
+  /** Whether the note is manually collapsed to COLLAPSED_HEIGHT - owned by StickyNoteEditor.tsx. */
+  collapsed: boolean;
 }
 
 // Same small ghost icon-button shape as StickyNoteTopBar.tsx's local
@@ -73,7 +83,7 @@ function BottomBarBtn({
   );
 }
 
-export function StickyNoteBottomBar({ editor, focused }: Props) {
+export function StickyNoteBottomBar({ editor, focused, collapsed }: Props) {
   const state = useEditorState({
     editor,
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
@@ -87,10 +97,14 @@ export function StickyNoteBottomBar({ editor, focused }: Props) {
   // hidden until the user's first click/keystroke.
   const displayState = state ?? (editor && !editor.isDestroyed ? selectFormatActionState(editor) : null);
 
-  if (!focused || !editor || !displayState) return null;
+  if (collapsed || !editor || !displayState) return null;
 
   return (
-    <div className="flex h-9 shrink-0 items-center gap-0.5 border-t border-border px-2">
+    <div
+      className={`flex shrink-0 items-center gap-0.5 overflow-hidden border-border px-2 transition-all duration-200 ease-in-out ${
+        focused ? "h-9 border-t opacity-100" : "h-0 border-t-0 opacity-0"
+      }`}
+    >
       {bottomBarActions.map((action) => (
         <BottomBarBtn
           key={action.id}

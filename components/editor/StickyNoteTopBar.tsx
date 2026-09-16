@@ -10,10 +10,17 @@
 // The button row only renders while the OS window is focused (`focused`
 // prop). The actual window-focus tracking (a real Tauri
 // `Window.onFocusChanged` listener, NOT a DOM focus/blur event - which only
-// fires for a specific focusable element, not the whole OS window) plus the
-// shrink-on-blur/restore-on-focus window resize live in StickyNoteEditor.tsx
-// now, shared with StickyNoteBottomBar.tsx (spec.md subtask 10) rather than
-// each bar subscribing to the same Tauri event separately.
+// fires for a specific focusable element, not the whole OS window) lives in
+// StickyNoteEditor.tsx, shared with StickyNoteBottomBar.tsx (spec.md
+// subtask 10) rather than each bar subscribing to the same Tauri event
+// separately.
+//
+// spec.md subtask 3: losing OS focus no longer resizes the window - instead
+// this bar just slims down (height/padding transition) while unfocused, and
+// StickyNoteBottomBar fades out. Actually resizing the window down to
+// COLLAPSED_HEIGHT is now a manual, independent `collapsed` toggle fired by
+// double-clicking this bar's root div (`onToggleCollapsed`), owned by
+// StickyNoteEditor.tsx alongside the focus tracking above.
 //
 // All @tauri-apps/api imports are dynamic (inside effects/handlers), matching
 // lib/stickyWindow.ts's existing convention - these APIs assume a live Tauri
@@ -48,6 +55,10 @@ interface Props {
   title: string;
   /** Whether the OS window is currently focused - owned by StickyNoteEditor.tsx (shared with StickyNoteBottomBar.tsx). */
   focused: boolean;
+  /** Whether the note is manually collapsed to COLLAPSED_HEIGHT - owned by StickyNoteEditor.tsx. */
+  collapsed: boolean;
+  /** Toggles `collapsed`, resizing the actual OS window - owned by StickyNoteEditor.tsx. */
+  onToggleCollapsed: () => void;
   /** Flushes any unsaved title/content edits; awaited before the window closes. */
   onBeforeExit: () => Promise<void>;
 }
@@ -88,7 +99,7 @@ function TopBarBtn({
   );
 }
 
-export function StickyNoteTopBar({ note, title, focused, onBeforeExit }: Props) {
+export function StickyNoteTopBar({ note, title, focused, collapsed, onToggleCollapsed, onBeforeExit }: Props) {
   const [pinned, setPinned] = useState(note.pinned);
   const [topBarColor, setTopBarColor] = useState(note.topBarColor);
   // Resolved hex for the picker's default when no custom `topBarColor` is
@@ -134,15 +145,18 @@ export function StickyNoteTopBar({ note, title, focused, onBeforeExit }: Props) 
   return (
     <div
       data-tauri-drag-region
-      className="flex h-10 shrink-0 items-center gap-1 px-2"
+      onDoubleClick={onToggleCollapsed}
+      className={`flex shrink-0 items-center gap-1 transition-all duration-200 ease-in-out ${
+        focused || collapsed ? "h-10 px-2" : "h-6 px-1"
+      }`}
       style={{ background: topBarColor ?? "var(--primary)" }}
     >
       <span className="min-w-0 flex-1 truncate text-xs font-medium text-primary-foreground">
         {title || "Untitled"}
       </span>
 
-      {focused && (
-        <div className="flex shrink-0 items-center gap-0.5">
+      {focused && !collapsed && (
+        <div className="flex shrink-0 items-center gap-0.5" onDoubleClick={(e) => e.stopPropagation()}>
           <TopBarBtn tip={pinned ? "Unpin" : "Pin on top"} active={pinned} onClick={togglePinned}>
             {pinned ? <Pin className="h-3.5 w-3.5 fill-current" /> : <PinOff className="h-3.5 w-3.5" />}
           </TopBarBtn>
