@@ -1,235 +1,225 @@
-# Skylines — Bullet formatting, theme editor cleanup, timestamps, Sticky Notes
+# Sticky note polish, theme editor trim, link dialog fixes, image editor
 
 ## Goal
 
-Verify/fix bullet-list auto-formatting across all text-editing surfaces,
-clean up the theme editor's cluttered variable list, add last-edited
-timestamps to canvas text boxes and pages, and build a full Sticky Notes
-feature: pop-out, always-on-top mini windows embeddable into any text area
-via Ctrl+K, with their own formatting chrome, a home page for browsing/
-creating them, and screenshot-to-sticky-note capture.
+Second round of sticky-note polish plus a handful of other fixes, driven by
+planning.md's latest 5 items:
 
-## Non-Goals
+1. Sticky note windows lose their native OS titlebar; the existing colored
+   top bar becomes the real title bar / drag handle.
+2. Rework focus/blur behavior: double-clicking the top bar is what now
+   triggers the "collapse to just the title bar" resize (previously this
+   happened automatically on blur). Losing focus without double-clicking no
+   longer resizes the window — instead the bottom formatting bar fades out
+   and the top bar becomes slimmer, while the window itself stays full size.
+3. Sticky notes home page: right-click a preview card for rename/delete/
+   favorite; small favorited/opened badges on each card; favorited notes
+   get their own row(s) at the top.
+4. Theme editor: trim the editable field list down to only the CSS
+   variables `ThemePreview.tsx`'s mini preview actually renders, group them
+   under collapsible sections, and make `radius` friendlier to edit than a
+   raw text field.
+5. Fix the "insert link" dialog not being closable, give it a real Ctrl+K
+   keybinding, and turn its existing-sticky-notes list into toggleable
+   rows/mini-previews (same toggle also added to the sticky notes home
+   page).
+6. A pop-out image editor: double-click any image anywhere in the app to
+   open it in an editor with draw (+undo), shapes, censor (black/blur),
+   text, erase, and crop tools; Ctrl+C copies the edited image to the
+   clipboard with a save-flash; edits are also written back into the
+   note/page the image came from.
 
-- **Don't touch the theme editor's color-editing mechanics** (color wheel,
-  Save/Discard, undo/redo, context menu, file persistence) — only which
-  variables are shown and how they're grouped.
-- **Don't change existing plain-URL hyperlink behavior** — Ctrl+K's new
-  dialog adds sticky-note options alongside the existing URL path, it
-  doesn't change how a plain URL link is parsed/rendered/clicked.
-- **Don't build real-time multi-device sync for sticky notes beyond this
-  app's existing local-first + debounced Firestore push pattern** — reuse
-  `lib/sync/engine.ts`'s established mechanism (dirty/synced_at columns,
-  `notifyDataChange`), not a new sync system.
-- **Sticky notes are desktop-only for this spec.** Multi-window management
-  (pop-out windows, always-on-top, focus/blur chrome) doesn't translate
-  cleanly to the existing Android build target — Android behavior for
-  sticky notes is explicitly out of scope; the feature can be gated to
-  desktop only.
-- **Screenshot capture targets Windows first.** Cross-platform screen
-  capture APIs differ significantly (macOS/Linux need separate permission
-  models and APIs) — only Windows needs to work for this spec; macOS/Linux
-  support is a stretch goal, not a blocker.
-- **Don't touch `../note_taking_app`** or any other sibling project.
+## Non-goals
+
+- Not touching `ScreenshotCapture.tsx`'s existing pre-save freehand-draw
+  annotation flow (capturing a window, doodling before creating the note) -
+  the new image editor targets images already placed in a note/page, this
+  stays as-is.
+- Not changing what `pinned` means (always-on-top) - "favorite" (item 3) is
+  a new, separate field, not a rename or reuse of `pinned`.
+- Not adding more visual regions to `ThemePreview.tsx` itself to justify
+  keeping more fields - planning.md says remove what isn't shown "for now."
+- Not redesigning the sticky note pop-out window's size/position logic
+  beyond what items 1-2 require.
+- Not building undo/redo for anything outside the image editor's own
+  canvas (e.g. this doesn't touch tldraw's or Tiptap's undo stacks).
+
+## Key decisions
+
+- Item 6 (image editor) stays in this spec rather than becoming its own
+  follow-up, per explicit choice - same as last time's "include everything"
+  call for sticky notes.
+- Image editor edits ARE written back into the source note/page (not
+  clipboard-only) - Ctrl+C to clipboard is an additional action, not the
+  only way to keep a change.
+- "Insert link can't be exited" has no confirmed root cause from static
+  reading (the dialog's close button/Cancel/Escape/backdrop-dismiss all
+  looked structurally normal in `LinkOrStickyDialog.tsx`) - scoped as a
+  reproduce-and-fix subtask rather than a guessed patch.
+- Favorited/opened get two distinct icons on preview cards, not one
+  combined indicator, since a note can be both at once.
+- "Opened" state is derived by checking for a live `sticky-<id>` labeled
+  window (`getAllWindows`/`getByLabel`), not a separate DB flag - clicking
+  an "opened" badge focuses that window instead of creating a duplicate
+  (this already partly happens via `openStickyNoteWindow`'s reuse logic).
+- Clipboard image support uses `@tauri-apps/plugin-clipboard-manager`
+  (its `writeImage` API), a new dependency - not currently installed.
+- Theme editor field trim: keep only `background`, `foreground`, `card`,
+  `card-foreground`, `sidebar`, `sidebar-foreground`, `sidebar-border`,
+  `sidebar-primary`, `sidebar-accent`, `primary`, `border`, `radius`
+  (the only vars `ThemePreview.tsx` actually uses); drop `muted`,
+  `muted-foreground`, `popover`, `popover-foreground`,
+  `primary-foreground`, `secondary`, `secondary-foreground`, `accent`,
+  `accent-foreground`, `destructive`, `input`, `ring`,
+  `sidebar-primary-foreground`, `sidebar-accent-foreground`.
+
+## Open questions
+
+- None blocking - remaining ambiguity in item 5/6 (exact dialog bug cause,
+  exact censor/erase tool implementation) is intentionally left for the
+  implementor/reviewer to resolve during the loop rather than guessed here.
 
 ## Subtasks
 
-### M1 — Bullet-list formatting
+1. **Frameless sticky note window + native drag region.** In
+   `lib/stickyWindow.ts`, create sticky windows with `decorations: false`.
+   In `StickyNoteTopBar.tsx`, mark the top bar's root div
+   `data-tauri-drag-region` so dragging it moves the OS window, while
+   excluding the actual buttons (pin/menu/exit) from the drag region so
+   they stay clickable. Title text stays visible; no other chrome changes.
 
-1. **Verify and fix bullet-list auto-formatting in both existing editors.**
-   Tiptap's `StarterKit` (already used by both `RichTextEditor.tsx` and
-   `RichTextShape.tsx`) includes `@tiptap/extension-list`, which already
-   provides: a `wrappingInputRule` that auto-converts `-`/`*`/`+` + space
-   into a bullet list, `Enter` continuing the list via `splitListItem`, and
-   `Tab`/`Shift-Tab` bound to `sinkListItem`/`liftListItem` for indent/
-   outdent. Live-test all of this in both editors (full-page notes and
-   canvas text boxes) and fix whatever's actually broken or missing (e.g.
-   confirm Backspace at the start of an empty list item outdents/exits the
-   list rather than just deleting a character — verify against Tiptap's
-   actual default keymap rather than assuming). Do not build bullet-list
-   behavior from scratch if it already works — this subtask is a
-   verify-and-patch pass, not a rewrite.
+2. **Add a `favorite` field to sticky notes.** New sqlite migration
+   (version 8) adding a `favorite` column to `sticky_notes` (mirrors how
+   `pinned` was added), plus `types/index.ts`'s `StickyNote` interface and
+   `lib/db/stickyNotes.ts`'s CRUD/sync functions (`updateStickyNote` support,
+   remote upsert mapping). Distinct from `pinned` (always-on-top) - do not
+   touch `pinned`'s existing behavior.
 
-### M2 — Theme editor cleanup
+3. **Rework focus/blur: manual collapse via double-click, passive blur via
+   fade/slim (no resize).** In `StickyNoteEditor.tsx`/`StickyNoteTopBar.tsx`:
+   double-clicking the top bar triggers the exact resize-to-
+   `COLLAPSED_HEIGHT` behavior that currently happens automatically on
+   blur (toggle: double-click again, or focus, restores
+   `originalSizeRef`'s size). Losing focus without a manual collapse no
+   longer calls `win.setSize` at all - instead `StickyNoteBottomBar` fades
+   out (opacity/height transition, not unmount) and the top bar shrinks in
+   height/padding while keeping the title readable. Regaining focus
+   reverses both. A manually-collapsed note that then loses window focus
+   should stay collapsed (collapse state and focus state are independent).
 
-2. **Remove the 5 dead theme variables.** `chart-1` through `chart-5`
-   (`ThemeVariableKey` in `lib/themes/types.ts`, `app/globals.css`'s
-   `:root`/`.dark` blocks, `lib/themes/builtin.ts`'s palettes, and the
-   corresponding `ThemeColorField` rows in `ThemeEditor.tsx`) are confirmed
-   dead — a codebase-wide search found no `chart-*` Tailwind class anywhere
-   in `components/`, since this app has no chart/graph feature. Remove all
-   five entirely from the theme system (type union, validation array, CSS
-   variable declarations, built-in palettes, and the editor's field list) —
-   not just hide them in the UI.
-3. **Group the theme editor's remaining color fields.** `ThemeEditor.tsx`'s
-   right sidebar currently renders all 26 remaining `ThemeVariableKey`s as
-   one flat list. Reorganize into labeled sections matching how they're
-   actually used: Base & Text (`background`/`foreground`), Card, Popover,
-   Primary/Secondary/Accent, Destructive, Border/Input/Focus Ring, Radius,
-   Sidebar. Purely a presentation/grouping change — the fields, their
-   editing behavior, and the underlying data model are untouched.
+4. **Right-click context menu on sticky note preview cards.** In
+   `StickyNotesHome.tsx`, add a context menu (reuse the existing
+   `components/ui/dropdown-menu.tsx` primitives, triggered via
+   `onContextMenu` + a controlled open position, or a proper
+   `ContextMenu` primitive if one already exists in `components/ui`) with
+   Rename (inline edit of `title`), Delete (reuse existing delete logic),
+   and Favorite/Unfavorite (toggles the new `favorite` field).
 
-### M3 — Last-edited timestamps
+5. **Favorited/opened badges + favorited rows on the home page.** In
+   `StickyNotesHome.tsx`: query which sticky notes currently have a live
+   `sticky-<id>` window open (Tauri `getAllWindows()`, filter by label
+   prefix) each time the dialog opens; render two small distinct icons in
+   each card's bottom-right corner (favorite star, "currently open"
+   indicator) when applicable. Clicking the "opened" badge focuses that
+   window (`Window.setFocus`) instead of just calling
+   `openStickyNoteWindow` again (though that already reuses the window,
+   per existing logic - confirm/align). Split the grid into a "Favorites"
+   section (one or more rows, only rendered when at least one note is
+   favorited) above the regular grid.
 
-4. **Add a per-shape last-edited timestamp to canvas text boxes.**
-   `RichTextShape.tsx`'s shape props gain a new field (e.g.
-   `lastEditedAt: number`), updated to `Date.now()` on every content change
-   via the existing `onUpdate` handler (per explicit decision: updates live
-   on every edit, not just on blur) — persisted the same way the rest of
-   `shape.props` already is (part of the page's `canvasData` snapshot, no
-   separate DB column needed).
-5. **Render the faded short-form timestamp on each text box.** A small,
-   muted, faded date+time string (short form, e.g. "Sep 5, 2:55 PM") shown
-   somewhere on the shape — exact placement/visibility rules (always shown
-   vs. only on hover/edit like the existing chrome) are implementation-time
-   visual judgment, following this app's existing shadcn/Tailwind
-   conventions.
-6. **Add the long-form last-edited line under the page title.** The canvas
-   page header (`CanvasEditor.tsx`) already has a border-bottom line below
-   the title (from the prior spec's M4 subtask 7). Render a long-form
-   date/time stamp under that line (e.g. "Wednesday, September 5, 2026
-   2:55 PM") reflecting the page's own `updated_at` (already tracked in
-   `lib/db/pages.ts`'s schema — no new data needed), updating live as the
-   page's title or canvas content changes.
+6. **Trim theme editor fields to what the mini preview shows.** In
+   `ThemeEditor.tsx`'s `THEME_VARIABLE_GROUPS`, remove every key not in
+   the kept list from "Key decisions" above, and drop now-empty groups
+   entirely (e.g. "Popover", "Destructive" if nothing remains). Don't
+   touch `lib/themes/types.ts`/`builtin.ts`/`app/globals.css` - these
+   variables still exist and are still applied, just not editable from
+   this trimmed list.
 
-### M4 — Sticky Notes
+7. **Collapsible sections + friendlier radius control in theme editor.**
+   Wrap each remaining `THEME_VARIABLE_GROUPS` section in a
+   collapsible/accordion (reuse an existing primitive if
+   `components/ui` has one, otherwise a small local disclosure component
+   matching this app's existing style) defaulting to expanded. Replace the
+   raw `radius` text/number input with a friendlier control - a slider
+   with a live numeric readout is the natural fit given `ThemePreview.tsx`
+   already live-updates as `draftVariables` change.
 
-7. **Sticky note data model + migration.** A new `sticky_notes` SQLite table
-   (mirroring `lib/db/pages.ts`'s established local-first pattern: `id`,
-   `user_id`, `title`, `content` as Tiptap JSON, `top_bar_color`, `pinned`,
-   `created_at`/`updated_at`/`deleted_at`, `dirty`, `synced_at`), added via
-   a new migration in `src-tauri/src/lib.rs` alongside the existing ones,
-   plus a new `lib/db/stickyNotes.ts` CRUD module matching
-   `lib/db/pages.ts`'s exact function-naming/shape conventions.
-8. **Sticky note pop-out window.** A real, separate Tauri window (created
-   at runtime via `@tauri-apps/api/window`'s `WebviewWindow`, not a
-   pre-declared config window — each sticky note gets its own), sized to a
-   9:16 aspect ratio, rendering a new dedicated route (e.g.
-   `app/sticky/page.tsx` reading the note id via a query param, same
-   pattern `app/canvas/page.tsx` already uses) with none of the main app's
-   ribbon/sidebar chrome — just a Tiptap editor bound to that note's
-   content, autosaving the same debounced way the other editors do.
-9. **Sticky note top bar.** Appears on window focus, hides on blur (the
-   whole window also shrinks in height while unfocused, per spec). Pin
-   button (real OS-level always-on-top via Tauri's `setAlwaysOnTop`, over
-   the whole desktop per explicit decision — not just this app's own
-   windows), Exit button (autosave if dirty, then close the window), and a
-   3-dot menu with Delete and "Change top bar color" (a color picker scoped
-   to just this note; defaults to the active theme's `--primary`).
-10. **Sticky note bottom bar.** Also focus/blur-gated like the top bar. A
-    compact subset of `formatActions.ts`'s existing actions: bold, italic,
-    underline, strikethrough, bullet list, and a checkbox/task list toggle
-    (reusing Tiptap's `TaskList`/`TaskItem`, already used elsewhere in this
-    app's editors) — mirrors `FormatTab`'s established
-    read-state-then-render-buttons pattern, not a new formatting system.
-11. **Ctrl+K dialog.** Replace the bare `window.prompt("URL", prev)` in both
-    `RichTextEditor.tsx` and `RichTextShape.tsx` with a real dialog
-    (`components/ui/dialog.tsx`) offering three choices: paste a URL
-    (existing behavior, preserved exactly), create a new sticky note
-    (creates a `sticky_notes` row, opens its pop-out window immediately,
-    and embeds a reference at the cursor), or pick an existing sticky note
-    from a searchable list to embed.
-12. **Sticky note embed rendering.** A distinct, clickable inline mark/node
-    in the Tiptap document (visually distinct from a plain hyperlink — not
-    just a blue underlined link) that opens the referenced sticky note's
-    pop-out window on click, reusing whatever of the existing `Link`
-    extension's click-interception conventions make sense but with its own
-    click behavior (open/focus a Tauri window, not navigate a URL).
-13. **Nested sticky-note embedding.** Confirm a sticky note's own editor
-    (subtask 8) includes the same embed extension from subtask 12, so an
-    embed inside an already-open sticky note correctly opens another
-    pop-out window on click — live-verify this rather than assuming it
-    falls out for free.
-14. **Sticky notes home page.** A new view listing all sticky notes as
-    collapsed preview cards (title/first line of content, top-bar color
-    swatch) — clicking a card opens that note's pop-out window (subtask 8).
-15. **Ribbon entry point.** A new tab/button on the far right of the ribbon
-    (alongside File/Format/Draw) that opens the home page from subtask 14.
-16. **Screenshot-to-sticky-note capture.** On the home page, a "screenshot"
-    action that lets the user pick an open OS window and captures it (needs
-    a native Rust screen-capture dependency added to `src-tauri/Cargo.toml`
-    — verify the current best-maintained cross-platform crate at
-    implementation time rather than guessing, per this project's
-    established discipline), shows a live preview, and lets the user
-    double-click it to create a new sticky note whose content is that
-    captured image, openable and drawable-on (reusing this app's existing
-    tldraw-based canvas machinery for the drawing surface, unless
-    implementation-time investigation finds a lighter-weight approach makes
-    more sense — flagged as the single highest-risk/most likely to need a
-    scope renegotiation subtask in this entire spec, given it's genuinely
-    new engineering territory for this app).
+8. **Investigate and fix: insert-link dialog can't be exited.** Reproduce
+   with `LinkOrStickyDialog.tsx` opened from both `RichTextEditor.tsx`
+   (full-page notes) and `RichTextShape.tsx` (canvas shape) and find the
+   actual cause (candidates worth checking first: tldraw's own keyboard/
+   pointer handling intercepting Escape or outside-clicks when the dialog
+   is opened from a canvas shape; `onOpenChange` never actually reaching
+   the parent's `setLinkDialogOpen`; some effect re-forcing `open` back to
+   true). Fix whatever's actually wrong; don't guess-patch without
+   reproducing.
 
-## Key Decisions
+9. **Real Ctrl+K keybinding for the link dialog.** Currently nothing binds
+   Ctrl+K anywhere - the dialog only opens via a toolbar button. Add a
+   real keydown handler (editor-scoped, e.g. a Tiptap keyboard shortcut or
+   an `editorProps.handleKeyDown`) in both `RichTextEditor.tsx` and
+   `RichTextShape.tsx` that opens `LinkOrStickyDialog` the same way the
+   existing toolbar button does, pre-filling `currentUrl` the same way.
 
-- **Sticky Notes is included in this same spec**, not split into its own
-  later one, despite being by far the largest single feature here (subtasks
-  7-16) — explicit user choice, made after being told this upfront.
-- **The bullet-list item (subtask 1) is a verify-and-fix pass, not new
-  construction** — Tiptap's `StarterKit` already ships this behavior via
-  `@tiptap/extension-list`, confirmed by reading the installed package
-  source before writing this spec.
-- **`chart-1` through `chart-5` are removed entirely from the theme
-  system**, not just hidden in the editor UI — confirmed genuinely unused
-  anywhere in this app's actual component code via a codebase-wide search.
-- **Per-text-box timestamps update on every content change**, not just on
-  blur — explicit user choice.
-- **Screenshot capture is built as a real subtask now**, not deferred to a
-  future spec, despite being flagged as the highest-risk/most novel piece
-  of engineering in this entire spec (a genuinely new native OS-integration
-  capability for this app) — explicit user choice, made after being told
-  the tradeoff upfront.
-- **Ctrl+K's existing bare `window.prompt("URL")` is replaced with a real
-  dialog** offering URL / new sticky / existing sticky — explicit user
-  choice, needed since a native `prompt()` can't offer more than one text
-  input.
-- **Pin makes a sticky note always-on-top over the entire desktop**
-  (other applications too), not just over this app's own windows —
-  explicit user choice, matching how OS-level sticky-note/widget apps
-  conventionally behave.
-- **Sticky notes are desktop-only; screenshot capture targets Windows
-  first** — both explicit scope-limiting decisions made during planning to
-  keep an already-large spec from also taking on cross-platform screen
-  capture and mobile multi-window support in the same pass.
+10. **Toggleable rows/mini-preview for existing sticky notes, in both the
+    link dialog and the home page.** In `LinkOrStickyDialog.tsx`, change
+    the flat list of existing-sticky-note buttons into rows, each with a
+    toggleable mini content preview (reuse `extractPlainText` for a text
+    snippet; if the note's content is image-only, show a tiny thumbnail)
+    alongside the title, gated by a small toggle button in the dialog
+    (title-only vs. mini-preview rows). Add the same toggle to
+    `StickyNotesHome.tsx`'s own grid (title-only vs. current
+    preview-card view), persisting the choice isn't required unless
+    trivial to add (e.g. local component state is fine).
 
-## Open Questions
+11. **Clipboard image support.** Add `@tauri-apps/plugin-clipboard-manager`
+    (npm package + Rust crate), register the plugin in `src-tauri/src/lib.rs`,
+    and grant its default capability in `src-tauri/capabilities/default.json`
+    (and `sticky.json`, since the image editor opens from sticky notes too -
+    see subtask 12). No UI yet - just wiring, confirmed with a minimal
+    smoke check that `writeImage` is callable.
 
-- Exact visual placement/visibility rule for the per-text-box faded
-  timestamp (subtask 5) — always visible vs. only on hover/edit — left to
-  implementation-time visual judgment.
-- Exact Rust crate for native screen capture (subtask 16) — no such
-  dependency exists in this project today; implementation should verify
-  current best-maintained, actively-supported options rather than
-  defaulting to the first one found, per this project's established
-  discipline (e.g. the theme editor's `react-colorful`/`culori` picks).
-- Exact drawing-surface implementation for "draw on a captured screenshot"
-  (subtask 16) — reusing the existing tldraw-based canvas machinery
-  (`RichTextShape.tsx`'s sibling infrastructure) is the default assumption,
-  but a lighter-weight, purpose-built drawing surface may turn out to be a
-  better fit once the screenshot-capture mechanism itself is understood —
-  left to implementation-time judgment.
-- Whether the sticky-note embed (subtask 12) should be a Tiptap mark (like
-  `Link`) or a custom node — left to implementation-time judgment based on
-  which fits Tiptap's actual API better for "clickable, non-editable inline
-  reference that isn't real text content."
-- Whether "Delete" on a sticky note (subtask 9's 3-dot menu) should warn
-  when other documents still have embeds pointing at it — not addressed by
-  planning.md; left as an open question for the implementor to flag if it
-  turns out to matter, rather than guessed at now.
+12. **Image editor pop-out shell.** New window (or dialog, matching
+    whichever pattern fits better given it needs to feel like a real
+    pop-out per planning.md's wording - a `WebviewWindow` mirroring
+    `lib/stickyWindow.ts`'s pattern is the closer fit) that opens when any
+    `img` inside Tiptap-rendered content (`RichTextEditor.tsx`,
+    `RichTextShape.tsx`, `StickyNoteEditor.tsx`) is double-clicked. Loads
+    the image onto an editing `<canvas>` at natural resolution. No tools
+    yet - just the shell, image load, and a way to close it.
+
+13. **Undo-stack draw tool.** Freehand draw tool (reuse the pointer-
+    tracking approach `ScreenshotCapture.tsx` already uses as a reference,
+    but on its own layer/undo stack) with Ctrl+Z stepping back through a
+    history of canvas snapshots or draw operations.
+
+14. **Shape tool.** Click-and-drag to place basic shapes (rectangle,
+    ellipse, line at minimum) onto the image, participating in the same
+    undo stack as subtask 13.
+
+15. **Censor tool.** Click-and-drag a box that applies either a solid
+    black fill or a blur effect (toggle between the two) to that region,
+    baked into the image, participating in the same undo stack.
+
+16. **Text tool.** Click to place editable text onto the image (font size/
+    color reasonable defaults, no need to match the full rich-text
+    toolbar), baked in on commit, participating in the same undo stack.
+
+17. **Erase and crop tools.** Erase: a hard eraser removing pixels back to
+    the original loaded image in the brushed area (or transparent, if
+    that reads better given images are usually opaque - implementor's
+    call). Crop: click-and-drag a crop rectangle, with a confirm action
+    that trims the canvas to that region. Both participate in the same
+    undo stack.
+
+18. **Save-back-to-note + Ctrl+C clipboard export with flash feedback.**
+    Closing the editor (or an explicit save action) re-encodes the baked
+    canvas as a data URL and updates the source `img` node's `src` in the
+    original note/page's Tiptap content (persisted via that surface's
+    existing save path - `updateStickyNote`, the canvas shape's own
+    update, or the page note's own autosave, whichever the image came
+    from). Ctrl+C while the editor is open copies the current baked image
+    to the OS clipboard via subtask 11's `writeImage`, and shows a brief
+    visual flash + "Copied to clipboard" text.
 
 ## Progress
-
-- Subtask 1 (Verify and fix bullet-list auto-formatting) — done, verify-only, no code changes. Confirmed by reading the installed `@tiptap/extension-list` package source that `StarterKit` (used unmodified aside from `codeBlock: false` in both `RichTextEditor.tsx` and `RichTextShape.tsx`) already provides everything the subtask asked for: a `wrappingInputRule` auto-converting `-`/`*`/`+` + space into a bullet list, `Enter`→`splitListItem`, `Tab`/`Shift-Tab`→`sinkListItem`/`liftListItem`, and `ListKeymap`'s `handleBackspace` correctly outdenting at the start of a list item rather than just deleting a character. No diff was produced, so there was nothing to commit for this subtask.
-- Subtask 2 (Remove the 5 dead theme variables) — done. `chart-1` through `chart-5` removed entirely from the theme system: `lib/themes/types.ts`'s `ThemeVariableKey` union and `THEME_VARIABLE_KEYS` array, `app/globals.css`'s `:root`/`.dark` declarations and `@theme` Tailwind-token mappings, and all 4 built-in theme palettes (`LIGHT_THEME`, `DARK_THEME`, `GRUVBOX_DARK_THEME`, `OFF_WHITE_THEME`) in `lib/themes/builtin.ts`. `ThemeEditor.tsx` needed no edit since its field list is driven entirely by `THEME_VARIABLE_KEYS`. Reviewer caught one cosmetic issue (a stale variable-count comment, "26" instead of the correct "27") — fixed directly. Confirmed no remaining `chart-*` references anywhere in the codebase, and that a pre-existing user theme file with old `chart-*` keys fails `isTheme()`'s validation gracefully (rejected, not a crash) — an accepted, expected consequence of the removal. `tsc --noEmit` and `npm run build` pass.
-- Subtask 3 (Group the theme editor's remaining color fields) — done. `ThemeEditor.tsx`'s right sidebar now renders the 27 `ThemeVariableKey` rows grouped into 8 labeled sections (Base & Text, Card, Popover, Primary/Secondary/Accent, Destructive, Border/Input/Focus Ring, Radius, Sidebar) via a new `THEME_VARIABLE_GROUPS` constant, instead of one flat list — purely structural, `ThemeColorField`/`handleVariableChange`/the radius input/save-undo-dirty-check logic all untouched. Reviewer found no issues: confirmed full coverage of all 27 keys with no drops/duplicates, confirmed `THEME_VARIABLE_KEYS`'s other use (in `isDraftDirty()`) is unaffected, confirmed React key uniqueness and type safety hold, and confirmed the per-group divider scoping (no divider between a group's last row and the next group's heading) is an intentional presentational change, not a bug. `tsc --noEmit` passes.
-- Subtask 4 (Add a per-shape last-edited timestamp to canvas text boxes) — done. `RichTextShapeProps` gained `lastEditedAt: number`, updated to `Date.now()` atomically alongside `content` on every Tiptap edit (not just blur, per explicit decision), and set on shape creation. Data-model/plumbing only — no rendering added yet (that's subtask 5). The implementor itself caught and fixed a real backward-compatibility break: adding a new required prop to an existing tldraw shape type would reject loading any page saved before this change, since tldraw's props validator rejects a shape record missing a declared key. Fixed via tldraw's own `TLPropsMigrationSequence` mechanism (this shape type's first-ever migration), backfilling `lastEditedAt = 0` onto pre-existing records before validation runs, modeled directly on tldraw's own built-in `TLNoteShape` migrations. Reviewer did unusually deep verification given this was new territory for the codebase: confirmed the migration APIs are real and correctly re-exported by actually running the imports in Node, traced tldraw's real `createTLStore`/`Tldraw.tsx` wiring to confirm `static override migrations` on the ShapeUtil is genuinely sufficient with no other registration point needed, confirmed via git history this really is the shape's first prop addition since creation (no other unmigrated prop lurking), and diffed the migration's shape directly against tldraw's own shipped `TLNoteShape.ts` migrations. `tsc --noEmit` passes.
-- Subtask 5 (Render the faded short-form timestamp on each text box) — done. A small, faded (`text-muted-foreground`, 60% opacity, 10px) last-edited timestamp now renders in the bottom-right corner of each canvas text box, formatted via `Intl.DateTimeFormat` (e.g. "Sep 5, 3:55 PM"), gated on the shape's existing `showChrome` (hover-or-editing) condition for consistency with the drag-handle bar; skips rendering entirely for the migration's `lastEditedAt === 0` legacy sentinel rather than showing a bogus 1970 date. Reviewer found no correctness issues (confirmed correct DOM/positioning-context placement, consistent `showChrome` gating with no stale-closure risk, safe `!== 0` guard, correct 12-hour AM/PM formatting verified in Node, and correct stacking/paint order) — flagged one minor cosmetic nit, not a bug: when a shape is both hovered/editing and selected simultaneously, the timestamp can visually overlap tldraw's own bottom-right resize handle in that same corner (purely cosmetic, `pointer-events: none` means no functional conflict). Left as-is pending visual review rather than guessing at a reposition. `tsc --noEmit` passes.
-- Subtask 6 (Add the long-form last-edited line under the page title) — done. A secondary-styled (`text-xs text-muted-foreground`) long-form last-edited line now renders under the page title's divider, e.g. "Saturday, September 5, 2026 2:55 PM", reading `selectedPage.updatedAt`. Reviewer caught two real bugs and one cosmetic divergence, all fixed: (1) `commitTitle()`'s own store update never refreshed `updatedAt` alongside `title`, so the timestamp silently never updated after a title edit despite the DB write bumping it correctly; (2) the unmount-flush save path (separate from the debounced-timer autosave path, which the implementor had already wired correctly) had the same staleness gap — confirmed reachable: editing canvas content, switching pages before the 800ms debounce fired, then switching back later in the same session would show a stale timestamp, since nothing else re-fetches `pages` on a plain page switch; both fixed by reading fresh store state and updating just the affected page's `updatedAt` after each write resolves. (3) The initial combined-formatter approach produced "...2026 **at** 2:55 PM" (Intl's default en-US pattern inserts "at" when weekday+date+time are requested from one formatter) — fixed by formatting date and time separately and concatenating with a plain space. `tsc --noEmit` passes, format output verified directly in Node.
-- Subtask 7 (Sticky note data model + migration) — done. New `sticky_notes` SQLite table (migration version 7, correctly the next sequential number) with `id`/`user_id`/`title`/`content`/`top_bar_color`/`pinned`/`created_at`/`updated_at`/`deleted_at`/`dirty`/`synced_at`, mirroring `pages`/`notes`' exact sync-bookkeeping shape — sticky notes are their own top-level entity, not scoped to a note/page. New `lib/db/stickyNotes.ts` faithfully mirrors `pages.ts`/`notes.ts`'s full function surface (CRUD plus dirty/tombstone/upsert-from-remote sync-support functions, confirmed genuine mirroring rather than scope creep by checking `pages.ts` already has this identical surface — sync-engine registration itself is a later subtask, not wired here). New `StickyNote` type in `types/index.ts`. Reviewer verified migration numbering, the `content?: object | null` optionality (matches `Page`/`Note`'s identical established pattern), the reused-placeholder SQL binding style (verified as a real existing precedent in `createNote`, not novel/unverified), the `ById`/`RowById` soft-delete-filtering distinction (matches siblings verbatim), and the `local`/`remote` `notifyDataChange` tagging convention. One reviewer nitpick (claimed the file had no function-level comments) was independently checked and found factually wrong — the file has substantial JSDoc throughout — and disregarded. `tsc --noEmit` and `cargo check` both pass. No UI or sync-engine registration touched, as scoped.
-- Subtask 8 (Sticky note pop-out window) — done. New `app/sticky/page.tsx` (mirrors `app/canvas/page.tsx`'s query-param/`Suspense` pattern) + `components/editor/StickyNoteEditor.tsx` (minimal Tiptap editor, extension list copied from `RichTextEditor.tsx`, autosaving on the established 800ms debounce with unmount-flush — no formatting bars yet, that's subtasks 9/10) + `lib/stickyWindow.ts` exporting the reusable `openStickyNoteWindow(id)` helper later subtasks (Ctrl+K dialog, home page, ribbon button) will call, opening a real 360×640 (9:16) Tauri window and reusing/focusing an existing window for the same note instead of duplicating. Added a new `src-tauri/capabilities/sticky.json` scoped to a `"sticky-*"` window-label glob granting SQL permissions — the critical, easy-to-miss piece, since runtime-created Tauri windows get zero permissions by default under Tauri v2's per-window capability scoping; without this the window would open but every save/load would silently fail. Also added `core:webview:allow-create-webview-window` to the main window's capability, and a temporary "New sticky note" sidebar button purely to exercise this subtask (calls the same real helper later subtasks will use). Reviewer caught a real inefficiency: the sticky popup was booting a full second sync-engine instance plus live notes/folders/notebooks subscriptions (each `WebviewWindow` is its own JS runtime, so the existing singleton guard doesn't span windows) for state the sticky editor never reads — fixed by extending `AppShell.tsx`'s existing `publicRoute` sync-exclusion gate to also cover the sticky route. Reviewer separately verified the capability glob syntax against the generated schema, the `trailingSlash: true` pathname-normalization handling, the window-reuse API usage against installed types, and that no untrusted string reaches the window URL. One thing flagged as unverifiable (not a found bug): whether Firebase auth state is genuinely shared across separate `WebviewWindow` instances — no evidence of a problem, but couldn't be confirmed without live testing; worth checking first when the app is run. `tsc --noEmit` and `cargo check` both pass.
-- Subtask 9 (Sticky note top bar) — done. New `StickyNoteTopBar.tsx` — a colored strip (defaults to the active theme's `--primary` via CSS, overridable per-note) with Pin/3-dot-menu/Exit buttons visible only while the real OS window has focus (`Window.onFocusChanged`, not a DOM event); the window physically shrinks to a 48px strip on blur and restores to its exact prior size on refocus; Pin toggles real OS-level always-on-top via `Window.setAlwaysOnTop`; Exit flushes pending saves then closes the window; 3-dot menu offers Delete and a `react-colorful` color picker. Added the missing `core:window:allow-close`/`allow-set-always-on-top`/`allow-set-size` capability grants, verified against the generated schema (`core:window:default` alone is read-only). Reviewer caught two real bugs, both fixed: (1) the top bar rendered the title from a static, never-updated prop, so editing the title below never reflected in the strip — fixed by lifting the live title state down as a prop; (2) the color picker defaulted to hardcoded black instead of the theme's actual `--primary` when no custom color was set, visually disconnected from what the strip displayed — fixed by resolving `--primary`'s live computed value to hex via `lib/themes/color.ts`'s existing `themeColorToPickerHex` helper (reused, not reimplemented). **Remaining concern, flagged not fixed**: this is the first place in the codebase nesting a real interactive widget (`react-colorful`'s picker) inside a `DropdownMenuSub`/`DropdownMenuSubContent` — the cited precedent (`AccountMenu.tsx`) turned out NOT to actually do this (its picker lives in a separate top-level dropdown), so there's no proven-safe precedent, and it couldn't be verified without live testing whether the submenu's own focus/typeahead management would swallow pointer/keyboard interaction inside the picker. Needs a manual check: open the 3-dot menu → "Change top bar color" and confirm dragging inside the color wheel works without the menu closing. `tsc --noEmit` passes.
-- Subtask 10 (Sticky note bottom bar) — done. New `StickyNoteBottomBar.tsx` — bold/italic/strikethrough/bullet-list/task-list buttons (5 of the 6 requested; "underline" doesn't exist as a `formatActions.ts` action anywhere in this codebase, correctly flagged and omitted rather than invented), focus-gated like the top bar, reading live state against the sticky note's own local Tiptap instance. Refactored the window-focus-tracking effect out of `StickyNoteTopBar.tsx` and up into `StickyNoteEditor.tsx` so both bars share one Tauri `Window.onFocusChanged` listener instead of duplicating it — verified byte-for-byte identical to the original subtask-9 behavior after the move. Reviewer traced a genuine, deep bug through actual `@tiptap/react` internals: because this app's editors use Next.js's SSR-safe `immediatelyRender: false`, `editor` is `null` on first render, and `useEditorState`'s internal caching doesn't notify subscribers when the underlying editor later flips from null to real (only an actual ProseMirror transaction does) — so the bottom bar would stay invisible after opening a sticky note until the user's first click/keystroke primed the cache, no crash, just silently missing. Connected to a previously-documented instance of the exact same bug class already worked around elsewhere in the codebase (`TopBar.tsx`); fixed by mirroring that established pattern (falling back to computing the selector synchronously against the live editor when the cached snapshot is stale). Reviewer separately verified the action-id filter, that `TaskList`/`TaskItem` are genuinely registered, the top-bar refactor's fidelity, and no unintended interaction between the focus-tracking and unmount-flush effects. `tsc --noEmit` passes.
-- Subtask 11 (Ctrl+K dialog) — done. New `LinkOrStickyDialog.tsx` — shared dialog used by both `RichTextEditor.tsx` and `RichTextShape.tsx`, replacing their `window.prompt("URL", prev)` calls. Offers paste-URL (exact prior behavior), create-new-sticky-note (creates the row, opens the pop-out window, applies `sticky:<id>` as the link href), and pick-existing-sticky-note (searchable list, same href convention) — both paths funnel through one shared `applyLink` helper. Per the deliberate sequencing plan, `sticky:<id>` is just a plain Tiptap `Link` href for now; subtask 12 will give it distinct click/render behavior. Reviewer verified `AuthProvider` genuinely wraps the canvas/shape tree, multiple simultaneous shape instances each getting their own dialog state is safe, no accidental form-submit-on-Enter risk (no `<form>` element anywhere), the `sticky:<id>` href can never degrade to empty and hit the unset-link path, and the dialog correctly resets on every reopen. One minor edge case noted but not fixed: if `openStickyNoteWindow` throws mid-creation (e.g. popup blocked), the sticky note row would already exist with no link applied yet — orphaned but still recoverable via the "existing sticky notes" list, not data loss. Also independently confirmed the "Ctrl+K" naming is aspirational — there's no actual keybinding in this codebase, only a toolbar button, true before this diff too (not a regression). `tsc --noEmit` passes.
-- Subtask 12 (Sticky note embed rendering) — done. New `lib/tiptap/stickyLinkClick.ts` — a shared `editorProps.handleClick` fragment intercepting clicks specifically on `sticky:<id>` hrefs (calling `openStickyNoteWindow(id)`), leaving normal links untouched. Wired into both `RichTextEditor.tsx` and `RichTextShape.tsx`. New pill/chip CSS styling in `editor.css` for `a[href^="sticky:"]`, visually distinct from a plain hyperlink. This carried real risk — whether a top-level `editorProps.handleClick` and the `Link` extension's own (now-disabled) plugin-level click handler actually coexist correctly, and in what order, is genuine ProseMirror internals — the reviewer traced it properly against the real installed source: confirmed `EditorView.someProp` checks top-level `editorProps` *before* extension-contributed plugins (so the new handler gets first crack at the click), confirmed Link's own handler genuinely returns `false` and never swallows the click when `openOnClick: false`, verified the CSS specificity claim, and ruled out edge cases around the `::before` pseudo-element and mark-vs-node click targeting. **Remaining concern (expected, not a bug)**: `StickyNoteEditor.tsx` (the sticky note's own editor) wasn't touched — its embeds render correctly (CSS is global) but don't yet open on click; that's explicitly subtask 13's job (nested embedding), already planned this way. `tsc --noEmit` passes.
-- Subtask 13 (Nested sticky-note embedding) — done. `StickyNoteEditor.tsx` now also gets `stickyLinkClickEditorProps()` wired in, mirroring the exact pattern already deeply reviewed in subtask 12 — reviewer confirmed no conflicting `handleClick` key, the `Link` config matches the other two editors exactly, and no other regression. **Real gap surfaced, not fixed (correctly out of scope per this subtask, but worth a decision)**: `StickyNoteEditor.tsx` has no Ctrl+K/`LinkOrStickyDialog` wiring at all — sticky notes have no way to *create* an embed from within their own editor, so nested embedding only works one-directionally today (an embed that ends up inside a sticky note's content, e.g. via copy-paste, will now correctly open on click, but there's no UI path to insert a new sticky-note reference from inside an already-open sticky note). This wasn't in the original spec's subtask list for any milestone. One minor adjacent, pre-existing (not introduced here) note: `openStickyNoteWindow` doesn't special-case a note linking to itself. `tsc --noEmit` passes.
-- Subtask 14 (Sticky notes home page) — done. New `StickyNotesHome.tsx` — a Dialog-based component (`open`/`onOpenChange` props mirroring `ThemeEditor.tsx`'s pattern) listing all sticky notes as clickable preview cards (title, plain-text content preview, top-bar-color swatch); clicking a card opens that note's pop-out window, and the home dialog deliberately stays open to allow browsing/opening multiple notes. New `lib/tiptap/extractText.ts` walks Tiptap JSON for a preview string. A minimal "New sticky note" button plus a temporary Sidebar trigger for verification (subtask 15 replaces it with the real ribbon entry point). Reviewer caught that image-only notes would show a misleading "Empty" placeholder, since the generic text-walk silently skips leaf `image` nodes — fixed directly by special-casing `image` nodes to a `[Image]` placeholder. Reviewer separately confirmed the two `<StickyNotesHome>` JSX call sites (collapsed/expanded sidebar branches) are mutually exclusive early returns of the same component with no double-mount risk, the create-then-refresh sequence has no race, and nothing in the diff could cause the pop-out window to render behind the dialog. `tsc --noEmit` passes.
-- Subtask 15 (Ribbon entry point) — done. New "Sticky notes" button at the far right of the Ribbon's tab bar (a plain button, not a fourth `RibbonTab`, since a modal dialog doesn't fit the existing tab/panel-swap architecture), opening the `StickyNotesHome` dialog. Removed both temporary Sidebar triggers from subtasks 8 and 14 (their buttons, `StickyNotesHome` mounts, state, and handler), all cleanly retired with no dangling imports. Reviewer confirmed the Ribbon (and this button) is mounted wherever a notebook is selected, independent of route — reachable from both the canvas and plain notebook views. Confirmed zero dangling references anywhere in `Sidebar.tsx`, confirmed `StickyNotesHome` is now mounted exactly once, and confirmed button placement/styling. One intentional, non-regressive UX note: creating a *new* sticky note now takes one more click (Ribbon → dialog → "New sticky note") instead of a single sidebar icon — functionally nothing lost. `tsc --noEmit` and `npm run build` pass.

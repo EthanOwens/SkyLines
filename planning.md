@@ -1,19 +1,10 @@
-Things to add:
-- Auto bullet formatting when you have something like a "-" next to something then hitting enter should make another "-" on the next line like bullets. Should also have support for tabs and shift + tab changing the tab formatting.
-- The custom theme formatter is a bit cluttered, many of the options aren't distinct on what they do and many aren't on anything in the display gui template. 
-  - Add organization and ensure everything listed is a genuine visible change that we can see on the gui template (add it if it can be shown there, or remove it if it can't)\
--  In text boxes have a faded timestamp of last edit for that text box (as shortform date and time)
-   -  Include a longer form date for the last edit under the title (add a fixed length line under the page title and put the date/time stamp under the line) 
-      -  (EX: Wednesday, January 14, 2026   2:55 PM)
--  Add sticky notes option. I want the ability to open a sticky note from the main gui. 
-Functionality:
-   - The sticky note should be a 9x16 aspect ratio pop out window.
-   - It should be embeddable into text form. Meaning if you ctrl + k (link keybind, usually used for adding a hyperlink embedded into a word(s), but in this app should allow the option to create new or bind a sticky note) it will let you embed a sticky note that will pop up when the embed is clicked (this should work from a sticky note too, meaning I should be able to embed a sticky note inside a sticky note).
-   - Sticky notes should have the following gui that should appear on focusing on the window and dissappear when unfocused:
-     - Bottom bar should have basic text modifications (bold, italic, underline, strike through, bullets, check boxes (like bullets, but button next to line that auto strikes through the line when clicked))
-     - Top bar should have option to pin (make the note stay in the foreground, aka displays over other windows), exit (auto-saves when closed and modified), and 3 dots drop down menu (should include option to delete note, and change the top bar color)
-     - Top bar color should be by default based on the theme. It should minimize (shrink in height) as well when not focused
-   - Sticky note main button should be on far right of the ribbon where File, Format, and Draw are.
-     - Clicking this should make a sticky note home page pop up that lets you see a list of notes (preview of collapsed notes), screenshot (auto-screenshots the selected window and lets you double click to make this a new sticky note, where you can click to open the screenshot and draw on it)
-   - Should have the option to make a new sticky note from the menu to embed when highlighting texts for formatting options
-- All text areas should support bullet detection. When adding a "-" and pressing space after it should assume this is denoting a bullet. this should allow for bullet functionality of Enter/new line making a new bullet, tab indenting bullet, Shift + tab OR Backspace de-indenting bullet. This should work inside Sticky Notes
+I want the following tweaks to be made for the sticky notes:
+- The sticky notes should not have the standard titlebar, the top bar block with the title should be the title bar
+- The current functionality of taking away focus from a sticky note is it collapses to basically just the title bar. This isn't what I meant, but I do like it. I'd like this to be the functionality of double clicking the top bar/title bar, and the proper functionality of not focusing the sticky note is the bottom bar should fade away and the title bar itself should be slimmer, giving the impression that it's less prominant, but the size of the window itself should stay the same.
+- in the sticky notes home page gui make the following changes
+  -  Right clicking should allow for renaming, deleting, and favoriting sticky notes
+  -  Sticky notes should have a small icon on the bottom right of their preview for if they're favorited or opened. Clicking an opened note will bring up the sticky note wherever it is. Favorited sticky notes should be in a top row(s) of the home page (no favorite row if none are favorited)
+-  Many of the the theme sections still aren't present in the mini preview visual. Remove all the ones not present there and we can add more in the future. Add drop down toggles for each section, and modify the things like "radius" to be more user friendly for changing
+-  The insert link screen can't be exited, and it doesnt open with ctrl + k. The existing sticky notes should be a mini preview and be in rows (mini preview or just title should be toggleable via a button with a in this menu and in the home page)
+- Make the following updates for pictures/screenshots functionality anywhere:
+  - Should be able to double click on the picture to enlarge it in a pop out window with modifications tweaks (draw on picture with ctrl + z to undo options, click and drag shapres, click and drag box for censor(black and blur options), add text, erase, and crop). While in the pop up menu Ctrl + c should copy the picture and it's modified contents to the clipboard and do a slight flash and text to denote it's saved to clipboard
