@@ -13,7 +13,15 @@
 // somewhere (not a full page route) is a Dialog - see ThemeEditor.tsx.
 
 import { useRef, useState, useEffect } from "react";
-import { Camera, Plus, Pencil, Trash2, Star, StickyNote as StickyNoteIcon } from "lucide-react";
+import {
+  Camera,
+  Plus,
+  Pencil,
+  Trash2,
+  Star,
+  ExternalLink,
+  StickyNote as StickyNoteIcon,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -49,6 +57,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
   const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
   const [creating, setCreating] = useState(false);
   const [screenshotOpen, setScreenshotOpen] = useState(false);
+  const [openNoteIds, setOpenNoteIds] = useState<Set<string>>(new Set());
 
   // Reload the list every time the dialog opens, same "always fresh on
   // open" seeding pattern ThemeEditor.tsx/LinkOrStickyDialog.tsx already
@@ -61,6 +70,16 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
     } else {
       setStickyNotes([]);
     }
+
+    // lib/stickyWindow.ts labels pop-out windows "sticky-<id>" - reuse that
+    // convention here to figure out which notes currently have a live window.
+    void import("@tauri-apps/api/window").then(async ({ getAllWindows }) => {
+      const windows = await getAllWindows();
+      const ids = windows
+        .filter((w) => w.label.startsWith("sticky-"))
+        .map((w) => w.label.slice("sticky-".length));
+      setOpenNoteIds(new Set(ids));
+    });
   }, [open, user]);
 
   async function handleOpenNote(note: StickyNote) {
@@ -149,18 +168,41 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
               {user ? "No sticky notes yet" : "Sign in to view sticky notes"}
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {stickyNotes.map((note) => (
-                <StickyNoteCard
-                  key={note.id}
-                  note={note}
-                  onOpen={() => void handleOpenNote(note)}
-                  onRename={(title) => void handleRenameNote(note.id, title)}
-                  onDelete={() => void handleDeleteNote(note.id)}
-                  onToggleFavorite={() => void handleToggleFavorite(note)}
-                />
-              ))}
-            </div>
+            <>
+              {stickyNotes.some((n) => n.favorite) && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">Favorites</span>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {stickyNotes
+                      .filter((n) => n.favorite)
+                      .map((note) => (
+                        <StickyNoteCard
+                          key={note.id}
+                          note={note}
+                          isOpen={openNoteIds.has(note.id)}
+                          onOpen={() => void handleOpenNote(note)}
+                          onRename={(title) => void handleRenameNote(note.id, title)}
+                          onDelete={() => void handleDeleteNote(note.id)}
+                          onToggleFavorite={() => void handleToggleFavorite(note)}
+                        />
+                      ))}
+                  </div>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {stickyNotes.map((note) => (
+                  <StickyNoteCard
+                    key={note.id}
+                    note={note}
+                    isOpen={openNoteIds.has(note.id)}
+                    onOpen={() => void handleOpenNote(note)}
+                    onRename={(title) => void handleRenameNote(note.id, title)}
+                    onDelete={() => void handleDeleteNote(note.id)}
+                    onToggleFavorite={() => void handleToggleFavorite(note)}
+                  />
+                ))}
+              </div>
+            </>
           )}
         </div>
       </DialogContent>
@@ -176,6 +218,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
 
 interface StickyNoteCardProps {
   note: StickyNote;
+  isOpen: boolean;
   onOpen: () => void;
   onRename: (title: string) => void;
   onDelete: () => void;
@@ -184,11 +227,19 @@ interface StickyNoteCardProps {
 
 // Right-click menu mirrors components/sidebar/NoteItem.tsx's ContextMenu/
 // DropdownMenuContent reuse pattern (spec.md M4 subtask 8).
-function StickyNoteCard({ note, onOpen, onRename, onDelete, onToggleFavorite }: StickyNoteCardProps) {
+function StickyNoteCard({ note, isOpen, onOpen, onRename, onDelete, onToggleFavorite }: StickyNoteCardProps) {
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(note.title || "Untitled");
   const inputRef = useRef<HTMLInputElement>(null);
   const preview = extractPlainText(note.content);
+
+  // Resyncs when the sibling card (favorites section vs. main grid) renames
+  // this same note - not depended on `renaming` so it can't clobber an
+  // in-progress edit (see PageItem.tsx's identical effect).
+  useEffect(() => {
+    if (!renaming) setTitle(note.title || "Untitled");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note.title]);
 
   function startRename() {
     setRenaming(true);
@@ -207,7 +258,7 @@ function StickyNoteCard({ note, onOpen, onRename, onDelete, onToggleFavorite }: 
       <ContextMenuTrigger
         render={
           <div
-            className="flex flex-col gap-1.5 rounded-md border border-border bg-card p-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="relative flex flex-col gap-1.5 rounded-md border border-border bg-card p-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
             role="button"
             tabIndex={0}
             onClick={() => {
@@ -257,6 +308,24 @@ function StickyNoteCard({ note, onOpen, onRename, onDelete, onToggleFavorite }: 
                 <StickyNoteIcon className="h-3 w-3" />
                 Empty
               </span>
+            )}
+            {(note.favorite || isOpen) && (
+              <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
+                {note.favorite && <Star className="h-3 w-3 fill-current text-muted-foreground" />}
+                {isOpen && (
+                  <button
+                    type="button"
+                    title="Currently open - click to focus"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpen();
+                    }}
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             )}
           </div>
         }
