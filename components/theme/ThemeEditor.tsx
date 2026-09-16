@@ -82,28 +82,16 @@ function labelForKey(key: ThemeVariableKey): string {
     .join(" ");
 }
 
-// Groups the right sidebar's 27 ThemeVariableKey rows into labeled sections
-// (spec.md subtask 3) matching how the keys are actually used, instead of one
-// flat list. Purely a presentation grouping - every key still renders via the
-// exact same ThemeColorField/radius-input logic below, just organized under
-// these headings. Order here is the render order.
+// Groups the right sidebar's editable ThemeVariableKey rows into labeled
+// sections (spec.md subtask 3), trimmed (spec.md subtask 6) to only the keys
+// ThemePreview.tsx's mini preview actually renders. Every key still renders
+// via the exact same ThemeColorField/radius-input logic below, just
+// organized under these headings. Order here is the render order.
 const THEME_VARIABLE_GROUPS: { label: string; keys: ThemeVariableKey[] }[] = [
-  { label: "Base & Text", keys: ["background", "foreground", "muted", "muted-foreground"] },
+  { label: "Base & Text", keys: ["background", "foreground"] },
   { label: "Card", keys: ["card", "card-foreground"] },
-  { label: "Popover", keys: ["popover", "popover-foreground"] },
-  {
-    label: "Primary / Secondary / Accent",
-    keys: [
-      "primary",
-      "primary-foreground",
-      "secondary",
-      "secondary-foreground",
-      "accent",
-      "accent-foreground",
-    ],
-  },
-  { label: "Destructive", keys: ["destructive"] },
-  { label: "Border / Input / Focus Ring", keys: ["border", "input", "ring"] },
+  { label: "Primary", keys: ["primary"] },
+  { label: "Border", keys: ["border"] },
   { label: "Radius", keys: ["radius"] },
   {
     label: "Sidebar",
@@ -111,11 +99,8 @@ const THEME_VARIABLE_GROUPS: { label: string; keys: ThemeVariableKey[] }[] = [
       "sidebar",
       "sidebar-foreground",
       "sidebar-primary",
-      "sidebar-primary-foreground",
       "sidebar-accent",
-      "sidebar-accent-foreground",
       "sidebar-border",
-      "sidebar-ring",
     ],
   },
 ];
@@ -737,8 +722,9 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
             </div>
 
             {/* Right sidebar - color editor (subtask 15: color-wheel editor
-                for all 27 ThemeVariableKey values, grouped into labeled
-                sections per subtask 3 - see THEME_VARIABLE_GROUPS above).
+                for the trimmed set of editable ThemeVariableKey values,
+                grouped into labeled sections per subtask 3 - see
+                THEME_VARIABLE_GROUPS above).
                 Reads each value from draftVariables, falling back to the
                 loaded theme's own value when the draft hasn't overridden it
                 yet (in practice loadThemeForEditing above always seeds the
