@@ -560,6 +560,19 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
+        // spec.md subtask 2 (favorite sticky notes): a second, independent
+        // boolean flag on `sticky_notes`, distinct from `pinned` (always-on-
+        // top window behavior) - additive-only, same
+        // ALTER-TABLE-with-constant-DEFAULT pattern migration 5 used for
+        // `notes.order_index`, so no backfill UPDATE is needed here either.
+        tauri_plugin_sql::Migration {
+            version: 8,
+            description: "add sticky_notes.favorite",
+            sql: "
+                ALTER TABLE sticky_notes ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
     ];
 
     // M5 (spec.md subtask 21): Google sign-in uses a system-browser +

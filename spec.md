@@ -225,3 +225,5 @@ planning.md's latest 5 items:
 ## Progress
 
 1. Frameless sticky note window + native drag region — `lib/stickyWindow.ts` creates sticky windows with `decorations: false`; `StickyNoteTopBar.tsx`'s outer bar div got `data-tauri-drag-region` so it acts as the drag handle. Review flagged that removing native decorations also removed the OS minimize control with nothing replacing it — fixed by adding a Minimize button (`getCurrentWindow().minimize()`) to the top bar's button row. Remaining: possible Linux edge-resize loss under frameless+resizable (not fixed, likely out of scope — app targets Windows); drag-region/button-click interaction not manually verified in a live build.
+
+2. Add a `favorite` field to sticky notes — new sqlite migration (version 8, `sticky_notes.favorite`), `StickyNote.favorite: boolean`, and every CRUD/sync path in `lib/db/stickyNotes.ts` (row mapping, remote upsert, create, update) mirrors `pinned` exactly, fully independent of it. Data-layer only, no UI. Reviewer found no issues.

@@ -103,7 +103,8 @@ export interface Page {
 // shape minus the folder/notebook/type/order fields (sticky notes don't
 // live in the folder tree), plus `topBarColor` (nullable - null means "use
 // the active theme's --primary", per spec.md subtask 9's fallback, not
-// implemented here) and `pinned`.
+// implemented here) and `pinned`. `favorite` (spec.md subtask 2) is a
+// separate, independent boolean - not a rename or reuse of `pinned`.
 export interface StickyNote {
   id: string;
   userId: string;
@@ -111,6 +112,7 @@ export interface StickyNote {
   content?: object | null; // TipTap JSON doc
   topBarColor: string | null;
   pinned: boolean;
+  favorite: boolean;
   createdAt: number;
   updatedAt: number;
   // Sync bookkeeping (mirrors sqlite `sticky_notes` columns

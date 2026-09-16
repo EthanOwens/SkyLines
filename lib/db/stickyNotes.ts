@@ -18,6 +18,7 @@ type StickyNoteRow = {
   content: string | null;
   top_bar_color: string | null;
   pinned: number;
+  favorite: number;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -33,6 +34,7 @@ function rowToStickyNote(row: StickyNoteRow): StickyNote {
     content: row.content !== null ? (JSON.parse(row.content) as object | null) : null,
     topBarColor: row.top_bar_color,
     pinned: row.pinned === 1,
+    favorite: row.favorite === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     dirty: row.dirty === 1,
@@ -156,6 +158,7 @@ export type RemoteStickyNoteData = {
   content: object | null;
   topBarColor: string | null;
   pinned: boolean;
+  favorite: boolean;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
@@ -178,14 +181,15 @@ export async function upsertStickyNoteFromRemote(
   const db = await getDb();
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, user_id, title, content, top_bar_color, pinned, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       (id, user_id, title, content, top_bar_color, pinned, favorite, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT(id) DO UPDATE SET
        user_id = excluded.user_id,
        title = excluded.title,
        content = excluded.content,
        top_bar_color = excluded.top_bar_color,
        pinned = excluded.pinned,
+       favorite = excluded.favorite,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        deleted_at = excluded.deleted_at,
@@ -198,6 +202,7 @@ export async function upsertStickyNoteFromRemote(
       remote.content === null ? null : JSON.stringify(remote.content),
       remote.topBarColor,
       remote.pinned ? 1 : 0,
+      remote.favorite ? 1 : 0,
       remote.createdAt,
       remote.updatedAt,
       remote.deletedAt,
@@ -220,8 +225,8 @@ export async function createStickyNote(
 
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, user_id, title, content, top_bar_color, pinned, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, NULL, 0, $5, $5, NULL, 1, NULL)`,
+       (id, user_id, title, content, top_bar_color, pinned, favorite, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, NULL, 0, 0, $5, $5, NULL, 1, NULL)`,
     [id, userId, title, content === null ? null : JSON.stringify(content), now],
   );
 
@@ -231,7 +236,7 @@ export async function createStickyNote(
 
 export async function updateStickyNote(
   id: string,
-  updates: Partial<Pick<StickyNote, "title" | "content" | "topBarColor" | "pinned">>,
+  updates: Partial<Pick<StickyNote, "title" | "content" | "topBarColor" | "pinned" | "favorite">>,
 ): Promise<void> {
   const db = await getDb();
   const now = Date.now();
@@ -255,6 +260,10 @@ export async function updateStickyNote(
   if (updates.pinned !== undefined) {
     setClauses.push(`pinned = $${i++}`);
     params.push(updates.pinned ? 1 : 0);
+  }
+  if (updates.favorite !== undefined) {
+    setClauses.push(`favorite = $${i++}`);
+    params.push(updates.favorite ? 1 : 0);
   }
 
   setClauses.push(`updated_at = $${i++}`);
