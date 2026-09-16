@@ -223,3 +223,5 @@ planning.md's latest 5 items:
     visual flash + "Copied to clipboard" text.
 
 ## Progress
+
+1. Frameless sticky note window + native drag region — `lib/stickyWindow.ts` creates sticky windows with `decorations: false`; `StickyNoteTopBar.tsx`'s outer bar div got `data-tauri-drag-region` so it acts as the drag handle. Review flagged that removing native decorations also removed the OS minimize control with nothing replacing it — fixed by adding a Minimize button (`getCurrentWindow().minimize()`) to the top bar's button row. Remaining: possible Linux edge-resize loss under frameless+resizable (not fixed, likely out of scope — app targets Windows); drag-region/button-click interaction not manually verified in a live build.

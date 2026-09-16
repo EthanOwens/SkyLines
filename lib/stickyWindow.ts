@@ -32,5 +32,6 @@ export async function openStickyNoteWindow(id: string): Promise<void> {
     width: 360,
     height: 640,
     resizable: true,
+    decorations: false,
   });
 }

@@ -20,7 +20,7 @@
 // runtime that isn't present at Next.js static-export build/prerender time.
 
 import { useEffect, useState } from "react";
-import { Pin, PinOff, X, MoreVertical, Trash2, Palette } from "lucide-react";
+import { Pin, PinOff, X, Minus, MoreVertical, Trash2, Palette } from "lucide-react";
 import { HexAlphaColorPicker, HexColorInput } from "react-colorful";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -109,6 +109,11 @@ export function StickyNoteTopBar({ note, title, focused, onBeforeExit }: Props) 
     await getCurrentWindow().setAlwaysOnTop(next);
   }
 
+  async function handleMinimize() {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().minimize();
+  }
+
   async function handleExit() {
     await onBeforeExit();
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -128,6 +133,7 @@ export function StickyNoteTopBar({ note, title, focused, onBeforeExit }: Props) 
 
   return (
     <div
+      data-tauri-drag-region
       className="flex h-10 shrink-0 items-center gap-1 px-2"
       style={{ background: topBarColor ?? "var(--primary)" }}
     >
@@ -180,6 +186,10 @@ export function StickyNoteTopBar({ note, title, focused, onBeforeExit }: Props) 
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          <TopBarBtn tip="Minimize" onClick={handleMinimize}>
+            <Minus className="h-3.5 w-3.5" />
+          </TopBarBtn>
 
           <TopBarBtn tip="Close" onClick={handleExit}>
             <X className="h-3.5 w-3.5" />
