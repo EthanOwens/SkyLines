@@ -27,6 +27,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "@/components/ui/collapsible";
 import { useAppStore } from "@/stores/appStore";
 import { BUILTIN_THEMES, LIGHT_THEME } from "@/lib/themes/builtin";
 import { applyTheme } from "@/lib/themes/apply";
@@ -80,6 +81,31 @@ function labelForKey(key: ThemeVariableKey): string {
     .split("-")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+// Radius slider range (subtask 7): every built-in theme (lib/themes/builtin.ts)
+// uses "0.625rem", and shadcn's own radius scale tops out around 1-2rem before
+// corners just look fully pill-shaped, so 0-2rem in 0.025rem steps covers the
+// useful range with a smooth drag.
+const RADIUS_MIN_REM = 0;
+const RADIUS_MAX_REM = 2;
+const RADIUS_STEP_REM = 0.025;
+
+const RADIUS_DEFAULT = { num: 0.625, unit: "rem" };
+
+// Splits a stored radius value like "0.625rem" into its number and unit,
+// falling back to RADIUS_DEFAULT if the value's blank, unparseable, not in
+// "rem" (this app's only unit so far), or out of the slider's own range -
+// keeps the slider (and its numeric readout) from ever showing something a
+// hand-edited theme JSON file could otherwise produce, like "-1rem", "10px",
+// or a non-numeric ".".
+function parseRadiusValue(value: string | undefined): { num: number; unit: string } {
+  const match = value?.match(/^(-?[\d.]+)(\D*)$/);
+  if (!match) return RADIUS_DEFAULT;
+  const num = parseFloat(match[1]);
+  const unit = match[2] || "rem";
+  if (unit !== "rem" || !Number.isFinite(num)) return RADIUS_DEFAULT;
+  return { num: Math.min(RADIUS_MAX_REM, Math.max(RADIUS_MIN_REM, num)), unit };
 }
 
 // Groups the right sidebar's editable ThemeVariableKey rows into labeled
@@ -170,6 +196,12 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   // own undo/redo.
   const undoHistoryRef = useRef<UndoSnapshot[]>([]);
 
+  // Right sidebar's collapsible sections (subtask 7): purely a layout/UI
+  // concern, keyed by group label, defaulting every group to expanded.
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(THEME_VARIABLE_GROUPS.map((g) => [g.label, true])),
+  );
+
   // Coalescing for `handleVariableChange` below: react-colorful's wheel
   // fires `onChange` continuously on every pointer-move during a single
   // drag, and its hex input fires on every keystroke - without coalescing,
@@ -239,7 +271,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   // dependency array - it's never stale.
   //
   // Deliberately ignores keydowns whose target is an `<input>`/`<textarea>`
-  // (e.g. the hex color input, the radius text field) so this doesn't
+  // (e.g. the hex color input, the radius range slider) so this doesn't
   // hijack those elements' own native undo - the safest way to tell "this
   // keydown was meant for a text field's own undo, not this dialog's"
   // without trying to guess at cursor/selection state.
@@ -736,51 +768,71 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
               {editingTheme ? (
                 <div className="flex flex-col gap-3">
                   {THEME_VARIABLE_GROUPS.map((group) => (
-                    <div key={group.label} className="flex flex-col">
-                      <span className="px-0.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Collapsible
+                      key={group.label}
+                      open={expandedGroups[group.label] ?? true}
+                      onOpenChange={(next) =>
+                        setExpandedGroups((prev) => ({ ...prev, [group.label]: next }))
+                      }
+                      className="flex flex-col"
+                    >
+                      <CollapsibleTrigger className="px-0.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                         {group.label}
-                      </span>
-                      <div className="flex flex-col divide-y divide-border">
-                        {group.keys.map((key) => {
-                          const value = draftVariables[key] ?? editingTheme.variables[key];
-                          const label = labelForKey(key);
+                      </CollapsibleTrigger>
+                      <CollapsiblePanel>
+                        <div className="flex flex-col divide-y divide-border">
+                          {group.keys.map((key) => {
+                            const value = draftVariables[key] ?? editingTheme.variables[key];
+                            const label = labelForKey(key);
 
-                          if (key === "radius") {
+                            if (key === "radius") {
+                              const { num, unit } = parseRadiusValue(value);
+                              return (
+                                <div key={key} className="flex flex-col gap-1 py-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <label
+                                      htmlFor="theme-editor-radius"
+                                      className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground"
+                                    >
+                                      {label}
+                                    </label>
+                                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                                      {num}
+                                      {unit}
+                                    </span>
+                                  </div>
+                                  <input
+                                    id="theme-editor-radius"
+                                    type="range"
+                                    min={RADIUS_MIN_REM}
+                                    max={RADIUS_MAX_REM}
+                                    step={RADIUS_STEP_REM}
+                                    value={num}
+                                    onChange={(e) =>
+                                      handleVariableChange(
+                                        key,
+                                        `${Number(e.target.value).toFixed(3)}${unit}`,
+                                      )
+                                    }
+                                    className="h-1.5 w-full cursor-pointer accent-primary"
+                                  />
+                                </div>
+                              );
+                            }
+
                             return (
-                              <div
+                              <ThemeColorField
                                 key={key}
-                                className="flex items-center justify-between gap-2 py-1"
-                              >
-                                <label
-                                  htmlFor="theme-editor-radius"
-                                  className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground"
-                                >
-                                  {label}
-                                </label>
-                                <input
-                                  id="theme-editor-radius"
-                                  type="text"
-                                  value={value ?? ""}
-                                  onChange={(e) => handleVariableChange(key, e.target.value)}
-                                  placeholder="0.625rem"
-                                  className="h-6 w-20 shrink-0 rounded-md border border-input bg-transparent px-1.5 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-                                />
-                              </div>
+                                varKey={key}
+                                label={label}
+                                value={value}
+                                onChange={handleVariableChange}
+                              />
                             );
-                          }
-
-                          return (
-                            <ThemeColorField
-                              key={key}
-                              varKey={key}
-                              label={label}
-                              value={value}
-                              onChange={handleVariableChange}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
+                          })}
+                        </div>
+                      </CollapsiblePanel>
+                    </Collapsible>
                   ))}
                 </div>
               ) : (
