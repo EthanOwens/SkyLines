@@ -12,8 +12,8 @@
 // app's established pattern for a secondary UI surface opened from
 // somewhere (not a full page route) is a Dialog - see ThemeEditor.tsx.
 
-import { useEffect, useState } from "react";
-import { Camera, Plus, StickyNote as StickyNoteIcon } from "lucide-react";
+import { useRef, useState, useEffect } from "react";
+import { Camera, Plus, Pencil, Trash2, Star, StickyNote as StickyNoteIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -21,8 +21,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useAuthContext } from "@/components/AuthProvider";
-import { getStickyNotes, createStickyNote } from "@/lib/db/stickyNotes";
+import {
+  getStickyNotes,
+  createStickyNote,
+  updateStickyNote,
+  deleteStickyNote,
+} from "@/lib/db/stickyNotes";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
 import { extractPlainText } from "@/lib/tiptap/extractText";
 import { ScreenshotCapture } from "./ScreenshotCapture";
@@ -54,6 +65,22 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
 
   async function handleOpenNote(note: StickyNote) {
     await openStickyNoteWindow(note.id);
+  }
+
+  async function handleRenameNote(id: string, title: string) {
+    setStickyNotes((prev) => prev.map((n) => (n.id === id ? { ...n, title } : n)));
+    await updateStickyNote(id, { title });
+  }
+
+  async function handleDeleteNote(id: string) {
+    setStickyNotes((prev) => prev.filter((n) => n.id !== id));
+    await deleteStickyNote(id);
+  }
+
+  async function handleToggleFavorite(note: StickyNote) {
+    const favorite = !note.favorite;
+    setStickyNotes((prev) => prev.map((n) => (n.id === note.id ? { ...n, favorite } : n)));
+    await updateStickyNote(note.id, { favorite });
   }
 
   async function handleCreateNewStickyNote() {
@@ -123,35 +150,16 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {stickyNotes.map((note) => {
-                const preview = extractPlainText(note.content);
-                return (
-                  <button
-                    key={note.id}
-                    type="button"
-                    onClick={() => void handleOpenNote(note)}
-                    className="flex flex-col gap-1.5 rounded-md border border-border bg-card p-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ background: note.topBarColor ?? "var(--primary)" }}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                        {note.title || "Untitled"}
-                      </span>
-                    </div>
-                    {preview ? (
-                      <span className="line-clamp-2 text-xs text-muted-foreground">{preview}</span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
-                        <StickyNoteIcon className="h-3 w-3" />
-                        Empty
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+              {stickyNotes.map((note) => (
+                <StickyNoteCard
+                  key={note.id}
+                  note={note}
+                  onOpen={() => void handleOpenNote(note)}
+                  onRename={(title) => void handleRenameNote(note.id, title)}
+                  onDelete={() => void handleDeleteNote(note.id)}
+                  onToggleFavorite={() => void handleToggleFavorite(note)}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -163,5 +171,109 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
         onCapture={(dataUrl) => void handleScreenshotCaptured(dataUrl)}
       />
     </Dialog>
+  );
+}
+
+interface StickyNoteCardProps {
+  note: StickyNote;
+  onOpen: () => void;
+  onRename: (title: string) => void;
+  onDelete: () => void;
+  onToggleFavorite: () => void;
+}
+
+// Right-click menu mirrors components/sidebar/NoteItem.tsx's ContextMenu/
+// DropdownMenuContent reuse pattern (spec.md M4 subtask 8).
+function StickyNoteCard({ note, onOpen, onRename, onDelete, onToggleFavorite }: StickyNoteCardProps) {
+  const [renaming, setRenaming] = useState(false);
+  const [title, setTitle] = useState(note.title || "Untitled");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const preview = extractPlainText(note.content);
+
+  function startRename() {
+    setRenaming(true);
+    setTimeout(() => inputRef.current?.select(), 10);
+  }
+
+  function commitRename() {
+    setRenaming(false);
+    const trimmed = title.trim() || "Untitled";
+    setTitle(trimmed);
+    if (trimmed !== note.title) onRename(trimmed);
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={
+          <div
+            className="flex flex-col gap-1.5 rounded-md border border-border bg-card p-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              if (!renaming) onOpen();
+            }}
+            onKeyDown={(e) => {
+              if (renaming) return;
+              if (e.key === "Enter" || e.key === " ") {
+                if (e.key === " ") e.preventDefault();
+                onOpen();
+              }
+            }}
+          >
+            <div className="flex items-center gap-1.5">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: note.topBarColor ?? "var(--primary)" }}
+              />
+              {renaming ? (
+                <input
+                  ref={inputRef}
+                  className="min-w-0 flex-1 bg-transparent text-sm font-medium outline-none"
+                  value={title}
+                  autoFocus
+                  onChange={(e) => setTitle(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") {
+                      setTitle(note.title);
+                      setRenaming(false);
+                    }
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {title || "Untitled"}
+                </span>
+              )}
+            </div>
+            {preview ? (
+              <span className="line-clamp-2 text-xs text-muted-foreground">{preview}</span>
+            ) : (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
+                <StickyNoteIcon className="h-3 w-3" />
+                Empty
+              </span>
+            )}
+          </div>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-40">
+        <DropdownMenuItem onClick={startRename}>
+          <Pencil className="mr-2 h-4 w-4" /> Rename
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onToggleFavorite}>
+          <Star className={`mr-2 h-4 w-4 ${note.favorite ? "fill-current" : ""}`} />
+          {note.favorite ? "Unfavorite" : "Favorite"}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onDelete} className="text-destructive">
+          <Trash2 className="mr-2 h-4 w-4" /> Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </ContextMenu>
   );
 }
