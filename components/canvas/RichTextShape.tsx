@@ -523,15 +523,15 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   // suppressing for its open duration (which the dangling flag can outlive).
   const wasLinkDialogOpenRef = useRef(false);
   useEffect(() => {
-    setReenterEditSuppressed(linkDialogOpen);
+    setReenterEditSuppressed(shape.id, linkDialogOpen);
     // Only on a genuine open->close transition - this is a module-level
     // flag shared by every rich-text shape, so clearing it on mount (when
     // linkDialogOpen starts false) could wrongly wipe an unrelated shape's
     // legitimately-pending flag.
     if (wasLinkDialogOpenRef.current && !linkDialogOpen) clearPendingReturnToRichText();
     wasLinkDialogOpenRef.current = linkDialogOpen;
-    return () => setReenterEditSuppressed(false);
-  }, [linkDialogOpen]);
+    return () => setReenterEditSuppressed(shape.id, false);
+  }, [linkDialogOpen, shape.id]);
 
   return (
     <HTMLContainer id={shape.id}>

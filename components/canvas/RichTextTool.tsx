@@ -100,11 +100,19 @@ function handOffToTranslating(
 // settling on one selected shape must never auto-open it for editing.
 let pendingReturnToRichText = false;
 let pendingReturnMayReenterEdit = false;
+// The shape whose edit session ending triggered this pending return, when
+// known (only the sideEffects handler in `installRichTextToolAutoReturn`
+// below provides one - an edit session just ended on this exact shape).
+// `undefined` for the brush/translate hand-offs and Escape, which aren't
+// associated with any one shape's edit session, so per-shape suppression
+// below simply doesn't apply to them.
+let pendingReturnShapeId: TLShapeId | undefined = undefined;
 let explicitToolSwitchInProgress = false;
 
-function requestReturnToRichText(options?: { mayReenterEdit?: boolean }) {
+function requestReturnToRichText(options?: { mayReenterEdit?: boolean; shapeId?: TLShapeId }) {
   pendingReturnToRichText = true;
   pendingReturnMayReenterEdit = options?.mayReenterEdit ?? false;
+  pendingReturnShapeId = options?.shapeId;
 }
 
 // Called by RichTextShape.tsx's drag handle after ending an edit session to
@@ -127,6 +135,7 @@ export function suppressReenterEditAfterEndingSession() {
 export function clearPendingReturnToRichText() {
   pendingReturnToRichText = false;
   pendingReturnMayReenterEdit = false;
+  pendingReturnShapeId = undefined;
 }
 
 // Persistent (not one-shot) version of the above, toggled by RichTextShape.tsx
@@ -135,9 +144,16 @@ export function clearPendingReturnToRichText() {
 // is portaled outside .tl-container) - without this, resolvePendingReturnToRichText
 // below would then reenter edit on that same shape at the click's screen
 // point, which looks like a phantom new text box appearing under the dialog.
-let reenterEditSuppressed = false;
-export function setReenterEditSuppressed(suppressed: boolean) {
-  reenterEditSuppressed = suppressed;
+// Keyed per-shape id (not a single flag) so one shape's dialog closing can
+// never clear suppression for a DIFFERENT shape whose dialog is still open,
+// mirroring `shapesWithEditSessionOwnedByThisTool` above.
+const shapesWithSuppressedReenter = new Set<TLShapeId>();
+export function setReenterEditSuppressed(shapeId: TLShapeId, suppressed: boolean) {
+  if (suppressed) {
+    shapesWithSuppressedReenter.add(shapeId);
+  } else {
+    shapesWithSuppressedReenter.delete(shapeId);
+  }
 }
 
 // Ribbon.tsx's Draw-tab tool buttons call this INSTEAD OF a raw
@@ -163,6 +179,7 @@ export function switchToToolExplicitly(editor: Editor, toolId: string) {
     // A deliberate switch right now supersedes any earlier pending return.
     pendingReturnToRichText = false;
     pendingReturnMayReenterEdit = false;
+    pendingReturnShapeId = undefined;
     editor.setCurrentTool(toolId);
   } finally {
     explicitToolSwitchInProgress = false;
@@ -245,14 +262,19 @@ function resolvePendingReturnToRichText(editor: Editor) {
 
   const selectedShapeIds = editor.getSelectedShapeIds();
   const mayReenterEditThisRun = pendingReturnMayReenterEdit;
+  const shapeIdThisRun = pendingReturnShapeId;
   pendingReturnMayReenterEdit = false;
+  pendingReturnShapeId = undefined;
 
   // While a link dialog is open (or was open when this session ended, see
-  // RichTextShape.tsx), neither reentering edit NOR switching to the
-  // crosshair-arming "rich-text" tool is safe - both branches below assume
-  // this was a genuine canvas interaction, but a session ending purely via
-  // focus loss to a portaled dialog isn't one.
-  if (reenterEditSuppressed) {
+  // RichTextShape.tsx) for the SPECIFIC shape whose edit session ending
+  // triggered this pending return, neither reentering edit NOR switching to
+  // the crosshair-arming "rich-text" tool is safe for it - both branches
+  // below assume this was a genuine canvas interaction, but a session
+  // ending purely via focus loss to that shape's portaled dialog isn't one.
+  // Keyed per-shape so a DIFFERENT shape's dialog closing can't wrongly
+  // clear this suppression.
+  if (shapeIdThisRun && shapesWithSuppressedReenter.has(shapeIdThisRun)) {
     pendingReturnToRichText = false;
     return;
   }
@@ -474,7 +496,10 @@ export function installRichTextToolAutoReturn(editor: Editor): () => void {
       // `mayReenterEdit: true` only here - covers the same click ending
       // this edit session possibly also landing `select` on a different,
       // editable `rich-text` shape (see `resolvePendingReturnToRichText`).
-      requestReturnToRichText({ mayReenterEdit: true });
+      // `shapeId` is this exact shape (`prev.editingShapeId`), so per-shape
+      // reenter suppression below only ever applies to the shape whose
+      // session actually just ended.
+      requestReturnToRichText({ mayReenterEdit: true, shapeId: prev.editingShapeId });
     },
   );
 
@@ -485,7 +510,9 @@ export function installRichTextToolAutoReturn(editor: Editor): () => void {
     stopWatcher();
     pendingReturnToRichText = false;
     pendingReturnMayReenterEdit = false;
+    pendingReturnShapeId = undefined;
     explicitToolSwitchInProgress = false;
     shapesWithEditSessionOwnedByThisTool.clear();
+    shapesWithSuppressedReenter.clear();
   };
 }

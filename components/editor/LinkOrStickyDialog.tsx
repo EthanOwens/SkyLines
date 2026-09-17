@@ -15,7 +15,7 @@
 // responsible for giving that href scheme its own click/render behavior;
 // until then it behaves like (and looks like) a normal link.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { XIcon } from "lucide-react";
 import {
@@ -67,6 +67,33 @@ export function LinkOrStickyDialog({
   const [search, setSearch] = useState("");
   const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
   const [creating, setCreating] = useState(false);
+
+  // Guards against double-firing when a real click DOES land both events
+  // (possible outside the canvas-shape scenario this file's header comment
+  // describes - e.g. this dialog opened somewhere else, or the upstream
+  // pointer-capture bug going away). onMouseDown runs the action and flags
+  // it as handled; the following onClick (real pointer clicks always fire
+  // both) sees the flag and skips. A keyboard Enter/Space activation only
+  // ever fires onClick, never onMouseDown, so it still runs the action -
+  // that's the actual point of keeping onClick at all. Single shared ref is
+  // fine even for the mapped sticky-note buttons below since only one
+  // button can be mid-interaction at a time.
+  const handledByMouseDownRef = useRef(false);
+  function makeHandlers(action: () => void) {
+    return {
+      onMouseDown: () => {
+        handledByMouseDownRef.current = true;
+        action();
+      },
+      onClick: () => {
+        if (handledByMouseDownRef.current) {
+          handledByMouseDownRef.current = false;
+          return;
+        }
+        action();
+      },
+    };
+  }
 
   // Re-seed the URL input and reload the sticky-note list every time the
   // dialog opens, same "always fresh on open" seeding pattern
@@ -123,12 +150,15 @@ export function LinkOrStickyDialog({
         {/* Opened over a tldraw canvas shape, whose own pointer capture can
             steal the mouseup that would normally follow a click here,
             silently swallowing onClick - onMouseDown fires reliably instead,
-            so every action in this dialog uses that rather than onClick. */}
+            so every action in this dialog runs from onMouseDown. onClick is
+            still wired to the same action (guarded via makeHandlers) so
+            keyboard Enter/Space activation, which only ever fires onClick,
+            keeps working. */}
         <Button
           variant="ghost"
           size="icon-sm"
           className="absolute top-2 right-2"
-          onMouseDown={() => onOpenChange(false)}
+          {...makeHandlers(() => onOpenChange(false))}
         >
           <XIcon />
           <span className="sr-only">Close</span>
@@ -154,7 +184,7 @@ export function LinkOrStickyDialog({
               placeholder="https://"
               className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
             />
-            <Button size="sm" onMouseDown={handleSubmitUrl}>
+            <Button size="sm" {...makeHandlers(handleSubmitUrl)}>
               Insert link
             </Button>
           </div>
@@ -165,7 +195,7 @@ export function LinkOrStickyDialog({
             variant="outline"
             size="sm"
             disabled={!userId || creating}
-            onMouseDown={() => void handleCreateNewStickyNote()}
+            {...makeHandlers(() => void handleCreateNewStickyNote())}
           >
             Create new sticky note
           </Button>
@@ -193,7 +223,7 @@ export function LinkOrStickyDialog({
               <button
                 key={note.id}
                 type="button"
-                onMouseDown={() => handlePickStickyNote(note)}
+                {...makeHandlers(() => handlePickStickyNote(note))}
                 className="truncate rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 {note.title || "Untitled"}
@@ -203,7 +233,7 @@ export function LinkOrStickyDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onMouseDown={() => onOpenChange(false)}>
+          <Button variant="outline" {...makeHandlers(() => onOpenChange(false))}>
             Cancel
           </Button>
         </DialogFooter>
