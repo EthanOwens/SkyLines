@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
-import { XIcon } from "lucide-react";
+import { XIcon, List, LayoutGrid } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { getStickyNotes, createStickyNote } from "@/lib/db/stickyNotes";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
+import { extractPlainText, extractFirstImageSrc } from "@/lib/tiptap/extractText";
 import type { StickyNote } from "@/types";
 
 interface LinkOrStickyDialogProps {
@@ -67,6 +68,9 @@ export function LinkOrStickyDialog({
   const [search, setSearch] = useState("");
   const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
   const [creating, setCreating] = useState(false);
+  // Toggles the existing-notes list between the flat title-only rows and
+  // rows with a mini text/thumbnail preview underneath the title.
+  const [showPreview, setShowPreview] = useState(false);
 
   // Guards against double-firing when a real click DOES land both events
   // (possible outside the canvas-shape scenario this file's header comment
@@ -202,9 +206,20 @@ export function LinkOrStickyDialog({
         </div>
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <label htmlFor="link-or-sticky-search" className="text-xs font-medium text-muted-foreground">
-            Existing sticky notes
-          </label>
+          <div className="flex items-center justify-between">
+            <label htmlFor="link-or-sticky-search" className="text-xs font-medium text-muted-foreground">
+              Existing sticky notes
+            </label>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={showPreview ? "Show titles only" : "Show mini previews"}
+              {...makeHandlers(() => setShowPreview((v) => !v))}
+            >
+              {showPreview ? <List /> : <LayoutGrid />}
+              <span className="sr-only">Toggle preview</span>
+            </Button>
+          </div>
           <input
             id="link-or-sticky-search"
             type="text"
@@ -219,16 +234,33 @@ export function LinkOrStickyDialog({
                 {userId ? "No sticky notes found" : "Sign in to view sticky notes"}
               </div>
             )}
-            {filteredStickyNotes.map((note) => (
-              <button
-                key={note.id}
-                type="button"
-                {...makeHandlers(() => handlePickStickyNote(note))}
-                className="truncate rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-              >
-                {note.title || "Untitled"}
-              </button>
-            ))}
+            {filteredStickyNotes.map((note) => {
+              const rawPreview = showPreview ? extractPlainText(note.content) : "";
+              // extractPlainText falls back to a "[Image]" placeholder for
+              // image nodes - strip it wherever it appears (not just when
+              // it's the whole string) so it never leaks into preview text.
+              const preview = rawPreview.replace(/\[Image\]\s*/g, "").trim();
+              const imageSrc = showPreview && !preview ? extractFirstImageSrc(note.content) : null;
+              return (
+                <button
+                  key={note.id}
+                  type="button"
+                  {...makeHandlers(() => handlePickStickyNote(note))}
+                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  {imageSrc && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={imageSrc} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
+                  )}
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{note.title || "Untitled"}</span>
+                    {showPreview && preview && (
+                      <span className="line-clamp-2 text-xs text-muted-foreground">{preview}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 

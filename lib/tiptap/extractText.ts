@@ -10,6 +10,7 @@ type TiptapNode = {
   type?: string;
   text?: string;
   content?: TiptapNode[];
+  attrs?: { src?: string };
 };
 
 const DEFAULT_MAX_LENGTH = 80;
@@ -29,4 +30,21 @@ export function extractPlainText(doc: object | null | undefined, maxLength = DEF
 
   const text = parts.join(" ").replace(/\s+/g, " ").trim();
   return text.length > maxLength ? `${text.slice(0, maxLength).trimEnd()}…` : text;
+}
+
+// Depth-first search for the first `image` node's `src`, for mini-preview
+// thumbnails on image-only (or image-leading) notes - `extractPlainText`
+// already covers the text case above.
+export function extractFirstImageSrc(doc: object | null | undefined): string | null {
+  if (!doc) return null;
+
+  function walk(node: TiptapNode): string | null {
+    if (node.type === "image" && node.attrs?.src) return node.attrs.src;
+    for (const child of node.content ?? []) {
+      const found = walk(child);
+      if (found) return found;
+    }
+    return null;
+  }
+  return walk(doc as TiptapNode);
 }

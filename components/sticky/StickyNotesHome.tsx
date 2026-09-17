@@ -21,6 +21,8 @@ import {
   Star,
   ExternalLink,
   StickyNote as StickyNoteIcon,
+  List,
+  LayoutGrid,
 } from "lucide-react";
 import {
   Dialog,
@@ -58,6 +60,9 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
   const [creating, setCreating] = useState(false);
   const [screenshotOpen, setScreenshotOpen] = useState(false);
   const [openNoteIds, setOpenNoteIds] = useState<Set<string>>(new Set());
+  // Toggles the grid between the default preview cards and a compact
+  // title-only list (color dot + title per row).
+  const [titleOnly, setTitleOnly] = useState(false);
 
   // Reload the list every time the dialog opens, same "always fresh on
   // open" seeding pattern ThemeEditor.tsx/LinkOrStickyDialog.tsx already
@@ -142,7 +147,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-          <div className="flex w-fit gap-2">
+          <div className="flex w-fit items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -161,6 +166,15 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
               <Camera className="mr-1.5 h-4 w-4" />
               Screenshot
             </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={titleOnly ? "Show previews" : "Show titles only"}
+              onClick={() => setTitleOnly((v) => !v)}
+            >
+              {titleOnly ? <LayoutGrid /> : <List />}
+              <span className="sr-only">Toggle title-only view</span>
+            </Button>
           </div>
 
           {stickyNotes.length === 0 ? (
@@ -172,7 +186,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
               {stickyNotes.some((n) => n.favorite) && (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-muted-foreground">Favorites</span>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <div className={titleOnly ? "flex flex-col gap-1" : "grid grid-cols-2 gap-2 sm:grid-cols-3"}>
                     {stickyNotes
                       .filter((n) => n.favorite)
                       .map((note) => (
@@ -180,6 +194,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
                           key={note.id}
                           note={note}
                           isOpen={openNoteIds.has(note.id)}
+                          titleOnly={titleOnly}
                           onOpen={() => void handleOpenNote(note)}
                           onRename={(title) => void handleRenameNote(note.id, title)}
                           onDelete={() => void handleDeleteNote(note.id)}
@@ -189,12 +204,13 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
                   </div>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <div className={titleOnly ? "flex flex-col gap-1" : "grid grid-cols-2 gap-2 sm:grid-cols-3"}>
                 {stickyNotes.map((note) => (
                   <StickyNoteCard
                     key={note.id}
                     note={note}
                     isOpen={openNoteIds.has(note.id)}
+                    titleOnly={titleOnly}
                     onOpen={() => void handleOpenNote(note)}
                     onRename={(title) => void handleRenameNote(note.id, title)}
                     onDelete={() => void handleDeleteNote(note.id)}
@@ -219,6 +235,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
 interface StickyNoteCardProps {
   note: StickyNote;
   isOpen: boolean;
+  titleOnly?: boolean;
   onOpen: () => void;
   onRename: (title: string) => void;
   onDelete: () => void;
@@ -227,7 +244,7 @@ interface StickyNoteCardProps {
 
 // Right-click menu mirrors components/sidebar/NoteItem.tsx's ContextMenu/
 // DropdownMenuContent reuse pattern (spec.md M4 subtask 8).
-function StickyNoteCard({ note, isOpen, onOpen, onRename, onDelete, onToggleFavorite }: StickyNoteCardProps) {
+function StickyNoteCard({ note, isOpen, titleOnly, onOpen, onRename, onDelete, onToggleFavorite }: StickyNoteCardProps) {
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(note.title || "Untitled");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -258,7 +275,11 @@ function StickyNoteCard({ note, isOpen, onOpen, onRename, onDelete, onToggleFavo
       <ContextMenuTrigger
         render={
           <div
-            className="relative flex flex-col gap-1.5 rounded-md border border-border bg-card p-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+            className={
+              titleOnly
+                ? "relative flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1.5 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                : "relative flex flex-col gap-1.5 rounded-md border border-border bg-card p-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+            }
             role="button"
             tabIndex={0}
             onClick={() => {
@@ -272,7 +293,7 @@ function StickyNoteCard({ note, isOpen, onOpen, onRename, onDelete, onToggleFavo
               }
             }}
           >
-            <div className="flex items-center gap-1.5">
+            <div className={titleOnly ? "flex flex-1 items-center gap-1.5" : "flex items-center gap-1.5"}>
               <span
                 className="h-2.5 w-2.5 shrink-0 rounded-full"
                 style={{ background: note.topBarColor ?? "var(--primary)" }}
@@ -300,16 +321,19 @@ function StickyNoteCard({ note, isOpen, onOpen, onRename, onDelete, onToggleFavo
                   {title || "Untitled"}
                 </span>
               )}
+              {titleOnly && note.favorite && (
+                <Star className="h-3 w-3 shrink-0 fill-current text-muted-foreground" />
+              )}
             </div>
-            {preview ? (
+            {!titleOnly && (preview ? (
               <span className="line-clamp-2 text-xs text-muted-foreground">{preview}</span>
             ) : (
               <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
                 <StickyNoteIcon className="h-3 w-3" />
                 Empty
               </span>
-            )}
-            {(note.favorite || isOpen) && (
+            ))}
+            {!titleOnly && (note.favorite || isOpen) && (
               <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
                 {note.favorite && <Star className="h-3 w-3 fill-current text-muted-foreground" />}
                 {isOpen && (
