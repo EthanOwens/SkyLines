@@ -298,6 +298,17 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           class: "tiptap prose prose-sm dark:prose-invert max-w-none focus:outline-none h-full",
         },
         ...stickyLinkClickEditorProps(),
+        // Ctrl+K / Cmd+K opens the same link dialog as the bubble menu's link
+        // button (`setLink` below) - only fires while this shape's editor is
+        // actually focused/editing, so it can't fire globally.
+        handleKeyDown(_view, event) {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+            event.preventDefault();
+            setLinkDialogOpen(true);
+            return true;
+          }
+          return false;
+        },
       },
       onUpdate({ editor }) {
         // Writes the new Tiptap content back into the shape's own props via

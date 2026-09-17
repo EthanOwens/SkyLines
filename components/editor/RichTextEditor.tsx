@@ -80,6 +80,16 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[60vh] px-1",
       },
       ...stickyLinkClickEditorProps(),
+      // Ctrl+K / Cmd+K opens the same link dialog as the bubble menu's link
+      // button (`setLink` below) - no existing Mod-k binding elsewhere.
+      handleKeyDown(_view, event) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+          event.preventDefault();
+          setLinkDialogOpen(true);
+          return true;
+        }
+        return false;
+      },
     },
     onUpdate({ editor }) {
       onChange(editor.getJSON());
