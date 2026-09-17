@@ -113,6 +113,33 @@ export function suppressReenterEditAfterEndingSession() {
   pendingReturnMayReenterEdit = false;
 }
 
+// Directly clears any dangling pending-return state, rather than merely
+// suppressing it. The watcher below only re-evaluates `pendingReturnToRichText`
+// when getCurrentToolId()/isIn("select.idle")/getSelectedShapeIds() actually
+// change value - ending an edit session purely via focus loss (no canvas
+// pointer event, e.g. clicking a portaled dialog's own button) can set
+// `pendingReturnToRichText = true` with NO such signal change following it,
+// so the watcher never re-runs and the flag stays dangling until some
+// unrelated LATER click finally triggers it - by which point a merely
+// time-scoped suppression (like `reenterEditSuppressed` while a dialog is
+// open) has already been lifted. Called by RichTextShape.tsx when its link
+// dialog closes, to flush this out definitively instead of racing it.
+export function clearPendingReturnToRichText() {
+  pendingReturnToRichText = false;
+  pendingReturnMayReenterEdit = false;
+}
+
+// Persistent (not one-shot) version of the above, toggled by RichTextShape.tsx
+// while its link dialog is open. tldraw's own FocusManager ends the edit
+// session on any outside mousedown (e.g. the dialog's Cancel/X button, which
+// is portaled outside .tl-container) - without this, resolvePendingReturnToRichText
+// below would then reenter edit on that same shape at the click's screen
+// point, which looks like a phantom new text box appearing under the dialog.
+let reenterEditSuppressed = false;
+export function setReenterEditSuppressed(suppressed: boolean) {
+  reenterEditSuppressed = suppressed;
+}
+
 // Ribbon.tsx's Draw-tab tool buttons call this INSTEAD OF a raw
 // `editor.setCurrentTool(id)`, for two reasons: (1) it suppresses
 // `requestReturnToRichText()` for the duration via
@@ -219,6 +246,16 @@ function resolvePendingReturnToRichText(editor: Editor) {
   const selectedShapeIds = editor.getSelectedShapeIds();
   const mayReenterEditThisRun = pendingReturnMayReenterEdit;
   pendingReturnMayReenterEdit = false;
+
+  // While a link dialog is open (or was open when this session ended, see
+  // RichTextShape.tsx), neither reentering edit NOR switching to the
+  // crosshair-arming "rich-text" tool is safe - both branches below assume
+  // this was a genuine canvas interaction, but a session ending purely via
+  // focus loss to a portaled dialog isn't one.
+  if (reenterEditSuppressed) {
+    pendingReturnToRichText = false;
+    return;
+  }
 
   if (selectedShapeIds.length === 1 && mayReenterEditThisRun) {
     const onlyId = selectedShapeIds[0];

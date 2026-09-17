@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Editor } from "@tiptap/react";
+import { XIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -114,10 +115,24 @@ export function LinkOrStickyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>Insert link</DialogTitle>
         </DialogHeader>
+
+        {/* Opened over a tldraw canvas shape, whose own pointer capture can
+            steal the mouseup that would normally follow a click here,
+            silently swallowing onClick - onMouseDown fires reliably instead,
+            so every action in this dialog uses that rather than onClick. */}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="absolute top-2 right-2"
+          onMouseDown={() => onOpenChange(false)}
+        >
+          <XIcon />
+          <span className="sr-only">Close</span>
+        </Button>
 
         <div className="flex flex-col gap-2">
           <label htmlFor="link-or-sticky-url" className="text-xs font-medium text-muted-foreground">
@@ -139,7 +154,7 @@ export function LinkOrStickyDialog({
               placeholder="https://"
               className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
             />
-            <Button size="sm" onClick={handleSubmitUrl}>
+            <Button size="sm" onMouseDown={handleSubmitUrl}>
               Insert link
             </Button>
           </div>
@@ -150,7 +165,7 @@ export function LinkOrStickyDialog({
             variant="outline"
             size="sm"
             disabled={!userId || creating}
-            onClick={() => void handleCreateNewStickyNote()}
+            onMouseDown={() => void handleCreateNewStickyNote()}
           >
             Create new sticky note
           </Button>
@@ -178,7 +193,7 @@ export function LinkOrStickyDialog({
               <button
                 key={note.id}
                 type="button"
-                onClick={() => handlePickStickyNote(note)}
+                onMouseDown={() => handlePickStickyNote(note)}
                 className="truncate rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 {note.title || "Untitled"}
@@ -188,7 +203,7 @@ export function LinkOrStickyDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onMouseDown={() => onOpenChange(false)}>
             Cancel
           </Button>
         </DialogFooter>

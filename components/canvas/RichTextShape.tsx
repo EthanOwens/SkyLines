@@ -73,7 +73,11 @@ import { useAppStore } from "@/stores/appStore";
 import { useAuthContext } from "@/components/AuthProvider";
 import { LinkOrStickyDialog } from "@/components/editor/LinkOrStickyDialog";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
-import { suppressReenterEditAfterEndingSession } from "./RichTextTool";
+import {
+  suppressReenterEditAfterEndingSession,
+  setReenterEditSuppressed,
+  clearPendingReturnToRichText,
+} from "./RichTextTool";
 import {
   formatActions,
   selectFormatActionState,
@@ -508,6 +512,27 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     setLinkDialogOpen(true);
   }, [tiptapEditor]);
 
+  // The actual bug: ending the edit session while the dialog is open (via
+  // focus loss, not a canvas click) leaves RichTextTool's own pending
+  // return-to-rich-text/reenter-edit flags dangling, since nothing triggers
+  // their normal resolution without a following canvas pointer event - they
+  // only get picked up whenever some LATER, unrelated click happens to touch
+  // tldraw's tracked tool/selection state, springing the shape back into
+  // edit mode (or re-arming the crosshair) seemingly out of nowhere. Clear
+  // them outright the moment the dialog closes, rather than merely
+  // suppressing for its open duration (which the dangling flag can outlive).
+  const wasLinkDialogOpenRef = useRef(false);
+  useEffect(() => {
+    setReenterEditSuppressed(linkDialogOpen);
+    // Only on a genuine open->close transition - this is a module-level
+    // flag shared by every rich-text shape, so clearing it on mount (when
+    // linkDialogOpen starts false) could wrongly wipe an unrelated shape's
+    // legitimately-pending flag.
+    if (wasLinkDialogOpenRef.current && !linkDialogOpen) clearPendingReturnToRichText();
+    wasLinkDialogOpenRef.current = linkDialogOpen;
+    return () => setReenterEditSuppressed(false);
+  }, [linkDialogOpen]);
+
   return (
     <HTMLContainer id={shape.id}>
       {/* spec.md subtask 1. Outer box: transparent background always (idle
@@ -569,7 +594,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
             style={{
               flexShrink: 0,
               height: 8,
-              pointerEvents: "all",
+              pointerEvents: linkDialogOpen ? "none" : "all",
               cursor: "grab",
               background: "var(--muted-foreground)",
               opacity: 0.4,
@@ -591,7 +616,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           style={{
             flex: "1 1 auto",
             minHeight: 0,
-            pointerEvents: isEditing ? "all" : "none",
+            pointerEvents: linkDialogOpen ? "none" : isEditing ? "all" : "none",
             overflow: "auto",
             background: "transparent",
             cursor: isEditing ? "text" : "inherit",
