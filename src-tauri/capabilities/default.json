@@ -18,6 +18,9 @@
     "deep-link:default",
     "global-shortcut:allow-register",
     "screenshots:default",
+    "clipboard-manager:default",
+    "clipboard-manager:allow-read-image",
+    "clipboard-manager:allow-write-image",
     {
       "identifier": "fs:allow-read-file",
       "allow": [{ "path": "$APPDATA/tauri-plugin-screenshots/*" }]

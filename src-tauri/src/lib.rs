@@ -637,6 +637,10 @@ pub fn run() {
         // xcap for cross-platform window enumeration/capture - see
         // components/sticky/ScreenshotCapture.tsx for the picker/preview UI.
         .plugin(tauri_plugin_screenshots::init())
+        // spec.md subtask 11/12: image editor clipboard I/O (copy an edited
+        // sticky-note image to the OS clipboard, paste an image into a
+        // sticky note). Registered here only - no command uses it yet.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:skylines.db", migrations)
