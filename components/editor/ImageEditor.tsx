@@ -12,19 +12,30 @@
 // own snapshots onto the same `history` stack via `pushHistorySnapshot()`.
 
 import { useEffect, useRef, useState } from "react";
-import { Circle, Minus, Pencil, Square, X } from "lucide-react";
+import { Circle, EyeOff, Minus, Pencil, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface Props {
   path: string;
 }
 
-// Any later tool (censor/text/erase/crop) added in this dropdown as it grows
-// across subtasks 15-17.
-type Tool = "none" | "draw" | "shape";
+// Any later tool (text/erase/crop) added in this dropdown as it grows
+// across subtasks 16-17.
+type Tool = "none" | "draw" | "shape" | "censor";
 
 // Which geometric primitive the shape tool commits on pointer-up.
 type ShapeType = "rectangle" | "ellipse" | "line";
+
+// Which effect the censor tool applies to its drag box.
+type CensorMode = "black" | "blur";
+
+// Blur radius scales with canvas width like stroke width does elsewhere in
+// this file, but with a much stronger ratio - censoring needs to stay
+// visually opaque even on native-resolution (e.g. 4K) screenshots, unlike
+// the thin/subtle stroke width.
+function censorBlurRadius(canvasWidth: number): number {
+  return Math.max(10, canvasWidth / 80);
+}
 
 // Matches components/theme/ThemeEditor.tsx's own MAX_UNDO_HISTORY convention -
 // bounds memory growth from full-canvas snapshots.
@@ -51,12 +62,17 @@ export function ImageEditor({ path }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("none");
   const [shapeType, setShapeType] = useState<ShapeType>("rectangle");
+  const [censorMode, setCensorMode] = useState<CensorMode>("black");
   const isPointerDownRef = useRef(false);
   // Drag-start point and the pre-drag pixel snapshot the shape tool restores
   // on every pointermove before redrawing the in-progress preview on top -
   // keeps the live preview from smearing without permanently committing it.
   const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
   const shapeBaseRef = useRef<ImageData | null>(null);
+  // Same restore-then-redraw base as the shape tool, reused for the censor
+  // tool's own drag box.
+  const censorStartRef = useRef<{ x: number; y: number } | null>(null);
+  const censorBaseRef = useRef<ImageData | null>(null);
 
   // Generic canvas-snapshot undo stack, reused by every tool this editor
   // ever gets (draw here; shapes/censor/text/erase/crop in subtasks 14-17) -
@@ -149,8 +165,49 @@ export function ImageEditor({ path }: Props) {
     }
   }
 
+  // Draws the censor box from `start` to `end` on `ctx`: solid black fill,
+  // or a real blur (native canvas filter, not a hand-rolled convolution) of
+  // that region pulled from `base`.
+  function drawCensorBox(
+    ctx: CanvasRenderingContext2D,
+    base: ImageData,
+    mode: CensorMode,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) {
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const w = Math.abs(end.x - start.x);
+    const h = Math.abs(end.y - start.y);
+    if (w === 0 || h === 0) return;
+
+    if (mode === "black") {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(x, y, w, h);
+      return;
+    }
+
+    // Blur mode: render the base image's own pixels through a temporary
+    // offscreen canvas so ctx.filter's blur only samples this region's
+    // source pixels (not whatever the preview already drew on top).
+    const offscreen = document.createElement("canvas");
+    offscreen.width = base.width;
+    offscreen.height = base.height;
+    const offscreenCtx = offscreen.getContext("2d");
+    if (!offscreenCtx) return;
+    offscreenCtx.putImageData(base, 0, 0);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.filter = `blur(${censorBlurRadius(base.width)}px)`;
+    ctx.drawImage(offscreen, 0, 0);
+    ctx.restore();
+  }
+
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (activeTool !== "draw" && activeTool !== "shape") return;
+    if (activeTool !== "draw" && activeTool !== "shape" && activeTool !== "censor") return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     const point = canvasPointFromEvent(e);
@@ -165,6 +222,12 @@ export function ImageEditor({ path }: Props) {
       // Reuses the same snapshot just pushed onto history (putImageData only
       // reads it, never mutates it) instead of capturing the canvas twice.
       shapeBaseRef.current = snapshot;
+      return;
+    }
+
+    if (activeTool === "censor") {
+      censorStartRef.current = point;
+      censorBaseRef.current = snapshot;
       return;
     }
 
@@ -193,6 +256,15 @@ export function ImageEditor({ path }: Props) {
       return;
     }
 
+    if (activeTool === "censor") {
+      const start = censorStartRef.current;
+      const base = censorBaseRef.current;
+      if (!start || !base) return;
+      ctx.putImageData(base, 0, 0);
+      drawCensorBox(ctx, base, censorMode, start, point);
+      return;
+    }
+
     if (activeTool !== "draw") return;
     ctx.lineTo(point.x, point.y);
     ctx.stroke();
@@ -202,6 +274,8 @@ export function ImageEditor({ path }: Props) {
     isPointerDownRef.current = false;
     shapeStartRef.current = null;
     shapeBaseRef.current = null;
+    censorStartRef.current = null;
+    censorBaseRef.current = null;
   }
 
   // Canvas is always mounted (never conditionally rendered out) so
@@ -321,6 +395,34 @@ export function ImageEditor({ path }: Props) {
               </Button>
             </div>
           )}
+          <Button
+            variant={activeTool === "censor" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setActiveTool((t) => (t === "censor" ? "none" : "censor"))}
+          >
+            <EyeOff className="mr-1.5 h-3.5 w-3.5" />
+            Censor
+          </Button>
+          {activeTool === "censor" && (
+            <div className="flex items-center gap-1">
+              <Button
+                variant={censorMode === "black" ? "default" : "outline"}
+                size="sm"
+                className="h-7"
+                onClick={() => setCensorMode("black")}
+              >
+                Black
+              </Button>
+              <Button
+                variant={censorMode === "blur" ? "default" : "outline"}
+                size="sm"
+                className="h-7"
+                onClick={() => setCensorMode("blur")}
+              >
+                Blur
+              </Button>
+            </div>
+          )}
         </div>
       )}
       <div className="relative flex flex-1 items-center justify-center overflow-auto p-4">
@@ -330,7 +432,7 @@ export function ImageEditor({ path }: Props) {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}
-          style={{ cursor: activeTool === "draw" || activeTool === "shape" ? "crosshair" : "default" }}
+          style={{ cursor: activeTool !== "none" ? "crosshair" : "default" }}
           className={`max-h-full max-w-full border border-border ${loading || error ? "hidden" : ""}`}
         />
         {loading && (
