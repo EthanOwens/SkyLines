@@ -73,6 +73,7 @@ import { useAppStore } from "@/stores/appStore";
 import { useAuthContext } from "@/components/AuthProvider";
 import { LinkOrStickyDialog } from "@/components/editor/LinkOrStickyDialog";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
+import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import {
   suppressReenterEditAfterEndingSession,
   setReenterEditSuppressed,
@@ -308,6 +309,17 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
             return true;
           }
           return false;
+        },
+        // spec.md subtask 12 ("Image editor pop-out shell"). Double-clicking
+        // an inserted image opens it in its own pop-out editor window - the
+        // image's `src` is already a data URL (Image.configure above has
+        // `allowBase64: true`), so it's passed straight through.
+        handleDoubleClick(_view, _pos, event) {
+          const target = event.target as HTMLElement;
+          if (target.tagName !== "IMG") return false;
+          event.preventDefault();
+          void openImageEditorWindow((target as HTMLImageElement).src);
+          return true;
         },
       },
       onUpdate({ editor }) {

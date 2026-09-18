@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { Link as LinkIcon } from "lucide-react";
 import { LinkOrStickyDialog } from "./LinkOrStickyDialog";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
+import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import "./editor.css";
 
 // Subset of the Format tab's actions (spec.md subtask 11, "Bubble menu") -
@@ -89,6 +90,17 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
           return true;
         }
         return false;
+      },
+      // spec.md subtask 12 ("Image editor pop-out shell"). Double-clicking
+      // an inserted image opens it in its own pop-out editor window - the
+      // image's `src` is already a data URL (Image.configure below has
+      // `allowBase64: true`), so it's passed straight through.
+      handleDoubleClick(_view, _pos, event) {
+        const target = event.target as HTMLElement;
+        if (target.tagName !== "IMG") return false;
+        event.preventDefault();
+        void openImageEditorWindow((target as HTMLImageElement).src);
+        return true;
       },
     },
     onUpdate({ editor }) {

@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "image-editor",
+  "description": "Capability for image editor pop-out windows (spec.md subtask 12), each labeled \"image-editor-<id>\" by lib/imageEditorWindow.ts. default.json's/sticky.json's own capabilities only cover the \"main\"/\"sticky-*\" windows, so this window needs its own grant: fs:allow-read-file to read back the temp image file lib/imageEditorWindow.ts wrote under $APPDATA/image-editor/, fs:allow-remove so ImageEditor.tsx can delete that temp file on close, plus close (core:window:default alone is read-only) for ImageEditor.tsx's Close button.",
+  "windows": ["image-editor-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "$APPDATA/image-editor/*" }]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [{ "path": "$APPDATA/image-editor/*" }]
+    }
+  ]
+}

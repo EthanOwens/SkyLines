@@ -35,6 +35,7 @@ import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import { updateStickyNote } from "@/lib/db/stickyNotes";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
+import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import type { StickyNote } from "@/types";
 import { StickyNoteTopBar } from "./StickyNoteTopBar";
 import { StickyNoteBottomBar } from "./StickyNoteBottomBar";
@@ -94,6 +95,17 @@ export function StickyNoteEditor({ note }: Props) {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[80vh] px-1",
       },
       ...stickyLinkClickEditorProps(),
+      // spec.md subtask 12 ("Image editor pop-out shell"). Double-clicking
+      // an inserted image opens it in its own pop-out editor window - the
+      // image's `src` is already a data URL (Image.configure below has
+      // `allowBase64: true`), so it's passed straight through.
+      handleDoubleClick(_view, _pos, event) {
+        const target = event.target as HTMLElement;
+        if (target.tagName !== "IMG") return false;
+        event.preventDefault();
+        void openImageEditorWindow((target as HTMLImageElement).src);
+        return true;
+      },
     },
     onUpdate({ editor }) {
       const content = editor.getJSON();

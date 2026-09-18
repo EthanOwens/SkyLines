@@ -30,6 +30,14 @@
       "allow": [{ "path": "$APPCONFIG/themes" }]
     },
     {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$APPDATA/image-editor/*" }]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$APPDATA/image-editor" }, { "path": "$APPDATA/image-editor/*" }]
+    },
+    {
       "identifier": "fs:allow-exists",
       "allow": [{ "path": "$APPCONFIG/themes" }, { "path": "$APPCONFIG/themes/*" }]
     },

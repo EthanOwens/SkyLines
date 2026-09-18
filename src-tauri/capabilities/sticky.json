@@ -1,18 +1,27 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "sticky",
-  "description": "Capability for sticky note pop-out windows (spec.md subtask 8), each labeled \"sticky-<id>\" by lib/stickyWindow.ts. default.json's capability only covers the \"main\" window, so these windows need their own grant to get any permissions at all - sql:* for lib/db/stickyNotes.ts's CRUD, plus close/set-always-on-top/set-size (core:window:default alone is read-only) for StickyNoteTopBar.tsx's Exit/Pin/shrink-on-blur behavior (spec.md subtask 9), plus clipboard-manager:* (spec.md subtask 11/12) since the image editor also opens from sticky notes.",
+  "description": "Capability for sticky note pop-out windows (spec.md subtask 8), each labeled \"sticky-<id>\" by lib/stickyWindow.ts. default.json's capability only covers the \"main\" window, so these windows need their own grant to get any permissions at all - sql:* for lib/db/stickyNotes.ts's CRUD, plus close/set-always-on-top/set-size (core:window:default alone is read-only) for StickyNoteTopBar.tsx's Exit/Pin/shrink-on-blur behavior (spec.md subtask 9), plus clipboard-manager:* (spec.md subtask 11/12), plus webview:allow-create-webview-window/fs:allow-write-file+mkdir under $APPDATA/image-editor/* (spec.md subtask 12) since the image editor also opens from sticky notes' Tiptap content.",
   "windows": ["sticky-*"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-size",
+    "core:webview:allow-create-webview-window",
     "sql:default",
     "sql:allow-execute",
     "sql:allow-select",
     "clipboard-manager:default",
     "clipboard-manager:allow-read-image",
-    "clipboard-manager:allow-write-image"
+    "clipboard-manager:allow-write-image",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$APPDATA/image-editor/*" }]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$APPDATA/image-editor" }, { "path": "$APPDATA/image-editor/*" }]
+    }
   ]
 }
