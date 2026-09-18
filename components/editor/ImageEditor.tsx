@@ -12,16 +12,19 @@
 // own snapshots onto the same `history` stack via `pushHistorySnapshot()`.
 
 import { useEffect, useRef, useState } from "react";
-import { Pencil, X } from "lucide-react";
+import { Circle, Minus, Pencil, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface Props {
   path: string;
 }
 
-// Any later tool (shape/censor/text/erase/crop) added in this dropdown as it
-// grows across subtasks 14-17.
-type Tool = "none" | "draw";
+// Any later tool (censor/text/erase/crop) added in this dropdown as it grows
+// across subtasks 15-17.
+type Tool = "none" | "draw" | "shape";
+
+// Which geometric primitive the shape tool commits on pointer-up.
+type ShapeType = "rectangle" | "ellipse" | "line";
 
 // Matches components/theme/ThemeEditor.tsx's own MAX_UNDO_HISTORY convention -
 // bounds memory growth from full-canvas snapshots.
@@ -47,7 +50,13 @@ export function ImageEditor({ path }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("none");
+  const [shapeType, setShapeType] = useState<ShapeType>("rectangle");
   const isPointerDownRef = useRef(false);
+  // Drag-start point and the pre-drag pixel snapshot the shape tool restores
+  // on every pointermove before redrawing the in-progress preview on top -
+  // keeps the live preview from smearing without permanently committing it.
+  const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const shapeBaseRef = useRef<ImageData | null>(null);
 
   // Generic canvas-snapshot undo stack, reused by every tool this editor
   // ever gets (draw here; shapes/censor/text/erase/crop in subtasks 14-17) -
@@ -59,14 +68,16 @@ export function ImageEditor({ path }: Props) {
   // Captures the canvas's current pixels and pushes them onto `historyRef` -
   // call this right before making any undoable change. Named/shaped
   // generically (not draw-specific) so later tools push to the same stack.
-  function pushHistorySnapshot() {
+  function pushHistorySnapshot(): ImageData | null {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-    historyRef.current.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+    if (!canvas || !ctx) return null;
+    const snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    historyRef.current.push(snapshot);
     if (historyRef.current.length > MAX_UNDO_HISTORY) {
       historyRef.current.shift();
     }
+    return snapshot;
   }
 
   // Ctrl+Z (only - no redo, per this subtask's scope): pops the most recent
@@ -107,15 +118,56 @@ export function ImageEditor({ path }: Props) {
     return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
   }
 
+  // Draws one shape (rectangle/ellipse/line) from `start` to `end` on `ctx`,
+  // using the same red-stroke convention as the draw tool.
+  function strokeShape(
+    ctx: CanvasRenderingContext2D,
+    type: ShapeType,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) {
+    ctx.strokeStyle = "#ef4444";
+    ctx.lineWidth = Math.max(3, (canvasRef.current?.width ?? 800) / 200);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    if (type === "rectangle") {
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      ctx.strokeRect(x, y, Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+    } else if (type === "ellipse") {
+      const cx = (start.x + end.x) / 2;
+      const cy = (start.y + end.y) / 2;
+      const rx = Math.abs(end.x - start.x) / 2;
+      const ry = Math.abs(end.y - start.y) / 2;
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+    }
+  }
+
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (activeTool !== "draw") return;
-    const ctx = canvasRef.current?.getContext("2d");
+    if (activeTool !== "draw" && activeTool !== "shape") return;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
     const point = canvasPointFromEvent(e);
-    if (!ctx || !point) return;
-    // Snapshot the pre-stroke state now, before any pixels change, so
-    // undoing this stroke restores exactly what was here before it started.
-    pushHistorySnapshot();
+    if (!canvas || !ctx || !point) return;
+    // Snapshot the pre-change state now, before any pixels change, so
+    // undoing this action restores exactly what was here before it started.
+    const snapshot = pushHistorySnapshot();
     isPointerDownRef.current = true;
+
+    if (activeTool === "shape") {
+      shapeStartRef.current = point;
+      // Reuses the same snapshot just pushed onto history (putImageData only
+      // reads it, never mutates it) instead of capturing the canvas twice.
+      shapeBaseRef.current = snapshot;
+      return;
+    }
+
     ctx.strokeStyle = "#ef4444";
     ctx.lineWidth = Math.max(3, (canvasRef.current?.width ?? 800) / 200);
     ctx.lineCap = "round";
@@ -125,16 +177,31 @@ export function ImageEditor({ path }: Props) {
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (activeTool !== "draw" || !isPointerDownRef.current) return;
+    if (!isPointerDownRef.current) return;
     const ctx = canvasRef.current?.getContext("2d");
     const point = canvasPointFromEvent(e);
     if (!ctx || !point) return;
+
+    if (activeTool === "shape") {
+      const start = shapeStartRef.current;
+      const base = shapeBaseRef.current;
+      if (!start || !base) return;
+      // Restore the pre-drag pixels first, then draw the in-progress shape
+      // on top - avoids smearing since the previous preview frame isn't kept.
+      ctx.putImageData(base, 0, 0);
+      strokeShape(ctx, shapeType, start, point);
+      return;
+    }
+
+    if (activeTool !== "draw") return;
     ctx.lineTo(point.x, point.y);
     ctx.stroke();
   }
 
   function handlePointerUp() {
     isPointerDownRef.current = false;
+    shapeStartRef.current = null;
+    shapeBaseRef.current = null;
   }
 
   // Canvas is always mounted (never conditionally rendered out) so
@@ -218,6 +285,42 @@ export function ImageEditor({ path }: Props) {
             <Pencil className="mr-1.5 h-3.5 w-3.5" />
             Draw
           </Button>
+          <Button
+            variant={activeTool === "shape" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setActiveTool((t) => (t === "shape" ? "none" : "shape"))}
+          >
+            <Square className="mr-1.5 h-3.5 w-3.5" />
+            Shape
+          </Button>
+          {activeTool === "shape" && (
+            <div className="flex items-center gap-1">
+              <Button
+                variant={shapeType === "rectangle" ? "default" : "outline"}
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setShapeType("rectangle")}
+              >
+                <Square className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant={shapeType === "ellipse" ? "default" : "outline"}
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setShapeType("ellipse")}
+              >
+                <Circle className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant={shapeType === "line" ? "default" : "outline"}
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setShapeType("line")}
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
         </div>
       )}
       <div className="relative flex flex-1 items-center justify-center overflow-auto p-4">
@@ -227,7 +330,7 @@ export function ImageEditor({ path }: Props) {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}
-          style={{ cursor: activeTool === "draw" ? "crosshair" : "default" }}
+          style={{ cursor: activeTool === "draw" || activeTool === "shape" ? "crosshair" : "default" }}
           className={`max-h-full max-w-full border border-border ${loading || error ? "hidden" : ""}`}
         />
         {loading && (
