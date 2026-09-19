@@ -14,7 +14,14 @@
 // (see app/image-editor/page.tsx / components/editor/ImageEditor.tsx, which
 // mirror components/sticky/ScreenshotCapture.tsx's fileToDataUrl chunked-
 // base64-decode pattern to reverse this).
-export async function openImageEditorWindow(dataUrl: string): Promise<void> {
+//
+// spec.md subtask 18 ("Save-back-to-note"). Returns the generated `id` (also
+// embedded in the temp file's own name) so the caller can `listen()` for
+// this specific edit session's `image-editor:saved:<id>` Tauri event (a
+// real, app-wide event bus - see @tauri-apps/api/event's own `emit`/`listen`
+// doc comments, which default to `{ kind: 'Any' }` targets, i.e. every
+// window) before the pop-out window emits it on save/close.
+export async function openImageEditorWindow(dataUrl: string): Promise<string> {
   const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
   const { writeFile, mkdir } = await import("@tauri-apps/plugin-fs");
   const { appDataDir, join } = await import("@tauri-apps/api/path");
@@ -42,4 +49,6 @@ export async function openImageEditorWindow(dataUrl: string): Promise<void> {
     maximizable: false,
     decorations: false,
   });
+
+  return id;
 }

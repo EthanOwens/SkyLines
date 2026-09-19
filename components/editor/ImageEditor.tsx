@@ -12,11 +12,21 @@
 // own snapshots onto the same `history` stack via `pushHistorySnapshot()`.
 
 import { useEffect, useRef, useState } from "react";
-import { Circle, Crop, Eraser, EyeOff, Minus, Pencil, Square, Type, X } from "lucide-react";
+import { Circle, Crop, Eraser, EyeOff, Minus, Pencil, Save, Square, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface Props {
   path: string;
+}
+
+// spec.md subtask 18. The temp file's own name is `${id}.png` (see
+// lib/imageEditorWindow.ts), and that same `id` is the `sourceId` the
+// caller's one-shot `listen()` is scoped to - pulling it back out of `path`
+// here avoids threading a second query param through app/image-editor/page.tsx
+// just to duplicate a value `path` already encodes.
+function sourceIdFromPath(path: string): string {
+  const base = path.split(/[/\\]/).pop() ?? path;
+  return base.replace(/\.png$/, "");
 }
 
 type Tool = "none" | "draw" | "shape" | "censor" | "text" | "erase" | "crop";
@@ -104,6 +114,11 @@ export function ImageEditor({ path }: Props) {
     canvasY: number;
     value: string;
   } | null>(null);
+  // spec.md subtask 18 ("Ctrl+C clipboard export with flash feedback"). Set
+  // true right after a successful copy, then cleared after ~1.5s by the
+  // effect below - drives both the full-canvas-area flash overlay and the
+  // "Copied to clipboard" label via a CSS opacity transition.
+  const [copiedFlash, setCopiedFlash] = useState(false);
 
   // Generic canvas-snapshot undo stack, reused by every tool this editor
   // ever gets (draw here; shapes/censor/text/erase/crop in subtasks 14-17) -
@@ -179,6 +194,55 @@ export function ImageEditor({ path }: Props) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [cropRect]);
+
+  // Copies the baked canvas to the OS clipboard as raw RGBA pixels (spec.md
+  // subtask 18, Part 2). `writeImage` accepts a plain `Uint8Array`/
+  // `ArrayBuffer`/`number[]` too, but those get treated as an ENCODED image
+  // file's bytes to sniff-decode (Rust's `JsImage::Bytes`, per
+  // tauri-plugin-clipboard-manager's own `commands::write_image` ->
+  // `tauri::image::JsImage` - see that crate's `image/mod.rs`), not raw
+  // pixels - passing raw `ImageData.data` through that path would corrupt
+  // the image. `Image.new(rgba, width, height)` instead builds the
+  // `JsImage::Rgba { rgba, width, height }` variant explicitly, which is the
+  // only path that correctly interprets the bytes as row-major RGBA.
+  async function copyToClipboard() {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const { Image } = await import("@tauri-apps/api/image");
+    const { writeImage } = await import("@tauri-apps/plugin-clipboard-manager");
+    const image = await Image.new(new Uint8Array(data), canvas.width, canvas.height);
+    await writeImage(image);
+    setCopiedFlash(true);
+  }
+
+  // Fades the flash overlay + "Copied to clipboard" label back out ~1.5s
+  // after a successful copy.
+  useEffect(() => {
+    if (!copiedFlash) return;
+    const timer = setTimeout(() => setCopiedFlash(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copiedFlash]);
+
+  // Ctrl+C/Cmd+C, scoped to this window while mounted - same modifier-check
+  // and INPUT/TEXTAREA/contentEditable exclusion convention as the Ctrl+Z
+  // handler above (lets the text tool's overlay <input> use the browser's
+  // own native copy instead of hijacking it).
+  useEffect(() => {
+    function handleCopyKeyDown(e: KeyboardEvent) {
+      const isCopyShortcut =
+        (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "c";
+      if (!isCopyShortcut) return;
+      const target = e.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      if (tagName === "INPUT" || tagName === "TEXTAREA" || target?.isContentEditable) return;
+      e.preventDefault();
+      void copyToClipboard();
+    }
+    window.addEventListener("keydown", handleCopyKeyDown);
+    return () => window.removeEventListener("keydown", handleCopyKeyDown);
+  }, []);
 
   function canvasPointFromEvent(
     e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>,
@@ -576,10 +640,38 @@ export function ImageEditor({ path }: Props) {
     };
   }, [path]);
 
+  // spec.md subtask 18 ("Save-back-to-note"). Re-encodes the baked canvas
+  // and emits it on this edit session's own `image-editor:saved:<sourceId>`
+  // Tauri event - a real, app-wide event (see @tauri-apps/api/event's
+  // `emit`, which targets `{ kind: 'Any' }` by default, i.e. every window)
+  // that the ORIGINAL window's one-shot `listen()` (set up right where
+  // `openImageEditorWindow` was called - RichTextEditor.tsx/
+  // RichTextShape.tsx/StickyNoteEditor.tsx's `handleDoubleClick`) picks up
+  // to patch the exact source `<img>` node by its known ProseMirror `pos`,
+  // then let that surface's own existing save path (autosave/
+  // `updateStickyNote`/tldraw shape update) persist it.
+  async function saveToSource() {
+    const canvas = canvasRef.current;
+    // While still loading (or after a load error), the canvas is just its
+    // default blank state - never emit that over the real image (see
+    // spec.md subtask 18 review, Bug 1).
+    if (!canvas || loading || error) return;
+    const dataUrl = canvas.toDataURL("image/png");
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit(`image-editor:saved:${sourceIdFromPath(path)}`, dataUrl);
+  }
+
   async function handleClose() {
+    // Closing always saves (spec.md subtask 18's primary described
+    // behavior) - best-effort, so a failed emit still lets the window close.
+    try {
+      await saveToSource();
+    } catch {
+      // Non-fatal - still close the window even if the save emit failed.
+    }
     // Best-effort cleanup of the temp file lib/imageEditorWindow.ts wrote -
     // doesn't catch force-quit/crash; a startup sweep of orphaned files is
-    // deferred to subtask 18 (real save/close).
+    // out of scope for this subtask.
     try {
       const { remove } = await import("@tauri-apps/plugin-fs");
       await remove(path);
@@ -600,6 +692,17 @@ export function ImageEditor({ path }: Props) {
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-primary-foreground">
           Image editor
         </span>
+        {!loading && !error && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-primary-foreground hover:bg-black/10 hover:text-primary-foreground"
+            onClick={() => void saveToSource()}
+          >
+            <Save className="mr-1.5 h-3.5 w-3.5" />
+            Save
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -726,6 +829,21 @@ export function ImageEditor({ path }: Props) {
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         )}
         {error && <span className="text-sm text-muted-foreground">{error}</span>}
+        {/* spec.md subtask 18 ("Ctrl+C ... flash feedback"). A full-area
+            white flash that fades via `opacity` transition, plus a small
+            fading "Copied to clipboard" label - both driven purely by
+            `copiedFlash` toggling, no extra library. `pointer-events: none`
+            so it never blocks the canvas underneath. */}
+        <div
+          className="pointer-events-none absolute inset-0 bg-white transition-opacity duration-300"
+          style={{ opacity: copiedFlash ? 0.5 : 0 }}
+        />
+        <div
+          className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 rounded-md bg-foreground px-3 py-1 text-xs text-background transition-opacity duration-300"
+          style={{ opacity: copiedFlash ? 1 : 0 }}
+        >
+          Copied to clipboard
+        </div>
         {textEditState &&
           (() => {
             const { left, top } = displayPointFromCanvasPoint({

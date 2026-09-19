@@ -6,7 +6,7 @@
 // props - so autosave-to-SQLite-instead-of-Firestore is handled entirely by
 // the caller (app/note/page.tsx), not here.
 
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { isNodeSelection, isTextSelection } from "@tiptap/core";
@@ -55,6 +55,21 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
   const { user } = useAuthContext();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
 
+  // Tracks every still-pending image-editor `listen()` unlisten fn
+  // (handleDoubleClick below, one per double-clicked image) so this
+  // component's own unmount can clean up any that never fired - otherwise a
+  // pop-out closed while loading/errored (never emits) or a crashed pop-out
+  // leaks the listener for the rest of the app session, and if this
+  // component unmounts first, the eventual event would dispatch into a
+  // destroyed ProseMirror view.
+  const pendingImageEditorUnlistens = useRef<Set<() => void>>(new Set());
+  useEffect(() => {
+    return () => {
+      pendingImageEditorUnlistens.current.forEach((fn) => fn());
+      pendingImageEditorUnlistens.current.clear();
+    };
+  }, []);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -91,15 +106,39 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
         }
         return false;
       },
-      // spec.md subtask 12 ("Image editor pop-out shell"). Double-clicking
-      // an inserted image opens it in its own pop-out editor window - the
-      // image's `src` is already a data URL (Image.configure below has
-      // `allowBase64: true`), so it's passed straight through.
-      handleDoubleClick(_view, _pos, event) {
+      // spec.md subtask 12 ("Image editor pop-out shell") + subtask 18
+      // ("Save-back-to-note"). Double-clicking an inserted image opens it in
+      // its own pop-out editor window - the image's `src` is already a data
+      // URL (Image.configure below has `allowBase64: true`), so it's passed
+      // straight through. A one-shot Tauri event listener, scoped to this
+      // specific edit session's own `sourceId` (returned by
+      // `openImageEditorWindow`), patches JUST this image node - identified
+      // by its exact ProseMirror `pos`, not by matching `src` (fragile with
+      // duplicate images) - when the pop-out window saves, then unregisters
+      // itself.
+      handleDoubleClick(view, pos, event) {
         const target = event.target as HTMLElement;
         if (target.tagName !== "IMG") return false;
         event.preventDefault();
-        void openImageEditorWindow((target as HTMLImageElement).src);
+        const originalSrc = (target as HTMLImageElement).src;
+        void (async () => {
+          const sourceId = await openImageEditorWindow(originalSrc);
+          const { listen } = await import("@tauri-apps/api/event");
+          const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, (e) => {
+            pendingImageEditorUnlistens.current.delete(unlisten);
+            // Re-verify the node at `pos` is still the SAME image node
+            // double-clicked - the doc may have shifted (concurrent edits)
+            // while the pop-out was open, so `pos` could now land on an
+            // unrelated or non-image node; dispatching blindly would
+            // silently drop the edit or corrupt a different image.
+            const node = view.state.doc.nodeAt(pos);
+            if (node && node.type.name === "image" && node.attrs.src === originalSrc) {
+              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: e.payload }));
+            }
+            unlisten();
+          });
+          pendingImageEditorUnlistens.current.add(unlisten);
+        })();
         return true;
       },
     },
