@@ -12,16 +12,14 @@
 // own snapshots onto the same `history` stack via `pushHistorySnapshot()`.
 
 import { useEffect, useRef, useState } from "react";
-import { Circle, EyeOff, Minus, Pencil, Square, Type, X } from "lucide-react";
+import { Circle, Crop, Eraser, EyeOff, Minus, Pencil, Square, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface Props {
   path: string;
 }
 
-// Any later tool (erase/crop) added in this dropdown as it grows across
-// subtask 17.
-type Tool = "none" | "draw" | "shape" | "censor" | "text";
+type Tool = "none" | "draw" | "shape" | "censor" | "text" | "erase" | "crop";
 
 // Which geometric primitive the shape tool commits on pointer-up.
 type ShapeType = "rectangle" | "ellipse" | "line";
@@ -35,6 +33,12 @@ type CensorMode = "black" | "blur";
 // the thin/subtle stroke width.
 function censorBlurRadius(canvasWidth: number): number {
   return Math.max(10, canvasWidth / 80);
+}
+
+// Erase brush half-width, scaled like the draw tool's line width but larger
+// since it needs to feel like a brush, not a thin pen stroke.
+function eraseBrushRadius(canvasWidth: number): number {
+  return Math.max(8, canvasWidth / 100);
 }
 
 // Matches components/theme/ThemeEditor.tsx's own MAX_UNDO_HISTORY convention -
@@ -73,6 +77,21 @@ export function ImageEditor({ path }: Props) {
   // tool's own drag box.
   const censorStartRef = useRef<{ x: number; y: number } | null>(null);
   const censorBaseRef = useRef<ImageData | null>(null);
+  // The original loaded image's pixels, captured once when the image first
+  // loads and never mutated afterward - the erase tool restores from this,
+  // not from whatever's currently on the canvas.
+  const originalImageRef = useRef<ImageData | null>(null);
+  // Drag-start point and pre-drag snapshot for the crop tool's live dashed
+  // preview, same restore-then-redraw pattern as shape/censor. Kept alive
+  // (not cleared on pointer-up) until the pending crop is confirmed or
+  // cancelled, since crop has an extra confirm step the other tools don't.
+  const cropStartRef = useRef<{ x: number; y: number } | null>(null);
+  const cropBaseRef = useRef<ImageData | null>(null);
+  // The pending crop rectangle once a drag completes - drives the confirm/
+  // cancel UI; null while no crop is awaiting confirmation.
+  const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(
+    null,
+  );
   // Synchronous re-entrancy guard for commitTextEdit - state updates aren't
   // synchronous, so a stale-closure onBlur firing after Escape's cancel (from
   // unmounting the focused overlay input) can't be stopped by checking
@@ -91,17 +110,23 @@ export function ImageEditor({ path }: Props) {
   // a ref, not state, since pushing/popping shouldn't itself trigger a
   // re-render. Each entry is the full pixel state right before an undoable
   // action was committed.
-  const historyRef = useRef<ImageData[]>([]);
+  // Each entry also carries whatever `originalImageRef` was at push time, so
+  // undo can restore it alongside the pixels - crop is the only tool that
+  // rebases `originalImageRef`, but pairing it unconditionally keeps every
+  // other tool's restore a no-op instead of special-casing crop here.
+  const historyRef = useRef<{ snapshot: ImageData; originalImage: ImageData | null }[]>([]);
 
   // Captures the canvas's current pixels and pushes them onto `historyRef` -
   // call this right before making any undoable change. Named/shaped
   // generically (not draw-specific) so later tools push to the same stack.
+  // Returns just the pixel snapshot (not the paired originalImage) since
+  // that's all existing call sites use as their live-preview restore base.
   function pushHistorySnapshot(): ImageData | null {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return null;
     const snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    historyRef.current.push(snapshot);
+    historyRef.current.push({ snapshot, originalImage: originalImageRef.current });
     if (historyRef.current.length > MAX_UNDO_HISTORY) {
       historyRef.current.shift();
     }
@@ -109,13 +134,22 @@ export function ImageEditor({ path }: Props) {
   }
 
   // Ctrl+Z (only - no redo, per this subtask's scope): pops the most recent
-  // snapshot and restores the canvas to it.
+  // snapshot and restores the canvas (and originalImageRef) to it.
   function handleUndo() {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
-    const snapshot = historyRef.current.pop();
-    if (!canvas || !ctx || !snapshot) return;
+    const entry = historyRef.current.pop();
+    if (!canvas || !ctx || !entry) return;
+    const { snapshot, originalImage } = entry;
+    // Crop is the first tool that changes canvas dimensions - resize back to
+    // the snapshot's own size before writing its pixels, or putImageData
+    // would just repaint the top-left overlap of a mismatched-size canvas.
+    if (canvas.width !== snapshot.width || canvas.height !== snapshot.height) {
+      canvas.width = snapshot.width;
+      canvas.height = snapshot.height;
+    }
     ctx.putImageData(snapshot, 0, 0);
+    originalImageRef.current = originalImage;
   }
 
   // Scoped to this window only, while it's mounted - same modifier-check
@@ -131,11 +165,20 @@ export function ImageEditor({ path }: Props) {
       const tagName = target?.tagName;
       if (tagName === "INPUT" || tagName === "TEXTAREA" || target?.isContentEditable) return;
       e.preventDefault();
+      // A pending crop isn't yet committed or cancelled, and its snapshot is
+      // still sitting on top of `historyRef` - undoing straight through it
+      // would desync the confirm/cancel UI from the canvas and corrupt
+      // history (see cancelCrop's own pop). Treat Ctrl+Z as "cancel the
+      // pending crop" instead, which pops exactly that snapshot.
+      if (cropRect) {
+        cancelCrop();
+        return;
+      }
       handleUndo();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [cropRect]);
 
   function canvasPointFromEvent(
     e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>,
@@ -235,8 +278,106 @@ export function ImageEditor({ path }: Props) {
     ctx.restore();
   }
 
+  // Restores just the brushed square from the original loaded image onto the
+  // canvas, undoing whatever draw/shape/censor/text/erase had touched that
+  // spot. A square dab (not a true circle) - the simplest correct use of
+  // putImageData's source-rectangle overload for this scope.
+  function eraseDab(ctx: CanvasRenderingContext2D, point: { x: number; y: number }) {
+    const canvas = canvasRef.current;
+    const original = originalImageRef.current;
+    if (!canvas || !original) return;
+    const radius = eraseBrushRadius(canvas.width);
+    ctx.putImageData(original, 0, 0, point.x - radius, point.y - radius, radius * 2, radius * 2);
+  }
+
+  // Dashed selection-rectangle overlay for the crop tool's live preview -
+  // drawn on top of the unchanged image, doesn't alter underlying pixels.
+  function drawCropOverlay(
+    ctx: CanvasRenderingContext2D,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) {
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const w = Math.abs(end.x - start.x);
+    const h = Math.abs(end.y - start.y);
+    ctx.save();
+    ctx.strokeStyle = "#ef4444";
+    ctx.lineWidth = Math.max(2, (canvasRef.current?.width ?? 800) / 300);
+    ctx.setLineDash([8, 6]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  }
+
+  // Called on pointer-up once a crop drag ends - resolves the dragged
+  // rectangle into `cropRect` (showing the confirm/cancel UI), or cancels
+  // outright if the drag was too small to be intentional.
+  function finalizeCropDrag(end: { x: number; y: number }) {
+    const start = cropStartRef.current;
+    cropStartRef.current = null;
+    const canvas = canvasRef.current;
+    if (!start || !canvas) return;
+    const x = Math.round(Math.min(start.x, end.x));
+    const y = Math.round(Math.min(start.y, end.y));
+    const w = Math.round(Math.abs(end.x - start.x));
+    const h = Math.round(Math.abs(end.y - start.y));
+    if (w < 2 || h < 2) {
+      cancelCrop();
+      return;
+    }
+    // Clamp to canvas bounds in case the drag ended outside the canvas.
+    const clampedX = Math.max(0, Math.min(x, canvas.width - 1));
+    const clampedY = Math.max(0, Math.min(y, canvas.height - 1));
+    setCropRect({
+      x: clampedX,
+      y: clampedY,
+      w: Math.min(w, canvas.width - clampedX),
+      h: Math.min(h, canvas.height - clampedY),
+    });
+  }
+
+  // Trims the canvas to the pending crop rectangle. The pre-crop snapshot
+  // was already pushed to history on pointer-down (before any resize), so
+  // undo restores both the pixels and (via handleUndo's dimension fix) the
+  // canvas's previous size.
+  function applyCrop() {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    const base = cropBaseRef.current;
+    if (!canvas || !ctx || !base || !cropRect) return;
+    ctx.putImageData(base, 0, 0); // clear the dashed preview before extracting
+    const cropped = ctx.getImageData(cropRect.x, cropRect.y, cropRect.w, cropRect.h);
+    canvas.width = cropRect.w;
+    canvas.height = cropRect.h;
+    ctx.putImageData(cropped, 0, 0);
+    // originalImageRef would otherwise be stale (wrong size/offset) after a
+    // crop - rebase it to the freshly cropped canvas so erase keeps working.
+    originalImageRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    cropBaseRef.current = null;
+    setCropRect(null);
+  }
+
+  // Discards the pending crop preview and pops the unused history snapshot,
+  // matching the text tool's cancel-discards-snapshot convention.
+  function cancelCrop() {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (ctx && cropBaseRef.current) ctx.putImageData(cropBaseRef.current, 0, 0);
+    historyRef.current.pop();
+    cropBaseRef.current = null;
+    cropStartRef.current = null;
+    setCropRect(null);
+  }
+
   function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (activeTool !== "draw" && activeTool !== "shape" && activeTool !== "censor") return;
+    if (
+      activeTool !== "draw" &&
+      activeTool !== "shape" &&
+      activeTool !== "censor" &&
+      activeTool !== "erase" &&
+      activeTool !== "crop"
+    )
+      return;
+    if (activeTool === "crop" && cropRect) return; // a crop is already pending confirm/cancel
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     const point = canvasPointFromEvent(e);
@@ -257,6 +398,17 @@ export function ImageEditor({ path }: Props) {
     if (activeTool === "censor") {
       censorStartRef.current = point;
       censorBaseRef.current = snapshot;
+      return;
+    }
+
+    if (activeTool === "erase") {
+      eraseDab(ctx, point); // dab immediately so even a single click erases
+      return;
+    }
+
+    if (activeTool === "crop") {
+      cropStartRef.current = point;
+      cropBaseRef.current = snapshot;
       return;
     }
 
@@ -294,17 +446,36 @@ export function ImageEditor({ path }: Props) {
       return;
     }
 
+    if (activeTool === "erase") {
+      eraseDab(ctx, point);
+      return;
+    }
+
+    if (activeTool === "crop") {
+      const start = cropStartRef.current;
+      const base = cropBaseRef.current;
+      if (!start || !base) return; // no active drag (e.g. confirm already pending)
+      ctx.putImageData(base, 0, 0);
+      drawCropOverlay(ctx, start, point);
+      return;
+    }
+
     if (activeTool !== "draw") return;
     ctx.lineTo(point.x, point.y);
     ctx.stroke();
   }
 
-  function handlePointerUp() {
+  function handlePointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+    const wasCropDragging = activeTool === "crop" && isPointerDownRef.current && cropStartRef.current;
     isPointerDownRef.current = false;
     shapeStartRef.current = null;
     shapeBaseRef.current = null;
     censorStartRef.current = null;
     censorBaseRef.current = null;
+    if (wasCropDragging) {
+      const point = canvasPointFromEvent(e) ?? cropStartRef.current;
+      if (point) finalizeCropDrag(point);
+    }
   }
 
   // Text tool is a single click, not a drag, so it's wired to onClick rather
@@ -344,8 +515,26 @@ export function ImageEditor({ path }: Props) {
   // if empty) rather than silently abandoned mid-edit.
   function switchTool(tool: Tool) {
     if (textEditState) commitTextEdit(false);
+    if (cropRect) cancelCrop();
     setActiveTool((t) => (t === tool ? "none" : tool));
   }
+
+  // Enter/Escape confirm-or-cancel a pending crop, mirroring the text tool's
+  // own keyboard pattern - only active while a crop rectangle awaits confirmation.
+  useEffect(() => {
+    if (!cropRect) return;
+    function handleCropKeyDown(e: KeyboardEvent) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyCrop();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cancelCrop();
+      }
+    }
+    window.addEventListener("keydown", handleCropKeyDown);
+    return () => window.removeEventListener("keydown", handleCropKeyDown);
+  }, [cropRect]);
 
   // Canvas is always mounted (never conditionally rendered out) so
   // `canvasRef.current` is already available by the time the image finishes
@@ -364,6 +553,8 @@ export function ImageEditor({ path }: Props) {
           canvas.width = img.naturalWidth;
           canvas.height = img.naturalHeight;
           ctx.drawImage(img, 0, 0);
+          // Captured once, never mutated - the erase tool's restore source.
+          originalImageRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
           setLoading(false);
         };
         img.onerror = () => {
@@ -500,6 +691,22 @@ export function ImageEditor({ path }: Props) {
             <Type className="mr-1.5 h-3.5 w-3.5" />
             Text
           </Button>
+          <Button
+            variant={activeTool === "erase" ? "default" : "outline"}
+            size="sm"
+            onClick={() => switchTool("erase")}
+          >
+            <Eraser className="mr-1.5 h-3.5 w-3.5" />
+            Erase
+          </Button>
+          <Button
+            variant={activeTool === "crop" ? "default" : "outline"}
+            size="sm"
+            onClick={() => switchTool("crop")}
+          >
+            <Crop className="mr-1.5 h-3.5 w-3.5" />
+            Crop
+          </Button>
         </div>
       )}
       <div className="relative flex flex-1 items-center justify-center overflow-auto p-4">
@@ -561,6 +768,23 @@ export function ImageEditor({ path }: Props) {
                   minWidth: "4ch",
                 }}
               />
+            );
+          })()}
+        {cropRect &&
+          (() => {
+            const { left, top } = displayPointFromCanvasPoint({
+              x: cropRect.x + cropRect.w,
+              y: cropRect.y + cropRect.h,
+            });
+            return (
+              <div style={{ position: "absolute", left, top: top + 4, display: "flex", gap: 4 }}>
+                <Button size="sm" className="h-7" onClick={applyCrop}>
+                  Apply Crop
+                </Button>
+                <Button size="sm" variant="outline" className="h-7" onClick={cancelCrop}>
+                  Cancel
+                </Button>
+              </div>
             );
           })()}
       </div>
