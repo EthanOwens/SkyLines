@@ -12,16 +12,16 @@
 // own snapshots onto the same `history` stack via `pushHistorySnapshot()`.
 
 import { useEffect, useRef, useState } from "react";
-import { Circle, EyeOff, Minus, Pencil, Square, X } from "lucide-react";
+import { Circle, EyeOff, Minus, Pencil, Square, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface Props {
   path: string;
 }
 
-// Any later tool (text/erase/crop) added in this dropdown as it grows
-// across subtasks 16-17.
-type Tool = "none" | "draw" | "shape" | "censor";
+// Any later tool (erase/crop) added in this dropdown as it grows across
+// subtask 17.
+type Tool = "none" | "draw" | "shape" | "censor" | "text";
 
 // Which geometric primitive the shape tool commits on pointer-up.
 type ShapeType = "rectangle" | "ellipse" | "line";
@@ -73,6 +73,18 @@ export function ImageEditor({ path }: Props) {
   // tool's own drag box.
   const censorStartRef = useRef<{ x: number; y: number } | null>(null);
   const censorBaseRef = useRef<ImageData | null>(null);
+  // Synchronous re-entrancy guard for commitTextEdit - state updates aren't
+  // synchronous, so a stale-closure onBlur firing after Escape's cancel (from
+  // unmounting the focused overlay input) can't be stopped by checking
+  // textEditState alone; this ref makes the second call a provable no-op.
+  const textCommittedRef = useRef(false);
+  // Pending text placement: the overlay <input> renders while this is set,
+  // positioned over the click point in canvas-space; null once committed or cancelled.
+  const [textEditState, setTextEditState] = useState<{
+    canvasX: number;
+    canvasY: number;
+    value: string;
+  } | null>(null);
 
   // Generic canvas-snapshot undo stack, reused by every tool this editor
   // ever gets (draw here; shapes/censor/text/erase/crop in subtasks 14-17) -
@@ -113,8 +125,8 @@ export function ImageEditor({ path }: Props) {
       const isUndoShortcut =
         (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z";
       if (!isUndoShortcut) return;
-      // Same target-exclusion as ThemeEditor.tsx's Ctrl+Z - matters once a
-      // later tool (e.g. the text tool, subtask 16) adds a real text input.
+      // Same target-exclusion as ThemeEditor.tsx's Ctrl+Z - lets the text
+      // tool's overlay <input> use the browser's normal text-undo instead.
       const target = e.target as HTMLElement | null;
       const tagName = target?.tagName;
       if (tagName === "INPUT" || tagName === "TEXTAREA" || target?.isContentEditable) return;
@@ -125,13 +137,30 @@ export function ImageEditor({ path }: Props) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  function canvasPointFromEvent(e: React.PointerEvent<HTMLCanvasElement>) {
+  function canvasPointFromEvent(
+    e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>,
+  ) {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  }
+
+  // Inverse of canvasPointFromEvent's scale conversion - turns a canvas-space
+  // point back into a CSS position for the text overlay <input>, which sits
+  // in the same offsetParent as the canvas (see the relative wrapper below).
+  function displayPointFromCanvasPoint(point: { x: number; y: number }) {
+    const canvas = canvasRef.current;
+    if (!canvas) return { left: 0, top: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      left: canvas.offsetLeft + point.x / scaleX,
+      top: canvas.offsetTop + point.y / scaleY,
+    };
   }
 
   // Draws one shape (rectangle/ellipse/line) from `start` to `end` on `ctx`,
@@ -278,6 +307,46 @@ export function ImageEditor({ path }: Props) {
     censorBaseRef.current = null;
   }
 
+  // Text tool is a single click, not a drag, so it's wired to onClick rather
+  // than the pointerdown/move/up trio the other tools share.
+  function handleCanvasClick(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (activeTool !== "text" || textEditState) return;
+    const point = canvasPointFromEvent(e);
+    if (!point) return;
+    // Push before the change, same as draw/shape/censor push on pointer-down -
+    // discarded later if the user cancels or leaves the text empty.
+    pushHistorySnapshot();
+    textCommittedRef.current = false;
+    setTextEditState({ canvasX: point.x, canvasY: point.y, value: "" });
+  }
+
+  // Bakes the pending text into the canvas at its original click coordinates,
+  // or - on cancel/empty text - discards the snapshot pushed when editing started.
+  function commitTextEdit(cancel: boolean) {
+    const state = textEditState;
+    if (textCommittedRef.current || !state) return;
+    textCommittedRef.current = true;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (cancel || !state.value.trim() || !canvas || !ctx) {
+      historyRef.current.pop();
+      setTextEditState(null);
+      return;
+    }
+    ctx.font = `${Math.max(16, canvas.width / 40)}px sans-serif`;
+    ctx.fillStyle = "#ef4444";
+    ctx.textBaseline = "top";
+    ctx.fillText(state.value, state.canvasX, state.canvasY);
+    setTextEditState(null);
+  }
+
+  // Any tool switch commits pending text first, so it's baked (or discarded
+  // if empty) rather than silently abandoned mid-edit.
+  function switchTool(tool: Tool) {
+    if (textEditState) commitTextEdit(false);
+    setActiveTool((t) => (t === tool ? "none" : tool));
+  }
+
   // Canvas is always mounted (never conditionally rendered out) so
   // `canvasRef.current` is already available by the time the image finishes
   // loading below - only its visibility toggles on `loading`/`error`.
@@ -354,7 +423,7 @@ export function ImageEditor({ path }: Props) {
           <Button
             variant={activeTool === "draw" ? "default" : "outline"}
             size="sm"
-            onClick={() => setActiveTool((t) => (t === "draw" ? "none" : "draw"))}
+            onClick={() => switchTool("draw")}
           >
             <Pencil className="mr-1.5 h-3.5 w-3.5" />
             Draw
@@ -362,7 +431,7 @@ export function ImageEditor({ path }: Props) {
           <Button
             variant={activeTool === "shape" ? "default" : "outline"}
             size="sm"
-            onClick={() => setActiveTool((t) => (t === "shape" ? "none" : "shape"))}
+            onClick={() => switchTool("shape")}
           >
             <Square className="mr-1.5 h-3.5 w-3.5" />
             Shape
@@ -398,7 +467,7 @@ export function ImageEditor({ path }: Props) {
           <Button
             variant={activeTool === "censor" ? "default" : "outline"}
             size="sm"
-            onClick={() => setActiveTool((t) => (t === "censor" ? "none" : "censor"))}
+            onClick={() => switchTool("censor")}
           >
             <EyeOff className="mr-1.5 h-3.5 w-3.5" />
             Censor
@@ -423,6 +492,14 @@ export function ImageEditor({ path }: Props) {
               </Button>
             </div>
           )}
+          <Button
+            variant={activeTool === "text" ? "default" : "outline"}
+            size="sm"
+            onClick={() => switchTool("text")}
+          >
+            <Type className="mr-1.5 h-3.5 w-3.5" />
+            Text
+          </Button>
         </div>
       )}
       <div className="relative flex flex-1 items-center justify-center overflow-auto p-4">
@@ -432,13 +509,60 @@ export function ImageEditor({ path }: Props) {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}
-          style={{ cursor: activeTool !== "none" ? "crosshair" : "default" }}
+          onClick={handleCanvasClick}
+          style={{
+            cursor: activeTool === "text" ? "text" : activeTool !== "none" ? "crosshair" : "default",
+          }}
           className={`max-h-full max-w-full border border-border ${loading || error ? "hidden" : ""}`}
         />
         {loading && (
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         )}
         {error && <span className="text-sm text-muted-foreground">{error}</span>}
+        {textEditState &&
+          (() => {
+            const { left, top } = displayPointFromCanvasPoint({
+              x: textEditState.canvasX,
+              y: textEditState.canvasY,
+            });
+            // Same font-size formula as the baked fillText, scaled down by the
+            // canvas's own CSS-vs-natural ratio so the overlay visually matches.
+            const canvas = canvasRef.current;
+            const rect = canvas?.getBoundingClientRect();
+            const scaleY = canvas && rect ? canvas.height / rect.height : 1;
+            const fontSize = canvas ? Math.max(16, canvas.width / 40) / scaleY : 24;
+            return (
+              <input
+                autoFocus
+                value={textEditState.value}
+                onChange={(e) =>
+                  setTextEditState((s) => (s ? { ...s, value: e.target.value } : s))
+                }
+                onBlur={() => commitTextEdit(false)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    commitTextEdit(true);
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitTextEdit(false);
+                  }
+                }}
+                style={{
+                  position: "absolute",
+                  left,
+                  top,
+                  font: `${fontSize}px sans-serif`,
+                  color: "#ef4444",
+                  background: "transparent",
+                  border: "1px dashed #ef4444",
+                  outline: "none",
+                  padding: 0,
+                  minWidth: "4ch",
+                }}
+              />
+            );
+          })()}
       </div>
     </div>
   );
