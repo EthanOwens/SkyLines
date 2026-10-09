@@ -22,6 +22,7 @@ Fix three rough edges. Remove the white frame around the note canvas. Make stick
 - Sticky windows also get `core:window:allow-minimize`, which the existing Minimize button needs and currently lacks.
 - Sticky windows get `acceptFirstMouse: true`, so the first click on an unfocused note reaches the page instead of only focusing the window.
 - Theme editor names use the plain-language set below, each with a one-line description. Hovering (or focusing) a setting outlines the preview elements that use it.
+- Changed after T4 (user's request): descriptions move out of the row into a tooltip on a small "i" icon next to each name, and the hover highlight (T6) comes before the new preview elements (T5). T6 starts with placeholder mappings for Text and Sidebar text, which T5 then points at its new elements.
 - `sidebar-primary` isn't used anywhere in the app outside the preview. It keeps its row, with a description saying so.
 
 ## Out of scope
@@ -139,33 +140,14 @@ Test steps:
 2. The right sidebar shows the groups and names from the table, each with its description underneath; no setting is called "Foreground".
 3. Change a color (for example Text) and save: the theme saves and applies as before.
 
-### T5 Preview elements for Text and Sidebar text
-
-Status: todo
-Depends on: none
-
-In `components/theme/ThemePreview.tsx`, two settings have no visible effect. `foreground` is set as the root's `color`, but every text-bearing child overrides it, so no text uses it. `sidebar-foreground` is set on the mock sidebar strip, which contains only two colored bars and no text. Add a short line of plain text directly on the preview background (for example "Notes look like this") that inherits `var(--foreground)`. In the mock sidebar strip, add small text labels (for example a heading and item names next to or on the existing bars) colored with `var(--sidebar-foreground)`, without changing what the existing bars demonstrate (`sidebar-primary`, `sidebar-accent`). Keep using `var(--...)` directly; Tailwind color utilities resolve against `:root`, not this scoped preview.
-
-Files: `components/theme/ThemePreview.tsx`
-
-Acceptance:
-- Some visible preview text uses `var(--foreground)` and isn't covered by a child color override.
-- The sidebar strip shows text colored by `var(--sidebar-foreground)`.
-- Every key listed in `THEME_VARIABLE_GROUPS` now has at least one visible preview element.
-
-Test steps:
-1. Open the theme editor.
-2. Change Text (foreground) to a bright color such as red: a line of text on the preview background turns red.
-3. Change Sidebar text to a bright color: the text in the preview's sidebar strip changes; the sidebar bars keep their own colors.
-
 ### T6 Hovering a setting highlights it in the preview
 
 Status: todo
-Depends on: T4, T5
+Depends on: T4
 
 Add `hoveredKey` state (`ThemeVariableKey | null`) to `ThemeEditor.tsx`. Set it on mouse enter and focus of each setting row (the root div in `ThemeColorField.tsx` and the `radius` row's wrapper in ThemeEditor), and clear it on leave and blur. Keep it set while that row's color picker popup is open, so the highlight doesn't flicker as the mouse moves into the popup. Pass `hoveredKey` to `ThemePreview`, which maps each key to the elements that use it and draws a clear highlight on them. The preview root has `overflow-hidden` and some elements sit flush at its edges, so use an inset ring or a negative outline offset, which won't be clipped.
 
-Key to element mapping (from the current preview): background, foreground, border and radius map to the preview root (foreground also to the T5 text line); card to the mock card and the text box; card-foreground to the card's text and the text box input; primary to the text box's drag handle; sidebar and sidebar-border to the sidebar strip; sidebar-foreground to the T5 sidebar text; sidebar-primary and sidebar-accent to their bars.
+Key to element mapping (from the current preview): background, foreground, border and radius map to the preview root; card to the mock card and the text box; card-foreground to the card's text and the text box input; primary to the text box's drag handle; sidebar and sidebar-border to the sidebar strip; sidebar-foreground to the sidebar strip for now (T5 adds sidebar text and remaps it); sidebar-primary and sidebar-accent to their bars.
 
 Files: `components/theme/ThemeEditor.tsx`, `components/theme/ThemeColorField.tsx`, `components/theme/ThemePreview.tsx`
 
@@ -177,10 +159,53 @@ Acceptance:
 
 Test steps:
 1. Open the theme editor and hover "Card background": the mock card and the movable text box are outlined in the preview, and nothing else.
-2. Hover "Sidebar text": only the sidebar strip's text is outlined.
+2. Hover "Sidebar border": only the sidebar strip is outlined.
 3. Hover "Accent color": the text box's handle bar is outlined.
 4. Move the mouse off the settings list: no highlight remains.
 5. Open the color picker on "Text" and move into the picker: the Text highlight stays until the picker closes.
+### T7 Setting descriptions in an info tooltip
+
+Status: todo
+Depends on: T6
+
+T4 shows each setting's description as small muted text under its name. Replace that with a small "i" info icon right after the name (lucide-react `Info`, sized like the editor's other small icons) that shows the description in a tooltip when hovered or keyboard-focused. Use the app's existing tooltip component (`components/ui/tooltip.tsx`; `TooltipProvider` is already mounted in `app/layout.tsx`) the way other components use it. The icon must be focusable (for example a small button with an accessible label such as "About Card background") and must not open the color picker or change any value. Keep the descriptions in `THEME_VARIABLE_INFO`, and keep each control's `aria-describedby` pointing at text that contains its description (for example visually hidden text) so screen readers still get it. This applies to the color rows (`components/theme/ThemeColorField.tsx`) and the inline radius row in `ThemeEditor.tsx`. Hovering the icon is part of hovering the row, so T6's highlight still shows.
+
+Files: `components/theme/ThemeColorField.tsx`, `components/theme/ThemeEditor.tsx`
+
+Acceptance:
+- No description text is visible under the setting names.
+- All 12 setting rows have an info icon next to the name; hovering or focusing it shows that setting's description from `THEME_VARIABLE_INFO` in a tooltip.
+- Clicking or pressing Enter on the icon doesn't open the color picker or change any value.
+- Each control still has an accessible description of its setting.
+
+Test steps:
+1. Open the theme editor: each setting shows its name with a small "i" icon and no description text underneath.
+2. Hover the "i" next to "Card background": a tooltip reads "Background of cards, such as sticky note previews", and the card elements in the preview are outlined.
+3. Hover the "i" next to "Corner rounding": the tooltip reads "How rounded corners are".
+4. Click an "i" icon: no color picker opens and nothing changes.
+
+### T5 Preview elements for Text and Sidebar text
+
+Status: todo
+Depends on: T6
+
+In `components/theme/ThemePreview.tsx`, two settings have no visible effect. `foreground` is set as the root's `color`, but every text-bearing child overrides it, so no text uses it. `sidebar-foreground` is set on the mock sidebar strip, which contains only two colored bars and no text. Add a short line of plain text directly on the preview background (for example "Notes look like this") that inherits `var(--foreground)`. In the mock sidebar strip, add small text labels (for example a heading and item names next to or on the existing bars) colored with `var(--sidebar-foreground)`, without changing what the existing bars demonstrate (`sidebar-primary`, `sidebar-accent`). Keep using `var(--...)` directly; Tailwind color utilities resolve against `:root`, not this scoped preview.
+
+T6 maps `foreground` and `sidebar-foreground` to the preview root and the sidebar strip as placeholders. Update that hover mapping so `foreground` also highlights the new text line and `sidebar-foreground` highlights only the new sidebar text.
+
+Files: `components/theme/ThemePreview.tsx`
+
+Acceptance:
+- Some visible preview text uses `var(--foreground)` and isn't covered by a child color override.
+- The sidebar strip shows text colored by `var(--sidebar-foreground)`.
+- Every key listed in `THEME_VARIABLE_GROUPS` now has at least one visible preview element.
+- Hovering Text highlights the new text line (along with the preview root); hovering Sidebar text highlights only the new sidebar text.
+
+Test steps:
+1. Open the theme editor.
+2. Change Text (foreground) to a bright color such as red: a line of text on the preview background turns red.
+3. Change Sidebar text to a bright color: the text in the preview's sidebar strip changes; the sidebar bars keep their own colors.
+4. Hover "Sidebar text": only the sidebar strip's text is outlined. Hover "Text": the new text line is outlined.
 
 ## Progress
 
