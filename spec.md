@@ -35,7 +35,7 @@ Fix three rough edges. Remove the white frame around the note canvas. Make stick
 
 ### T1 Remove the white focus outline around the canvas
 
-Status: todo
+Status: done
 Depends on: none
 
 tldraw adds `.tl-container__focused` whenever the canvas has focus, and tldraw.css draws `outline: 1px solid var(--tl-color-low)` on it. `--tl-color-low` comes from tldraw's light theme (near-white), so in dark app themes the canvas gets a white frame. In `app/globals.css`, next to the existing `--tl-color-background` rule, add a rule scoped under `.canvas-editor-container` that removes the outline from the focused container. Use at least three classes in the selector so it outranks tldraw's single-class rule regardless of import order, as the existing rule does.
@@ -182,3 +182,4 @@ Test steps:
 ## Progress
 
 <!-- /dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 Remove the white focus outline around the canvas

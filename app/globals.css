@@ -110,6 +110,12 @@
   --tl-color-background: var(--background);
 }
 
+/* tldraw outlines the focused canvas with its light-theme --tl-color-low,
+   which shows as a white frame under dark app themes. */
+.canvas-editor-container .tl-container.tl-container__focused {
+  outline: none;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
