@@ -1,12 +1,4 @@
-// Last-open notebook/section/note persistence (spec.md subtask 5,
-// "Last-open persistence"). Per the spec's Non-Goals, this is deliberately
-// per-device `localStorage` state, not pushed through the Firestore sync
-// engine - it's UI convenience state, not user data, so there's no
-// dirty/syncedAt/deletedAt bookkeeping here, unlike lib/db/*.ts.
-//
-// This is intentionally a single "most recent note" record, not a history
-// stack - a future back/forward navigation stack (spec.md subtask 14) is a
-// separate, later concern.
+// Per-device UI state in localStorage, deliberately not synced.
 
 import type { Note } from "@/types";
 import { getFolderById } from "@/lib/db/folders";
@@ -16,9 +8,7 @@ const STORAGE_KEY = "skylines:lastOpen";
 export interface LastOpenState {
   notebookId: string | null;
   folderId: string | null;
-  // Nullable (spec.md subtask 6, "Notebook picker"): a notebook can be
-  // "open" with no note selected/opened yet - e.g. right after picking a
-  // notebook from the picker, before any note exists or has been opened.
+  // Null while a notebook is open with no note chosen yet.
   noteId: string | null;
 }
 
@@ -33,10 +23,8 @@ function isLastOpenState(value: unknown): value is LastOpenState {
 }
 
 /**
- * Reads the last-open state from `localStorage`. Returns `null` if
- * `localStorage` is unavailable (SSR/static export build-time rendering),
- * nothing has been stored yet, or the stored value is corrupt/malformed -
- * never throws.
+ * Returns null when localStorage is unavailable (static export build), empty or
+ * corrupt. Never throws.
  */
 export function getLastOpen(): LastOpenState | null {
   if (typeof window === "undefined") return null;
@@ -57,11 +45,7 @@ export function getLastOpen(): LastOpenState | null {
   }
 }
 
-/**
- * Records the last-open notebook/section/note triple. Silently no-ops if
- * `localStorage` is unavailable - this is best-effort convenience state, not
- * something worth surfacing an error for.
- */
+/** Best-effort; does nothing when localStorage is unavailable. */
 export function setLastOpen(state: LastOpenState): void {
   if (typeof window === "undefined") return;
 
@@ -72,29 +56,15 @@ export function setLastOpen(state: LastOpenState): void {
   }
 }
 
-/**
- * Records that `notebookId` was just opened (selected from the notebook
- * picker, spec.md subtask 6) with no section/note chosen yet. Distinct from
- * `recordNoteOpened` below, which records a specific note - this is for the
- * "notebook open, nothing else selected" state the picker itself produces.
- */
+/** A notebook opened from the picker, with no note yet. */
 export function setLastOpenNotebook(notebookId: string): void {
   setLastOpen({ notebookId, folderId: null, noteId: null });
 }
 
 /**
- * Records that `note` was just opened as the last-open note, looking up its
- * parent folder to derive `notebookId` (`Note` only carries `folderId`
- * directly - see types/index.ts). Folder-less notes are the common case
- * (e.g. notes created directly under a notebook via Sidebar.tsx's "New
- * Note"/"New Canvas" buttons) and are recorded with `notebookId`/`folderId`
- * both `null` rather than being skipped. If `note.folderId` points at a
- * folder that can't be found (a stale/broken reference), the note is still
- * recorded the same way, since `noteId` - the only field the restore path
- * actually consumes - is still valid.
- *
- * Called from app/note/page.tsx and app/canvas/page.tsx once a note has
- * successfully loaded.
+ * Derives notebookId from the note's folder. Notes without a folder (common)
+ * and notes whose folder can't be found are still recorded, because restore
+ * only needs noteId.
  */
 export async function recordNoteOpened(note: Note): Promise<void> {
   if (!note.folderId) {

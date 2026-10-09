@@ -1,30 +1,12 @@
 "use client";
 
-// spec.md subtask 9 ("Sticky note top bar"). Renders above the title/editor
-// content in StickyNoteEditor.tsx. Chrome: Pin (real OS-level always-on-top,
-// over the whole desktop per spec.md's explicit decision -
-// `Window.setAlwaysOnTop`, not scoped to this app's own windows), Exit
-// (autosave via the caller's `onBeforeExit`, then close this window), and a
-// 3-dot menu with Delete and "Change top bar color".
+// Top bar for a sticky note window: Pin (OS-level always on top, over the whole
+// desktop), Exit, and a menu with Delete and the bar color. Buttons show only
+// while the window is focused; it slims down when unfocused, and
+// double-clicking it collapses the window.
 //
-// The button row only renders while the OS window is focused (`focused`
-// prop). The actual window-focus tracking (a real Tauri
-// `Window.onFocusChanged` listener, NOT a DOM focus/blur event - which only
-// fires for a specific focusable element, not the whole OS window) lives in
-// StickyNoteEditor.tsx, shared with StickyNoteBottomBar.tsx (spec.md
-// subtask 10) rather than each bar subscribing to the same Tauri event
-// separately.
-//
-// spec.md subtask 3: losing OS focus no longer resizes the window - instead
-// this bar just slims down (height/padding transition) while unfocused, and
-// StickyNoteBottomBar fades out. Actually resizing the window down to
-// COLLAPSED_HEIGHT is now a manual, independent `collapsed` toggle fired by
-// double-clicking this bar's root div (`onToggleCollapsed`), owned by
-// StickyNoteEditor.tsx alongside the focus tracking above.
-//
-// All @tauri-apps/api imports are dynamic (inside effects/handlers), matching
-// lib/stickyWindow.ts's existing convention - these APIs assume a live Tauri
-// runtime that isn't present at Next.js static-export build/prerender time.
+// Tauri APIs are imported dynamically because no Tauri runtime exists during
+// the static export build.
 
 import { useEffect, useState } from "react";
 import { Pin, PinOff, X, Minus, MoreVertical, Trash2, Palette } from "lucide-react";
@@ -45,8 +27,7 @@ import { updateStickyNote, deleteStickyNote } from "@/lib/db/stickyNotes";
 import { themeColorToPickerHex } from "@/lib/themes/color";
 import type { StickyNote } from "@/types";
 
-// Matches lib/themes/color.ts's own fallback - shown only until the
-// `--primary` lookup effect below resolves.
+// Shown only until the --primary lookup resolves.
 const FALLBACK_PICKER_HEX = "#000000ff";
 
 interface Props {
@@ -63,10 +44,6 @@ interface Props {
   onBeforeExit: () => Promise<void>;
 }
 
-// Small icon button matching this app's established small-chrome
-// conventions (e.g. components/ribbon/Ribbon.tsx's `FormatBtn`) - not
-// literally reused since this lives in a separate window/bundle, but same
-// Tooltip + ghost icon Button shape.
 function TopBarBtn({
   onClick,
   tip,
@@ -102,9 +79,8 @@ function TopBarBtn({
 export function StickyNoteTopBar({ note, title, focused, collapsed, onToggleCollapsed, onBeforeExit }: Props) {
   const [pinned, setPinned] = useState(note.pinned);
   const [topBarColor, setTopBarColor] = useState(note.topBarColor);
-  // Resolved hex for the picker's default when no custom `topBarColor` is
-  // set, so it opens on the same color the `var(--primary)` CSS fallback
-  // actually renders instead of a disconnected hardcoded black.
+  // Resolved --primary, so the picker opens on the color the bar actually shows
+  // when no custom color is set.
   const [defaultColorHex, setDefaultColorHex] = useState(FALLBACK_PICKER_HEX);
 
   useEffect(() => {

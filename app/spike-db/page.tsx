@@ -17,11 +17,8 @@ import {
 } from "@/lib/db/notes";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 
-// M2 spike route (spec.md subtask 9). Exercises lib/db/notes.ts and
-// lib/db/folders.ts end-to-end (create -> read -> update -> soft-delete ->
-// read again) against the real "sqlite:skylines.db" file created by the
-// migration in src-tauri/src/lib.rs. Not production UI - a throwaway
-// verification harness, same pattern as the earlier app/spike-sql page.
+// Dev-only verification page for lib/db/notes.ts and folders.ts. Not production
+// UI.
 export default function SpikeDb() {
   const [log, setLog] = useState<string[]>([]);
 
@@ -93,10 +90,8 @@ export default function SpikeDb() {
   }
 
   async function runFolderDeleteRecursionCheck() {
-    // spec.md subtask 10 verification: build a 3-level-deep folder tree
-    // (A -> B -> C) with a note in each of A/B/C, plus an unrelated sibling
-    // folder+note outside the tree. Delete A and confirm A, B, C, and all
-    // three notes are soft-deleted, while the sibling folder/note are not.
+    // Deleting folder A must soft-delete its whole subtree (B, C and their
+    // notes) but not the unrelated sibling.
     const userId = "spike-user-recursion";
     try {
       const notebookId = await getOrCreateDefaultNotebookId(userId);

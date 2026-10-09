@@ -6,153 +6,61 @@ import type { Theme } from "@/lib/themes/types";
 import { BUILTIN_THEMES } from "@/lib/themes/builtin";
 import type { ClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
 
-// Note-visit history stack (spec.md subtask 14, "Back/forward navigation").
-// Deliberately session-only, in-memory state (NOT persisted to localStorage
-// like lib/lastOpen.ts's single "most recent note" record) - this is a
-// custom stack of genuine note/canvas page visits, distinct from raw browser
-// history so that non-navigation UI interactions (sidebar collapse/expand,
-// ribbon tab switching, etc.) never count as a "page" to go back through.
+// Session-only history of note visits, kept separate from browser history so UI
+// interactions like switching ribbon tabs don't count as pages.
 export interface NoteHistoryEntry {
   noteId: string;
 }
-
-// Ported unchanged from ../note_taking_app/stores/appStore.ts (spec.md
-// subtask 15, M4 "auth + data hooks rewire") - this is generic client state
-// (selection/sidebar/sync-status) with no Firestore/SQLite coupling of its
-// own, so nothing here needed to change for the SQLite rewire. What DOES
-// change is who calls `setFolders`/`setNotes`/`setSyncStatus` - see
-// hooks/useFolders.ts, hooks/useNotes.ts, hooks/useSyncEngine.ts.
 
 interface AppState {
   folders: Folder[];
   notes: Note[];
   notebooks: Notebook[];
-  // Tracks whether useNotebooks.ts's first fetch has resolved at least once
-  // (spec.md subtask 6, "Notebook picker" bugfix) - lets app/page.tsx tell
-  // "notebooks haven't loaded yet" apart from "user genuinely has zero
-  // notebooks", so it doesn't flash a false "no notebooks yet" / "notebook
-  // not found" state during the initial async SQLite fetch. Stays `true`
-  // once set - later refetches (e.g. after creating a notebook) don't flip
-  // it back to `false`.
+  // Lets the picker tell "not loaded yet" from "no notebooks". Never resets to
+  // false.
   notebooksLoaded: boolean;
   selectedNoteId: string | null;
-  // Which folder row is currently "selected" in the sidebar (spec.md M2
-  // subtask 4, "folder selection for scoped creation") - distinct from a
-  // folder's own expand/collapse `open` state (FolderItem.tsx's local
-  // `useState`) and from `selectedNotebookId` below. Clicking a folder row
-  // both toggles its expand/collapse AND sets this; clicking empty space in
-  // the sidebar (FolderTree.tsx's own container) clears it back to `null`.
-  // Consumed by Sidebar.tsx's toolbar "New Note"/"New Folder" buttons to
-  // scope root-toolbar creation under this folder when set, or at the
-  // notebook root when `null` - existing per-row inline creation actions
-  // (FolderItem.tsx's own "+"/context-menu items) are unaffected, since they
-  // already create under that row's own folder id directly.
+  // The sidebar's selected folder, separate from its expanded state. The
+  // toolbar's New Note/New Folder create inside it, or at the notebook root
+  // when null.
   selectedFolderId: string | null;
-  // Which notebook is currently "open" (spec.md subtask 6, "Notebook
-  // picker") - distinct from selectedFolderId/selectedNoteId, which scope a
-  // section/note *within* a notebook. Consumed by the picker (app/page.tsx),
-  // and will be consumed by the notebook-scoped sidebar rework (subtask 7)
-  // and the File tab's "swap notebook" (subtask 9).
+  // The open notebook.
   selectedNotebookId: string | null;
   sidebarOpen: boolean;
   syncStatus: SyncStatus;
-  // The Tiptap `Editor` instance for whichever note is currently mounted
-  // (spec.md subtask 10, "Format tab") - `Ribbon` is rendered by
-  // AppLayout.tsx as a sibling of the note/canvas page, not a descendant of
-  // RichTextEditor.tsx, so it has no direct access to the `editor` instance
-  // RichTextEditor.tsx's `useEditor()` creates. `RichTextEditor.tsx` sets
-  // this on mount/editor-instance-change and clears it (back to `null`) on
-  // unmount, so the Format tab can tell "a note editor is genuinely mounted"
-  // apart from "no note open" / "canvas note with no Tiptap instance at
-  // all" and render accordingly.
+  // The Ribbon is a sibling of the editor, so it reaches the Tiptap editor
+  // through here. Null when no text editor is active.
   activeEditor: Editor | null;
-  // The tldraw `Editor` instance for whichever canvas note is currently
-  // mounted (spec.md subtask 15, "Undo/redo wiring") - the tldraw analogue
-  // of `activeEditor` above, kept as a separate field (rather than reused)
-  // since tldraw's `Editor` type is unrelated to Tiptap's. Set/cleared by
-  // CanvasEditor.tsx's `handleMount` on mount/unmount, same lifecycle as
-  // `activeEditor`. Unlike `activeEditor` (which is only non-null while a
-  // specific RichTextShape has genuine Tiptap editing focus - see
-  // RichTextShape.tsx), `activeCanvasEditor` is non-null whenever ANY canvas
-  // note is open at all, regardless of shape focus - so the two CAN be
-  // simultaneously non-null (a canvas note open with no shape focused still
-  // has both set). Consumed by TopBar.tsx's top-bar-level Undo/Redo, which
-  // prioritizes `activeEditor` (the focused shape's Tiptap history) over
-  // `activeCanvasEditor` (tldraw's canvas-level history) when both are set.
+  // The tldraw editor, set while any canvas note is open. Can be set together
+  // with activeEditor; undo/redo prefer activeEditor.
   activeCanvasEditor: TldrawEditor | null;
 
-  // spec.md subtask 2 ("Click-to-cursor, no double-click required"). A
-  // transient, one-shot signal from RichTextTool.tsx's `Idle.onPointerDown`
-  // (the moment it decides an existing rich-text shape was clicked and calls
-  // `editor.setEditingShape(hitShape.id)`) to RichTextShape.tsx's edit-mode-
-  // entry effect (which runs on a LATER render, once `isEditing` flips true
-  // for that shape) - carries the click's raw client (viewport) coordinates
-  // so that effect can resolve a precise ProseMirror cursor position via
-  // Tiptap's `view.posAtCoords()` instead of unconditionally focusing at the
-  // end of the document. Deliberately NOT persisted document data - it's
-  // read once and cleared by the consuming effect (or ignored/overwritten by
-  // the next click), not part of the tldraw shape/store snapshot. `null`
-  // when there's no pending click to apply (e.g. a freshly-created empty
-  // shape, which intentionally never sets this - see RichTextTool.tsx).
+  // Where the click that started editing a shape landed, so RichTextShape can
+  // put the cursor there. Read once and cleared; never set for new shapes.
   pendingEditClickPoint: { shapeId: TLShapeId; clientX: number; clientY: number } | null;
 
-  // The note-visit history stack itself, plus a pointer into it (spec.md
-  // subtask 14). `historyIndex` is `-1` when the stack is empty, and
-  // otherwise points at the entry currently being viewed.
+  // historyIndex is -1 when the stack is empty.
   noteHistory: NoteHistoryEntry[];
   historyIndex: number;
-  // Set immediately before router.push()-ing as a result of clicking
-  // Back/Forward in TopBar.tsx, and consumed (read + cleared) by
-  // app/note/page.tsx's and app/canvas/page.tsx's note-load effect - lets
-  // those pages tell "this navigation came from Back/Forward" (skip
-  // re-pushing a visit, since goBack()/goForward() already moved
-  // `historyIndex`) apart from "a genuine new visit" (push one via
-  // `visitNote`).
+  // Set just before Back/Forward navigation and cleared by the page's load
+  // effect, so that navigation doesn't push a new visit.
   isHistoryNavigation: boolean;
 
-  // Theme picker (spec.md subtask 19). Initialized to `BUILTIN_THEMES` (all
-  // synchronously available, no disk I/O) so the picker is immediately
-  // usable before the async user-theme `loadThemes()` call (kicked off by
-  // AppShell.tsx on mount) resolves; that call then merges user themes in on
-  // top. `userThemesLoaded` mirrors the `notebooksLoaded` precedent above -
-  // lets callers tell "user themes haven't loaded yet" apart from "user
-  // genuinely has none".
+  // Starts with the built-in themes so the picker works before user themes load
+  // from disk.
   availableThemes: Theme[];
   userThemesLoaded: boolean;
-  // The currently-applied theme's id, or `null` for "Default" (no theme
-  // overrides applied, i.e. whatever globals.css renders by default). Kept
-  // in the store (rather than derived) so the picker's radio group can
-  // reflect the live selection immediately after a click, without waiting
-  // on a localStorage round-trip.
+  // Kept in the store so the picker updates immediately on click.
   selectedThemeId: string | null;
 
-  // Sidebar cut/copy/paste clipboard (spec.md M4 subtask 8, "Right-click
-  // context menu"). Same transient, one-shot-signal pattern as
-  // `pendingEditClickPoint` above - the actual paste logic lives in
-  // lib/clipboard/sidebarClipboard.ts (kept generic/reusable there, not
-  // baked into this store), this field just holds "what's on the
-  // clipboard right now" so any row's context menu can read/set it. `null`
-  // when nothing has been cut/copied. Deliberately built generic enough
-  // (`type: "note" | "folder"`) that M6's Page sidebar can reuse this same
-  // field/mechanism directly.
+  // What's currently cut or copied in the sidebar; the paste logic lives in
+  // lib/clipboard/sidebarClipboard.ts.
   clipboard: ClipboardEntry | null;
 
-  // spec.md M6 subtask 17 ("Page sidebar"). Lifted out of
-  // CanvasEditor.tsx's own local `useState` (where subtask 16 first
-  // introduced it) so the new, separate `PageSidebar` component can read AND
-  // write the same "which page of the currently-open note is selected"
-  // state - selecting a row there needs to actually change what
-  // CanvasEditor renders. Deliberately kept OUT of `noteHistory` (per
-  // spec.md's Key Decision: "Back/forward history stays note-scoped, not
-  // page-scoped") - this is plain transient UI state, reset by
-  // CanvasEditor.tsx's own note-load effect exactly the way its local
-  // `useState` was reset before (on `note.id` change), NOT a new kind of
-  // history-stack entry. `pages`/`pagesLoading` mirror `notebooksLoaded`'s
-  // "loaded at least once" pattern so PageSidebar can distinguish "still
-  // loading" from "note genuinely has an empty list" (should be
-  // unreachable in practice - see CanvasEditor.tsx's self-healing default
-  // page creation - but the flag still exists so the sidebar doesn't flash
-  // a false "no pages" state during the initial async fetch).
+  // The open note's pages and selection, shared by CanvasEditor and
+  // PageSidebar. Not part of the history stack (history is per note).
+  // pagesLoading lets the sidebar avoid flashing "no pages" during the first
+  // load.
   pages: Page[];
   selectedPageId: string | null;
   pagesLoading: boolean;
@@ -178,18 +86,10 @@ interface AppState {
   setPages: (pages: Page[]) => void;
   setSelectedPageId: (id: string | null) => void;
   setPagesLoading: (loading: boolean) => void;
-  // Records a genuine new note/canvas visit. No-ops if `entry` is identical
-  // to the entry currently pointed at by `historyIndex` (avoids duplicate
-  // consecutive entries from e.g. a content-only re-render re-triggering the
-  // load effect). Otherwise truncates any abandoned "forward" history past
-  // the current position before pushing, standard browser-history-stack
-  // semantics: visiting a new note while not at the end of the stack
-  // discards the forward entries the user had navigated back out of.
+  // Ignores a visit identical to the current entry, and drops the forward
+  // history when visiting from the middle of the stack.
   visitNote: (entry: NoteHistoryEntry) => void;
-  // Moves `historyIndex` one step back/forward and returns the entry to
-  // navigate to, or `undefined` if already at that boundary (nothing to go
-  // back/forward to) - the caller (TopBar.tsx) is responsible for actually
-  // navigating there.
+  // Returns undefined at either end; the caller does the navigation.
   goBack: () => NoteHistoryEntry | undefined;
   goForward: () => NoteHistoryEntry | undefined;
 }

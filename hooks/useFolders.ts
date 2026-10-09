@@ -5,9 +5,7 @@ import { getFolders } from "@/lib/db/folders";
 import { subscribeDataChange } from "@/lib/db/events";
 import { useAppStore } from "@/stores/appStore";
 
-// Rewired from ../note_taking_app/hooks/useFolders.ts (spec.md subtask 15).
-// See hooks/useNotes.ts for the full reasoning - same shape, just backed by
-// lib/db/folders.ts's `getFolders` instead of `getNotes`.
+// Same shape as useNotes, backed by getFolders.
 export function useFolders(userId: string | undefined) {
   const setFolders = useAppStore((s) => s.setFolders);
 

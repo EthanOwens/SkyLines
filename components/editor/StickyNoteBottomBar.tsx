@@ -1,34 +1,11 @@
 "use client";
 
-// spec.md subtask 10 ("Sticky note bottom bar"). Renders below the editor
-// content in StickyNoteEditor.tsx. A compact subset of
-// components/ribbon/formatActions.ts's existing actions (bold, italic,
-// strikethrough, bullet list, task list) - same filtered-subset approach
-// RichTextShape.tsx's own `BUBBLE_MENU_ACTION_IDS` already established,
-// reused here rather than inventing a new one. There is no "underline"
-// action in formatActions.ts (no Underline mark is registered anywhere in
-// this app's editors), so it's intentionally omitted despite being named in
-// spec.md.
+// Formatting bar for a sticky note window. There's no underline action because
+// no Underline mark is registered.
 //
-// Focus-gated the same way as StickyNoteTopBar.tsx. The `focused` prop and
-// the underlying Tauri `Window.onFocusChanged` listener are owned by
-// StickyNoteEditor.tsx and shared with the top bar, rather than this
-// component subscribing again.
-//
-// spec.md subtask 3: unfocused no longer unmounts this bar - it stays
-// mounted and fades/collapses via CSS transition instead, so losing focus
-// looks like a passive animation rather than a hard pop. When the note is
-// manually `collapsed` (double-click on the top bar - see
-// StickyNoteEditor.tsx's `toggleCollapsed`) this bar is hidden outright
-// instead, since the actual OS window is resized down to COLLAPSED_HEIGHT
-// and there's no room for it regardless of focus.
-//
-// Reads live editor state via Tiptap's `useEditorState` + `formatActions`'s
-// own `selectFormatActionState` selector - mirrors Ribbon.tsx's `FormatTab`
-// pattern (read state, then render one button per action), but against this
-// window's own local `editor` instance (passed down directly as a prop)
-// instead of the main window's global `activeEditor` (stores/appStore.ts) -
-// that indirection is specific to the main ribbon and doesn't apply here.
+// Fades out while the window is unfocused instead of unmounting, and is hidden
+// entirely while the note is collapsed (no room). Reads this window's own
+// editor rather than the store's activeEditor.
 
 import type { Editor } from "@tiptap/react";
 import { useEditorState } from "@tiptap/react";
@@ -47,9 +24,6 @@ interface Props {
   collapsed: boolean;
 }
 
-// Same small ghost icon-button shape as StickyNoteTopBar.tsx's local
-// `TopBarBtn` - not literally shared since it's tuned to this bar's plain
-// (non-colored) background, but mirrors its conventions.
 function BottomBarBtn({
   onClick,
   tip,
@@ -89,12 +63,9 @@ export function StickyNoteBottomBar({ editor, focused, collapsed }: Props) {
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
   });
 
-  // `editor` starts null (immediatelyRender: false) and useEditorState's
-  // snapshot doesn't get bumped when it later flips to a real instance
-  // without an intervening transaction - same staleness class TopBar.tsx
-  // works around (see its tiptapUndoState comment). Fall back to computing
-  // the selector directly off the live editor so the bar doesn't stay
-  // hidden until the user's first click/keystroke.
+  // editor starts null and useEditorState doesn't refresh when it arrives
+  // without a transaction (see TopBar's tiptapUndoState), so compute the state
+  // directly until it does.
   const displayState = state ?? (editor && !editor.isDestroyed ? selectFormatActionState(editor) : null);
 
   if (collapsed || !editor || !displayState) return null;

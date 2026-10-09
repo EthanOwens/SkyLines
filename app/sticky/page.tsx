@@ -1,14 +1,7 @@
 "use client";
 
-// spec.md subtask 8 ("Sticky note pop-out window"). This route is only ever
-// loaded inside its own dedicated Tauri window (see lib/stickyWindow.ts,
-// which opens it at `/sticky/?id=...`), never inside the main app's
-// AppLayout shell - components/AppShell.tsx special-cases this pathname to
-// render `children` directly, with none of the ribbon/sidebar chrome.
-//
-// Mirrors app/canvas/page.tsx's `useSearchParams()` + `<Suspense>` pattern
-// (required for `useSearchParams()` under this repo's static export, see
-// that file's header comment) and its loading/not-found states.
+// Loaded only in a sticky note's own window (see lib/stickyWindow.ts), outside
+// the app shell.
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";

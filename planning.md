@@ -1,10 +1,9 @@
-I want the following tweaks to be made for the sticky notes:
-- The sticky notes should not have the standard titlebar, the top bar block with the title should be the title bar
-- The current functionality of taking away focus from a sticky note is it collapses to basically just the title bar. This isn't what I meant, but I do like it. I'd like this to be the functionality of double clicking the top bar/title bar, and the proper functionality of not focusing the sticky note is the bottom bar should fade away and the title bar itself should be slimmer, giving the impression that it's less prominant, but the size of the window itself should stay the same.
-- in the sticky notes home page gui make the following changes
-  -  Right clicking should allow for renaming, deleting, and favoriting sticky notes
-  -  Sticky notes should have a small icon on the bottom right of their preview for if they're favorited or opened. Clicking an opened note will bring up the sticky note wherever it is. Favorited sticky notes should be in a top row(s) of the home page (no favorite row if none are favorited)
--  Many of the the theme sections still aren't present in the mini preview visual. Remove all the ones not present there and we can add more in the future. Add drop down toggles for each section, and modify the things like "radius" to be more user friendly for changing
--  The insert link screen can't be exited, and it doesnt open with ctrl + k. The existing sticky notes should be a mini preview and be in rows (mini preview or just title should be toggleable via a button with a in this menu and in the home page)
-- Make the following updates for pictures/screenshots functionality anywhere:
-  - Should be able to double click on the picture to enlarge it in a pop out window with modifications tweaks (draw on picture with ctrl + z to undo options, click and drag shapres, click and drag box for censor(black and blur options), add text, erase, and crop). While in the pop up menu Ctrl + c should copy the picture and it's modified contents to the clipboard and do a slight flash and text to denote it's saved to clipboard
+- Remove the white border that appears around the note taking canvas
+- Sticky notes
+  - I can't click and drag the sticky notes top bar to move it around
+  - I can't double click to re-open sticky notes once I've double clicked to close them
+- Theme styler
+  - The names of things need to be tweaked
+    - Text being described as foreground feels misleading, it should just shwo as text
+  - Not everything is descriptive on it's own. For instance I'm not sure what "card" means. Hovering something should indicate where it is on the theme editor canvas
+  - There is not visual for sidebard foreground on the canvas theme.

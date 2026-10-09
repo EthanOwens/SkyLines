@@ -1,39 +1,10 @@
 "use client";
 
-// spec.md subtask 18 verification route (M4 "canvas editor"). There is no
-// app shell/login/home page yet (out of scope for this subtask, see
-// spec.md's "Background" note), so this route stands in as a launcher for
-// app/canvas/page.tsx - same pattern as app/spike-editor/page.tsx. Creates a
-// canvas-type note directly via lib/db/notes.ts's `createNote` and navigates
-// to `/canvas?id=<id>` so the real CanvasEditor (tldraw) can be exercised
-// end to end (draw a shape, watch snapshot autosave, reload/renavigate to
-// confirm persistence). Signs in with a throwaway test account solely to
-// satisfy firestore.rules for the sync engine. Cleanup deletes Firestore
-// test docs BEFORE the auth account, always, and every created id is
-// tracked in a ref (survives re-renders/re-navigations within the app, not
-// full page reloads - do not hard-reload mid-session before cleaning up).
-// Not production UI.
+// Dev-only verification page for the canvas editor and sync. Not production UI.
 //
-// Deliberately calls lib/sync/engine.ts's `startSyncEngine`/
-// `subscribeSyncStatus` directly here instead of via hooks/useSyncEngine.ts:
-// that hook ties the engine's lifetime to this component's mount (its
-// `useEffect` cleanup stops the engine on unmount), which would tear the
-// engine down the instant "Create canvas note + navigate" below navigates
-// away to /canvas - the opposite of what this verification needs, since the
-// whole point is watching the real sync status react to push activity WHILE
-// looking at /canvas. The engine itself (lib/sync/engine.ts) is a
-// module-level singleton independent of any component tree, so starting it
-// imperatively and never tearing it down for the rest of this verification
-// session keeps it running across the SPA navigation to /canvas, same as it
-// would once a real app shell wires it at the root. `subscribeSyncStatus`
-// is bridged straight into stores/appStore.ts's `setSyncStatus` here so
-// every page reading `useAppStore((s) => s.syncStatus)` sees the same real
-// status. Also replicates hooks/useSyncEngine.ts's OTHER responsibility -
-// subscribing to lib/db/events.ts's change notification and calling
-// `scheduleDirtyPush` for `origin === "local"` writes - which is what turns
-// edits made later on /canvas (drawing shapes) into scheduled pushes;
-// `startSyncEngine` on its own only pushes what's already dirty at the
-// moment it starts.
+// Starts the sync engine directly rather than through useSyncEngine, whose
+// unmount cleanup would stop it as soon as this page navigates to /canvas. It
+// also forwards local writes to scheduleDirtyPush, as useSyncEngine does.
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -135,12 +106,8 @@ function SpikeCanvasInner() {
     append(`getNoteById(${manualId}) -> ${JSON.stringify(n)}`);
   }
 
-  // Manual escape hatch: this page's own "created ids" tracking is
-  // in-memory React state, which a hard page reload (e.g. testing a direct
-  // /canvas?id= URL reload, per this subtask's verification section) wipes
-  // out. Lets a note id created in an earlier, now-reloaded session still be
-  // included in Cleanup below instead of silently leaking a Firestore test
-  // doc.
+  // Created ids live in memory and are lost on a hard reload; this lets an id
+  // from an earlier session still be cleaned up.
   function trackManualIdForCleanup() {
     if (!manualId) return append("enter a note id first");
     createdNoteIdsRef.current.add(manualId);
@@ -148,10 +115,6 @@ function SpikeCanvasInner() {
   }
 
   function recordAllCreatedIds() {
-    // manualId may reference a note created in a prior render/navigation
-    // that wasn't tracked (e.g. user typed an id manually) - only the ids
-    // this session actually created via createAndOpenCanvas are tracked,
-    // which is what cleanup below relies on.
     append(`tracked note ids for cleanup: ${JSON.stringify([...createdNoteIdsRef.current])}`);
   }
 
@@ -177,11 +140,8 @@ function SpikeCanvasInner() {
           append("re-signed-in and deleted test auth user");
         }
       } catch (err) {
-        // A long-lived CDP-driven session's sign-in can be old enough that
-        // Firebase Auth requires a fresh credential before allowing account
-        // deletion (`auth/requires-recent-login`) - re-sign-in once more
-        // with a fresh credential and retry, instead of leaving the
-        // throwaway account behind.
+        // An old sign-in can trigger auth/requires-recent-login on account
+        // deletion, so sign in again and retry.
         append(`initial delete-user attempt failed (${String(err)}), re-signing in for a fresh credential and retrying`);
         const cred = await signInWithEmailAndPassword(auth, TEST_EMAIL, TEST_PASSWORD);
         await cred.user.delete();

@@ -1,44 +1,25 @@
 use tauri_plugin_deep_link::DeepLinkExt;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-// M6 (spec.md subtask 23): tray icon + native application menu. Desktop-only
-// (see the `#[cfg(desktop)]` call site in `run()` below) since there is no
-// system tray or native menu bar concept on mobile.
-//
-// There is no reference implementation to port here - `../note_taking_app`
-// is a pure Next.js web app with no Tauri/native code at all - so this is
-// deliberately minimal: a "Show Skylines" / "Quit" tray menu, and a File /
-// Edit native menu. No app-specific actions (e.g. "New Note") are wired up,
-// since there's no real authenticated app shell yet for them to hook into
-// (see spec.md's note on this subtask's scope).
-//
-// Close-to-tray: the native close button (X) on the main window is
-// intercepted so it hides the window instead of destroying it (Tauri's
-// default behavior when the last window closes is to exit the whole app).
-// Without that, the tray's "Show Skylines" item would have nothing left to
-// show once the window was closed. The tray's "Quit" item (and File > Quit,
-// same handler) is the actual way to terminate the app now.
+// Tray icon and native menu. Closing the main window hides it to the tray
+// instead of exiting, so the tray's Quit and File > Quit are the only ways out.
 #[cfg(desktop)]
 fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem, SubmenuBuilder};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
     use tauri::{DragDropEvent, Manager, WindowEvent};
 
-    // --- System tray ---------------------------------------------------
+    // System tray
     let show_item = MenuItem::with_id(app, "show", "Show Skylines", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
     let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
     TrayIconBuilder::new()
-        // Reuse the app's own icon (from src-tauri/icons/, wired up via
-        // tauri.conf.json's `bundle.icon`) rather than shipping a second
-        // tray-specific asset.
         .icon(
             app.default_window_icon()
                 .cloned()
@@ -52,10 +33,8 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            // Standard tray behavior: left-click shows/focuses the main
-            // window. Right-click opens the context menu built above
-            // (that's handled natively by the OS/tray-icon crate and
-            // doesn't need to be wired up here).
+            // Left-click shows the main window; the OS opens the menu on
+            // right-click.
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -67,14 +46,13 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
 
-    // --- Native application menu ---------------------------------------
-    // On Windows (unlike macOS) this attaches as the traditional top-of-
-    // window menu bar via the native SetMenu API, applied per-window
-    // rather than as a single global menu bar.
+    // Native menu. On Windows it attaches to each window; on macOS it's the
+    // global menu bar.
     let file_menu = SubmenuBuilder::new(app, "File").item(&quit_item).build()?;
 
-    // Predefined items so OS-level Undo/Redo/Cut/Copy/Paste/Select All
-    // keep working for the rich text editor and canvas.
+    // Predefined items keep the OS undo/redo and clipboard shortcuts working in
+    // the editor and canvas (on macOS, Cmd+C/V do nothing without an Edit
+    // menu).
     let edit_menu = SubmenuBuilder::new(app, "Edit")
         .undo()
         .redo()
@@ -89,13 +67,8 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&file_menu, &edit_menu])?;
     app.set_menu(menu)?;
 
-    // Close-to-tray: intercept the native close button so it hides the
-    // window instead of destroying it (Tauri's default behavior when the
-    // last window closes is to exit the whole app). Without this, the
-    // tray's "Show Skylines" item can never be clicked to bring anything
-    // back once the window is closed - the process would already be gone.
-    // The tray's "Quit" item (and the File > Quit menu item, same handler)
-    // is now the actual way to terminate the app.
+    // Hide instead of close: Tauri exits when the last window closes, which
+    // would leave the tray nothing to show.
     if let Some(window) = app.get_webview_window("main") {
         let window_clone = window.clone();
         window.on_window_event(move |event| {
@@ -104,35 +77,12 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
                     api.prevent_close();
                     let _ = window_clone.hide();
                 }
-                // M6 (spec.md subtask 25): drag-and-drop plumbing only - no
-                // attachment/file-import feature exists yet for a dropped
-                // file to feed into (see spec.md's note on this subtask's
-                // scope), so this just logs what the OS handed the window
-                // (`tauri://drag-enter` / `-over` / `-drop` / `-leave` on
-                // the JS side, all funneled into this single
-                // `WindowEvent::DragDrop` variant on the Rust side) and
-                // does nothing further.
-                //
-                // Currently INERT (M1, spec.md subtask 3): `dragDropEnabled`
-                // is now `false` in tauri.conf.json, so this handler never
-                // fires - no OS-level `WindowEvent::DragDrop` events are
-                // delivered at all. This was flipped off because Tauri's
-                // native OS-level window drag-drop and the webview's own
-                // native HTML5 `dragover`/`drop` DOM events are mutually
-                // exclusive on Windows/WebView2: leaving it `true` was
-                // silently breaking the sidebar's HTML5 drag-and-drop
-                // (lib/dnd/sidebar.ts and friends), which is the feature
-                // that's actually built and in use today. Left in place
-                // (rather than deleted) as a placeholder for if/when a real
-                // file-import feature re-enables `dragDropEnabled` - at
-                // which point the sidebar's HTML5 DnD would need to be
-                // reconciled with this native path instead.
-                //
-                // Deliberately using `writeln!` to a raw stderr handle
-                // instead of println!/eprintln! - see the global shortcut
-                // registration failure handler below for why those macros
-                // are unsafe to call from a release build with no attached
-                // console.
+                // Inert while `dragDropEnabled` is false in tauri.conf.json. On
+                // Windows/WebView2, native window drag-drop disables the
+                // webview's HTML5 drag events, which the sidebar relies on.
+                // Kept as the hook for a future file-import feature. Uses
+                // writeln! for the reason given at the global shortcut handler
+                // below.
                 WindowEvent::DragDrop(drag_drop_event) => {
                     use std::io::Write;
                     match drag_drop_event {
@@ -179,11 +129,9 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // M2 (spec.md subtask 7): real local storage schema, mirroring
-    // SPEC_iter1.md Part 2 "Local storage layer" exactly. This is
-    // migration version 1 of the real app; the M0 spike migration/db
-    // (spec.md subtask 4, `skylines-spike.db` / `spike_test`) was a
-    // throwaway artifact and has been replaced, not carried forward.
+    // tauri-plugin-sql checksums every migration. Never edit one that has
+    // shipped, not even its whitespace or the comments inside its SQL: add a
+    // new version.
     let migrations = vec![
         tauri_plugin_sql::Migration {
         version: 1,
@@ -225,16 +173,7 @@ pub fn run() {
         ",
         kind: tauri_plugin_sql::MigrationKind::Up,
         },
-        // M3 (spec.md subtask 12): pull-side sync needs somewhere to snapshot
-        // the "losing" version of a row when a pull discovers both the local
-        // row (dirty) and the remote Firestore doc were touched since the
-        // last sync (see SPEC_iter1.md Part 2 "Sync engine"). Additive-only -
-        // migration 1 above is left byte-for-byte untouched (tauri-plugin-sql
-        // checksums each migration's SQL string and refuses to run ANY
-        // migration if an earlier one's checksum no longer matches what's
-        // recorded in `_sqlx_migrations` - even a pure reindent of migration
-        // 1 breaks every existing v1 database) so it upgrades cleanly by
-        // applying this as a second step.
+        // Stores the losing side of a sync conflict.
         tauri_plugin_sql::Migration {
             version: 2,
             description: "create sync_conflicts table",
@@ -251,17 +190,8 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
-        // M1 (spec.md subtask 1): notebooks are a real new entity - a
-        // OneNote-style Notebook -> Section(folder) -> Note hierarchy sits
-        // above the existing folders/notes tables, not a reinterpretation of
-        // folders. Additive-only, same as migration 2's comment explains:
-        // migrations 1 and 2's SQL strings are left byte-for-byte untouched
-        // (tauri-plugin-sql checksums each migration and refuses to run any
-        // migration at all if an earlier one's checksum no longer matches
-        // what's recorded in `_sqlx_migrations`), so this applies cleanly as
-        // a third step on top of either a fresh database or one that
-        // already has real `folders`/`notes` rows from before this feature
-        // existed.
+        // Notebook > section (folder) > note hierarchy. Backfills a default "My
+        // Notebook" for every user who already has folders.
         tauri_plugin_sql::Migration {
             version: 3,
             description: "create notebooks table, add folders.notebook_id, backfill existing folders",
@@ -363,17 +293,8 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
-        // spec.md subtask 7 ("Sidebar rework"): a note with no folder
-        // currently has no way to know which notebook it belongs to (the
-        // `notes` table only has `folder_id`, and folder_id can be NULL for
-        // a root-level note) - the sidebar rework needs to scope notes to
-        // "the currently open notebook" even when they have no folder, so
-        // notes need a real `notebook_id` column of their own, mirroring
-        // migration 3's exact approach for `folders.notebook_id` above
-        // (additive-only, migrations 1-3's SQL strings stay byte-for-byte
-        // untouched - tauri-plugin-sql checksums each migration and refuses
-        // to run ANY migration if an earlier one's checksum no longer
-        // matches what's recorded in `_sqlx_migrations`).
+        // Gives notes their own notebook_id so notes without a folder can be
+        // scoped to a notebook.
         tauri_plugin_sql::Migration {
             version: 4,
             description: "add notes.notebook_id, backfill existing notes",
@@ -456,17 +377,7 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
-        // spec.md subtask 7 (M4, "Sidebar drag-and-drop"): sidebar reordering
-        // needs a persisted sibling-order field for notes the same way
-        // `folders.order_index`/`notebooks.order_index` already have one -
-        // confirmed genuinely missing (notes.ts's `getNotes` only ever
-        // ordered by `updated_at DESC`, and no `order`/`orderIndex` field
-        // exists anywhere on the `notes` table or the `Note` type). Unlike
-        // migrations 3/4's `notebook_id` backfills, a real constant
-        // `DEFAULT 0` is sensible here (SQLite's `ALTER TABLE ... ADD
-        // COLUMN` allows a `NOT NULL` column with a literal constant
-        // default), so this is a plain single-statement additive migration
-        // with no backfill UPDATE needed.
+        // Persisted sibling order for notes in the sidebar.
         tauri_plugin_sql::Migration {
             version: 5,
             description: "add notes.order_index",
@@ -475,31 +386,9 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
-        // M6 (spec.md subtask 13): Pages are a real new entity - a Note
-        // ("notesheet") becomes a lightweight container that groups one or
-        // more Pages, each an independent canvas (its own `RichTextShape`s,
-        // ink, etc.) - the actual editable content moves down one level,
-        // from Note to Page. This mirrors the `notes` table's exact
-        // sync-bookkeeping column shape (id, title, user_id, order_index,
-        // content, canvas_data, created_at, updated_at, deleted_at, dirty,
-        // synced_at), swapping `folder_id`/`type` for a single required
-        // `note_id` FK (a page always belongs to a note, unlike a note's
-        // nullable `folder_id`). `user_id` is kept (not dropped in favor of
-        // joining through `notes`) so that subtask 14/15's data-access and
-        // Firestore-pull code can filter/query pages with the exact same
-        // flat `WHERE user_id = $1` / `where("userId", "==", userId)`
-        // pattern already used for notebooks/folders/notes - Firestore has
-        // no server-side joins, so this column is required, not optional.
-        // Both `content` and `canvas_data`
-        // are kept (rather than just `canvas_data`) to mirror `notes`'
-        // exact shape per spec.md's literal wording for the `Page` type -
-        // `notes.content`/`notes.canvas_data` are themselves left in place,
-        // untouched, consistent with this migration list's established
-        // non-destructive precedent (migrations 1-5 above never drop or
-        // repurpose a column). No backfill is needed here: subtask 14's
-        // atomic "new note always gets a default first page" and subtask
-        // 18's migration-of-existing-content into a page are separate,
-        // later subtasks - this migration only creates the empty table.
+        // Each note groups one or more pages, and each page is its own canvas.
+        // Pages keep user_id because Firestore queries can't join through
+        // notes.
         tauri_plugin_sql::Migration {
             version: 6,
             description: "create pages table",
@@ -524,20 +413,8 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
-        // spec.md subtask 7 ("Sticky notes"): sticky notes are their own
-        // top-level entity (not scoped to a note/page the way `pages` are
-        // scoped to `notes` via `note_id`), so this mirrors `notes`' exact
-        // sync-bookkeeping column shape (id, title, user_id, content,
-        // created_at, updated_at, deleted_at, dirty, synced_at) minus the
-        // folder/notebook/type/order columns notes has (sticky notes don't
-        // live in the folder tree), plus two sticky-note-specific columns:
-        // `top_bar_color` (nullable TEXT CSS color string - NULL means "use
-        // the active theme's --primary", per spec.md subtask 9; that
-        // fallback-resolution logic is out of scope here, this migration
-        // only needs the column to be nullable) and `pinned` (INTEGER 0/1,
-        // following the same boolean-as-integer convention `dirty` already
-        // uses on every table in this file rather than a native BOOLEAN
-        // type). No backfill needed: this is a brand new table.
+        // Sticky notes live outside the folder tree. A NULL top_bar_color means
+        // "use the theme's --primary".
         tauri_plugin_sql::Migration {
             version: 7,
             description: "create sticky_notes table",
@@ -560,11 +437,7 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
-        // spec.md subtask 2 (favorite sticky notes): a second, independent
-        // boolean flag on `sticky_notes`, distinct from `pinned` (always-on-
-        // top window behavior) - additive-only, same
-        // ALTER-TABLE-with-constant-DEFAULT pattern migration 5 used for
-        // `notes.order_index`, so no backfill UPDATE is needed here either.
+        // favorite is independent of pinned (pinned means always on top).
         tauri_plugin_sql::Migration {
             version: 8,
             description: "add sticky_notes.favorite",
@@ -575,48 +448,25 @@ pub fn run() {
         },
     ];
 
-    // M5 (spec.md subtask 21): Google sign-in uses a system-browser +
-    // deep-link flow instead of signInWithPopup/signInWithRedirect, since
-    // Google's OAuth policy blocks sign-in attempts from embedded/
-    // non-standard webviews (both signInWithPopup and signInWithRedirect
-    // run inside the app's own WebView2 instance, which that policy
-    // targets) - only the OS's actual default browser is trusted. See
-    // lib/auth/googleOAuth.ts for the full flow and required external
-    // (Google Cloud Console) configuration.
+    // Google sign-in finishes in the system browser and returns through a
+    // skylines:// deep link, because Google blocks OAuth inside embedded
+    // webviews (see lib/auth/googleOAuth.ts).
     //
-    // tauri-plugin-single-instance must be registered first (per its docs)
-    // so that when the system browser hands the `skylines://auth-callback`
-    // URL back to Windows, and Windows spawns a *second* app process with
-    // that URL as a CLI argument (deep-link plugin docs: "On Windows and
-    // Linux the OS will spawn a new instance of your app with the URL as a
-    // CLI argument"), this plugin intercepts that second launch, forwards
-    // its argv to the already-running instance via the `deep-link` feature
-    // flag below (which re-emits it as the deep-link plugin's
-    // `deep-link://new-url` event - see tauri-plugin-single-instance's
-    // Default::callback impl), and exits - instead of opening a duplicate
-    // window.
+    // single-instance must be registered first: on Windows and Linux the OS
+    // delivers a deep link by starting a second process, which this plugin
+    // forwards to the running instance before exiting.
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
-            // No-op: the `deep-link` feature on this plugin (enabled in
-            // Cargo.toml) already forwards argv into the deep-link plugin
-            // before this callback runs, which is all app/login/page.tsx's
-            // `onOpenUrl` listener needs.
+            // Empty on purpose: the plugin's deep-link feature already forwards
+            // argv to the deep-link plugin.
         }));
 
-        // M6 (spec.md subtask 24): global shortcut plugin. Desktop-only -
-        // the crate itself is compiled to nothing on Android/iOS
-        // (`#![cfg(not(any(target_os = "android", target_os = "ios")))]`
-        // in tauri-plugin-global-shortcut's own lib.rs), but this is still
-        // wrapped in `#[cfg(desktop)]` to match the guarding pattern used
-        // for tray/menu/single-instance elsewhere in this file. Only the
-        // handler is wired up here; the actual shortcut is registered (and
-        // any registration failure handled non-fatally) down in `.setup()`
-        // below, so a collision with another app's shortcut can't abort
-        // this plugin's own `setup` step and take the whole app down with
-        // it via the `.expect(...)` at the bottom of `run()`.
+        // Only the handler is set up here. The shortcut itself is registered in
+        // setup(), so a collision with another app's shortcut can't fail
+        // startup.
         builder = builder.plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -628,18 +478,24 @@ pub fn run() {
         );
     }
 
+    // Lets the Tauri MCP server inspect and drive the app for automated testing.
+    // Debug builds only, and bound to localhost: the plugin's default of 0.0.0.0
+    // would let anything on the network run JavaScript in the app.
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(
+            tauri_plugin_mcp_bridge::Builder::new()
+                .bind_address("127.0.0.1")
+                .build(),
+        );
+    }
+
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_deep_link::init())
-        // spec.md subtask 16 ("Screenshot-to-sticky-note capture"): wraps
-        // xcap for cross-platform window enumeration/capture - see
-        // components/sticky/ScreenshotCapture.tsx for the picker/preview UI.
         .plugin(tauri_plugin_screenshots::init())
-        // spec.md subtask 11/12: image editor clipboard I/O (copy an edited
-        // sticky-note image to the OS clipboard, paste an image into a
-        // sticky note). Registered here only - no command uses it yet.
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -647,39 +503,19 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            // The `skylines://` scheme is declared in tauri.conf.json's
-            // `plugins.deep-link.desktop.schemes`, which registers it with
-            // the OS at install time for packaged (NSIS/MSI) builds. That
-            // doesn't happen for `cargo run`/`tauri dev` debug builds on
-            // Windows, so register it at runtime here too (matches
-            // tauri-plugin-deep-link's own example app).
+            // Installers register skylines:// with the OS. Dev builds on
+            // Windows, and all Linux builds, register it at runtime instead.
+            // macOS only picks it up from an installed .app bundle.
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             {
                 app.deep_link().register_all()?;
             }
 
-            // M6 (spec.md subtask 23): system tray + native application menu.
-            // Both are desktop-only concepts (there is no tray or native menu
-            // bar on Android/iOS), so this is gated the same way as the
-            // tauri_plugin_single_instance registration above.
             #[cfg(desktop)]
             setup_tray_and_menu(app)?;
 
-            // M6 (spec.md subtask 24): register the "show/focus Skylines"
-            // global shortcut. Mirrors the tray icon's "Show Skylines"
-            // item/left-click behavior - a common "summon the app"
-            // background hotkey pattern for note-taking/quick-capture apps
-            // (Notion, Obsidian, etc). No other app-specific global
-            // shortcuts are registered - there's no reliable way to, say,
-            // quick-capture a note from outside the sidebar's own UI yet.
-            //
-            // Keybinding: Ctrl+Alt+S (Cmd+Option+S on macOS, via the
-            // cross-platform "CmdOrCtrl" alias - see global-hotkey's
-            // hotkey.rs parser). Chosen to be low-collision: plain
-            // Ctrl+<letter> combos (Ctrl+N, Ctrl+O, ...) are heavily
-            // reserved by browsers/OSes/IDEs, but two-modifier Ctrl+Alt (or
-            // Cmd+Option) chords are rarely bound by other applications.
-            // "S" is mnemonic for Skylines.
+            // Shortcut that brings the app forward: Ctrl+Alt+S, or Cmd+Option+S
+            // on macOS.
             #[cfg(desktop)]
             {
                 use std::io::Write;
@@ -687,23 +523,10 @@ pub fn run() {
 
                 const SHOW_WINDOW_SHORTCUT: &str = "CmdOrCtrl+Alt+S";
                 if let Err(err) = app.global_shortcut().register(SHOW_WINDOW_SHORTCUT) {
-                    // Non-fatal: the combo may already be claimed by another
-                    // application on the user's system. Unlike the tray/menu
-                    // setup above (core UX, fails loudly via `?`), a global
-                    // shortcut collision is a low-stakes, plausible-in-
-                    // normal-use failure mode that shouldn't take down the
-                    // whole app's startup.
-                    //
-                    // Deliberately NOT using eprintln!/println! here: those macros
-                    // panic if the write fails (library/std/src/io/stdio.rs's
-                    // print_to helper), and in a release build (main.rs sets
-                    // windows_subsystem = "windows" for non-debug builds) there is
-                    // no console attached unless the app was launched from one -
-                    // GetStdHandle returns NULL, the write fails, and eprintln!
-                    // would panic and crash the whole app on exactly the collision
-                    // this handler exists to survive. writeln! on a raw Stderr
-                    // handle returns a Result instead of panicking, so a failed
-                    // write here is itself silently and safely ignored.
+                    // Non-fatal: another app may already own the shortcut.
+                    // writeln! rather than eprintln!, because Windows release
+                    // builds have no console and eprintln! panics when the
+                    // write fails.
                     let _ = writeln!(
                         std::io::stderr(),
                         "failed to register global shortcut {SHOW_WINDOW_SHORTCUT}: {err}"

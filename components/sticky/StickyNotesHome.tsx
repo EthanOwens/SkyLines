@@ -1,16 +1,6 @@
 "use client";
 
-// spec.md subtask 14 ("Sticky notes home page"). A Dialog-based "view"
-// listing every sticky note as a collapsed preview card - title, first-line
-// text preview, and a top-bar-color swatch - clicking a card opens that
-// note's pop-out window (lib/stickyWindow.ts's `openStickyNoteWindow`,
-// subtask 8). Built with the same `open`/`onOpenChange` prop shape as
-// components/theme/ThemeEditor.tsx so subtask 15's ribbon button can wire it
-// up the same way AccountMenu.tsx wires up ThemeEditor's own open state.
-//
-// Not a full route/page: spec.md only calls this "a new view", and this
-// app's established pattern for a secondary UI surface opened from
-// somewhere (not a full page route) is a Dialog - see ThemeEditor.tsx.
+// Dialog listing every sticky note; clicking a card opens its window.
 
 import { useRef, useState, useEffect } from "react";
 import {
@@ -60,14 +50,9 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
   const [creating, setCreating] = useState(false);
   const [screenshotOpen, setScreenshotOpen] = useState(false);
   const [openNoteIds, setOpenNoteIds] = useState<Set<string>>(new Set());
-  // Toggles the grid between the default preview cards and a compact
-  // title-only list (color dot + title per row).
   const [titleOnly, setTitleOnly] = useState(false);
 
-  // Reload the list every time the dialog opens, same "always fresh on
-  // open" seeding pattern ThemeEditor.tsx/LinkOrStickyDialog.tsx already
-  // use - `getStickyNotes` already orders by `updatedAt DESC`, so no
-  // client-side re-sorting is needed here.
+  // getStickyNotes already orders by updatedAt DESC.
   useEffect(() => {
     if (!open) return;
     if (user) {
@@ -76,8 +61,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
       setStickyNotes([]);
     }
 
-    // lib/stickyWindow.ts labels pop-out windows "sticky-<id>" - reuse that
-    // convention here to figure out which notes currently have a live window.
+    // Pop-out windows are labeled "sticky-<id>" (see lib/stickyWindow.ts).
     void import("@tauri-apps/api/window").then(async ({ getAllWindows }) => {
       const windows = await getAllWindows();
       const ids = windows
@@ -119,10 +103,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
     }
   }
 
-  // A captured screenshot becomes a new sticky note's content as a single
-  // Tiptap `image` node - StickyNoteEditor.tsx's editor already has
-  // `Image.configure({ inline: false, allowBase64: true })`, so a base64
-  // data URL `src` renders straight away with no further conversion.
+  // The sticky editor allows base64 images, so the data URL works as-is.
   async function handleScreenshotCaptured(dataUrl: string) {
     if (!user || creating) return;
     setCreating(true);
@@ -242,17 +223,14 @@ interface StickyNoteCardProps {
   onToggleFavorite: () => void;
 }
 
-// Right-click menu mirrors components/sidebar/NoteItem.tsx's ContextMenu/
-// DropdownMenuContent reuse pattern (spec.md M4 subtask 8).
 function StickyNoteCard({ note, isOpen, titleOnly, onOpen, onRename, onDelete, onToggleFavorite }: StickyNoteCardProps) {
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(note.title || "Untitled");
   const inputRef = useRef<HTMLInputElement>(null);
   const preview = extractPlainText(note.content);
 
-  // Resyncs when the sibling card (favorites section vs. main grid) renames
-  // this same note - not depended on `renaming` so it can't clobber an
-  // in-progress edit (see PageItem.tsx's identical effect).
+  // Picks up renames from this note's other card (favorites vs. the main grid).
+  // Doesn't depend on renaming, so it can't overwrite an edit in progress.
   useEffect(() => {
     if (!renaming) setTitle(note.title || "Untitled");
     // eslint-disable-next-line react-hooks/exhaustive-deps

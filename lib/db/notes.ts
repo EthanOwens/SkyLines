@@ -2,14 +2,6 @@ import type { Note } from "@/types";
 import { getDb } from "./client";
 import { notifyDataChange } from "./events";
 
-// Local SQLite data-access layer for `notes` (spec.md subtask 9), mirroring
-// the function names/shapes of the current Firestore-backed
-// `../note_taking_app/lib/firestore/notes.ts` so subtask 15 can rewire
-// stores/appStore.ts and hooks/useNotes.ts against this with minimal
-// changes. Unlike Firestore's onSnapshot, SQLite reads here are plain
-// one-shot async queries - there's no realtime listener model to fake
-// locally (subtask 15's job is wiring re-fetches, not this subtask's).
-
 const TABLE = "notes";
 
 type NoteRow = {
@@ -49,12 +41,7 @@ function rowToNote(row: NoteRow): Note {
   };
 }
 
-/**
- * Fetches the current (non-deleted) notes for a user, ordered the same way
- * the Firestore `subscribeNotes` query was (`updatedAt` descending). This
- * replaces that subscription with a plain one-shot read - callers re-invoke
- * it after mutations rather than receiving push updates.
- */
+/** Plain one-shot reads: callers refetch after writes. */
 export async function getNotes(userId: string): Promise<Note[]> {
   const db = await getDb();
   const rows = await db.select<NoteRow[]>(
@@ -64,11 +51,7 @@ export async function getNotes(userId: string): Promise<Note[]> {
   return rows.map(rowToNote);
 }
 
-/**
- * Fetches every note for a user with `dirty = 1`, including soft-deleted
- * ones (deletedAt tombstones must be pushed too - see spec.md subtask 11).
- * Used by lib/sync/push.ts to find rows that need to go to Firestore.
- */
+/** Includes soft-deleted rows, since tombstones must be pushed too. */
 export async function getDirtyNotes(userId: string): Promise<Note[]> {
   const db = await getDb();
   const rows = await db.select<NoteRow[]>(
@@ -78,11 +61,7 @@ export async function getDirtyNotes(userId: string): Promise<Note[]> {
   return rows.map(rowToNote);
 }
 
-/**
- * Marks a note as successfully synced: clears `dirty` and stamps `syncedAt`
- * with the same client timestamp used for the Firestore write, so local and
- * remote agree on when the push happened.
- */
+/** Uses the same timestamp as the Firestore write, so both sides agree. */
 export async function markNoteSynced(noteId: string, syncedAt: number): Promise<void> {
   const db = await getDb();
   await db.execute(
@@ -91,14 +70,7 @@ export async function markNoteSynced(noteId: string, syncedAt: number): Promise<
   );
 }
 
-/**
- * Fetches every soft-deleted note for a user whose `deletedAt` is older
- * than `cutoffMs` (a Unix-ms timestamp, i.e. `Date.now() - maxAgeMs` in
- * lib/sync/cleanup.ts). These are tombstones old enough to be hard-deleted
- * by the periodic cleanup pass (spec.md subtask 13) - see
- * `getOldTombstoneFolders` in lib/db/folders.ts for why non-dirty AND dirty
- * rows are both included.
- */
+/** Old tombstones, dirty or not; see getOldTombstoneFolders. */
 export async function getOldTombstoneNotes(userId: string, cutoffMs: number): Promise<Note[]> {
   const db = await getDb();
   const rows = await db.select<NoteRow[]>(
@@ -108,12 +80,7 @@ export async function getOldTombstoneNotes(userId: string, cutoffMs: number): Pr
   return rows.map(rowToNote);
 }
 
-/**
- * Genuinely `DELETE FROM`s a note row - unlike every other write in this
- * file, this does not soft-delete. Only meant to be called by the periodic
- * tombstone cleanup pass (lib/sync/cleanup.ts, spec.md subtask 13) on rows
- * that are already tombstones old enough to purge.
- */
+/** A real DELETE, for tombstone cleanup only. */
 export async function hardDeleteNote(noteId: string): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM ${TABLE} WHERE id = $1`, [noteId]);
@@ -130,10 +97,8 @@ export async function getNoteById(noteId: string): Promise<Note | null> {
 }
 
 /**
- * Same as `getNoteById`, but does NOT filter out soft-deleted rows. Pull
- * sync (lib/sync/pull.ts, spec.md subtask 12) needs to find the local row
- * for LWW comparison even when it's a tombstone - `getNoteById` would
- * silently report "no local row" and cause an incorrect re-insert.
+ * Includes soft-deleted rows: pull sync must find tombstones, or it would
+ * re-insert them.
  */
 export async function getNoteRowById(noteId: string): Promise<Note | null> {
   const db = await getDb();
@@ -141,13 +106,7 @@ export async function getNoteRowById(noteId: string): Promise<Note | null> {
   return rows.length > 0 ? rowToNote(rows[0]) : null;
 }
 
-/**
- * Shape of a `notes` Firestore document as written by lib/sync/push.ts's
- * `noteToFirestoreDoc`, plus the Firestore doc id (same as local `id`).
- * `content`/`canvasData` are plain objects here (as stored in Firestore),
- * not JSON strings - `upsertNoteFromRemote` below stringifies them the same
- * way `updateNote` does before writing to the local `TEXT` columns.
- */
+/** content and canvasData are objects here and stringified on write. */
 export type RemoteNoteData = {
   id: string;
   title: string;
@@ -163,15 +122,7 @@ export type RemoteNoteData = {
   deletedAt: number | null;
 };
 
-/**
- * Inserts a new local note row from remote (Firestore) data, or overwrites
- * an existing one, via `INSERT ... ON CONFLICT(id) DO UPDATE`. This is the
- * write primitive pull sync (lib/sync/pull.ts) uses once it has already
- * decided - via LWW/conflict comparison - that the remote data should land
- * locally; this function does not itself make that decision. See
- * `upsertFolderFromRemote` in lib/db/folders.ts for the full reasoning on
- * why `dirty`/`syncedAt` are caller-supplied rather than hardcoded.
- */
+/** See upsertFolderFromRemote. */
 export async function upsertNoteFromRemote(
   remote: RemoteNoteData,
   dirty: boolean,
@@ -217,28 +168,9 @@ export async function upsertNoteFromRemote(
 }
 
 /**
- * `notebookId` is a required parameter - every new note must belong to a
- * notebook now (spec.md subtask 7), mirroring `createFolder`'s
- * `notebookId` requirement in lib/db/folders.ts. The `notes.notebook_id`
- * column itself stays nullable at the SQLite schema level (see the
- * migration 4 comment in src-tauri/src/lib.rs for why), so this requirement
- * is enforced here at the application layer instead, by simply not offering
- * a way to omit it.
- *
- * M6 (spec.md subtask 14): every newly-created note atomically gets a
- * default first page too - a note with zero pages should never be a
- * reachable state (nothing currently reads from that page, since
- * CanvasEditor.tsx still reads/writes `notes.canvas_data` directly until
- * spec.md subtask 16 rewires it onto Pages, but the row must exist from the
- * moment the note does). This is a single `BEGIN; INSERT notes; INSERT
- * pages; COMMIT;` multi-statement `db.execute()` call rather than two
- * separate awaited `db.execute()` calls (one calling `createPage` from
- * lib/db/pages.ts) wrapped in their own `BEGIN`/`COMMIT` - see
- * `deleteFolder` in lib/db/folders.ts for why: `@tauri-apps/plugin-sql`
- * pools connections, so separate `db.execute()` calls aren't guaranteed to
- * reuse the same pooled connection, which breaks `BEGIN`/`COMMIT`
- * transactions spanning them. Folding both inserts into one call restores
- * real atomicity.
+ * notebookId is required here because the column is nullable in the schema.
+ * Every note gets its first page in the same transaction, so a note without
+ * pages can't exist. One execute() call for atomicity; see deleteFolder.
  */
 export async function createNote(
   userId: string,
@@ -321,22 +253,8 @@ export async function updateNote(
 }
 
 /**
- * Soft-deletes a single note and cascades that same soft-delete to every
- * page under it (`pages.note_id REFERENCES notes(id)` is an enforced FK,
- * and has no `ON DELETE CASCADE` - see lib/sync/cleanup.ts's tombstone
- * hard-delete pass, which would otherwise eventually hit an FK violation
- * hard-deleting an old `notes` tombstone while live `pages` rows still
- * reference it). Sets `deletedAt`/`dirty` on both tables, does not `DELETE
- * FROM` either row - mirrors `deleteFolder`'s folder-to-notes cascade in
- * lib/db/folders.ts.
- *
- * Both `UPDATE`s below are sent as a SINGLE multi-statement `db.execute()`
- * call (one semicolon-joined `BEGIN; UPDATE ...; UPDATE ...; COMMIT;`
- * string) rather than as separate `db.execute()` calls wrapping a
- * `BEGIN`/`COMMIT` transaction - see `deleteFolder` in lib/db/folders.ts for
- * why: `@tauri-apps/plugin-sql` pools connections, so separate
- * `db.execute()` calls aren't guaranteed to reuse the same pooled
- * connection, which breaks `BEGIN`/`COMMIT` transactions spanning them.
+ * Also soft-deletes the note's pages (enforced FK without ON DELETE CASCADE;
+ * see deleteFolder). One execute() call for atomicity.
  */
 export async function deleteNote(noteId: string): Promise<void> {
   const db = await getDb();

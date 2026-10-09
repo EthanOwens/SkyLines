@@ -1,11 +1,5 @@
-// spec.md subtask 14 ("Sticky notes home page"). Sticky note `content` is
-// stored as Tiptap JSON (an object like `{ type: "doc", content: [...] }`),
-// not plain text, so preview cards need a small plain-text extraction to
-// show a "first line of content"-style snippet. Walks `content` arrays
-// depth-first, concatenating every node's own `text` field - doesn't need to
-// special-case node types (headings, paragraphs, lists, etc. all just nest
-// `content` arrays the same way), so this stays a generic tree walk rather
-// than an exhaustive per-node-type switch.
+// Plain-text preview of Tiptap JSON: a depth-first walk collecting every node's
+// text.
 type TiptapNode = {
   type?: string;
   text?: string;
@@ -21,8 +15,7 @@ export function extractPlainText(doc: object | null | undefined, maxLength = DEF
   const parts: string[] = [];
   function walk(node: TiptapNode) {
     if (typeof node.text === "string") parts.push(node.text);
-    // Image is a leaf node with no text/content - fall back to a
-    // placeholder so an image-only note doesn't show as "Empty".
+    // Images have no text, so use a placeholder instead of showing "Empty".
     else if (node.type === "image") parts.push("[Image]");
     node.content?.forEach(walk);
   }
@@ -32,9 +25,7 @@ export function extractPlainText(doc: object | null | undefined, maxLength = DEF
   return text.length > maxLength ? `${text.slice(0, maxLength).trimEnd()}…` : text;
 }
 
-// Depth-first search for the first `image` node's `src`, for mini-preview
-// thumbnails on image-only (or image-leading) notes - `extractPlainText`
-// already covers the text case above.
+// For thumbnails on notes that start with an image.
 export function extractFirstImageSrc(doc: object | null | undefined): string | null {
   if (!doc) return null;
 

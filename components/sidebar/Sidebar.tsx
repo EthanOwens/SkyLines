@@ -39,24 +39,9 @@ import {
   CheckCircle2,
 } from "lucide-react";
 
-// Ported from ../note_taking_app/components/sidebar/Sidebar.tsx (spec.md
-// subtask 16). Mutations now go through the SQLite-backed lib/db/notes.ts /
-// lib/db/folders.ts instead of lib/firestore/notes.ts / folders.ts, and
-// note/canvas links use the query-param routing form (/note?id=...,
-// /canvas?id=...) per subtask 5 instead of /note/[id] / /canvas/[id].
-//
-// One mechanical adaptation beyond that: every `<TooltipTrigger asChild>`/
-// `<DropdownMenuTrigger asChild>` from the reference is rewritten as
-// `<... render={<Button .../>} />`. The reference's own `asChild` prop
-// doesn't exist on the actually-installed `@base-ui/react@1.3.0` (confirmed
-// identical in ../note_taking_app's own node_modules and via `tsc`/`next
-// build` failing there too - a pre-existing bug in the reference, not
-// introduced here); this version's trigger primitives merge onto a child
-// element via the `render` prop instead. Verified live in a real Tauri
-// window that `render` correctly merges the Button's class/onClick/children
-// onto the trigger element (single real `<button>`, no invalid nested
-// `<button>`, no runtime error) where `asChild` silently produced two nested
-// `<button>` elements and broke the click handler entirely.
+// Triggers use render={<Button />} rather than asChild: the installed
+// @base-ui/react has no asChild, and using it nested two <button>s and broke
+// their click handlers.
 
 function SyncBadge() {
   const status = useAppStore((s) => s.syncStatus);
@@ -81,34 +66,19 @@ export function Sidebar({ user }: Props) {
   const [creating, setCreating] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
-  // When a notebook is currently open in the sidebar (selectedNotebookId),
-  // new notes/canvases/folders must land in THAT notebook - not just
-  // whichever notebook happens to have the lowest order_index, which is all
-  // getOrCreateDefaultNotebookId can know about. Falling back to the
-  // default notebook only when nothing is open keeps today's no-UI-yet
-  // behavior (spec.md subtask 7; the ribbon shell that lets users switch
-  // notebooks is subtask 8) working exactly as before.
+  // Create in the open notebook; fall back to the default notebook only when
+  // none is open.
   async function resolveNotebookId() {
     return selectedNotebookId ?? (await getOrCreateDefaultNotebookId(user.uid));
   }
 
   async function newNote() {
-    // spec.md subtask 6 ("Merge note creation UI"): "New note" and "New
-    // canvas" collapse to one action - every note is now the merged
-    // free-form-canvas editor, so this always creates `type: "canvas"` and
-    // routes to /canvas?id=... (there's no longer a separate linear-editor
-    // note type to create going forward).
     if (creating) return;
     setCreating(true);
     try {
       const notebookId = await resolveNotebookId();
-      // spec.md M2 subtask 4 ("folder selection for scoped creation"): when
-      // a folder is selected in the sidebar, the toolbar creates under it
-      // instead of at the notebook root - matching FolderItem.tsx's own
-      // addNote/addSubfolder, append after the other existing notes at
-      // whichever level (selected folder, or root) rather than defaulting
-      // to order 0 (createNote's default), which would collide with/jump
-      // ahead of whatever's already there.
+      // Create inside the selected folder if there is one, and append after the
+      // existing items instead of the default order 0.
       const siblingNoteOrders = notes
         .filter((n) => n.folderId === (selectedFolderId ?? null) && n.notebookId === notebookId)
         .map((n) => n.order);
@@ -128,8 +98,7 @@ export function Sidebar({ user }: Props) {
 
   async function newFolder() {
     const notebookId = await resolveNotebookId();
-    // See the comment in newNote above - same reasoning, scoped under the
-    // selected folder (if any) instead of always the notebook root.
+    // Same as newNote, for folders.
     const siblingFolderOrders = folders
       .filter((f) => f.parentId === (selectedFolderId ?? null) && f.notebookId === notebookId)
       .map((f) => f.order);

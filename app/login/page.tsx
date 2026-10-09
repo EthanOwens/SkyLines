@@ -25,20 +25,12 @@ import {
   verifyAndConsumeNonce,
 } from "@/lib/auth/googleOAuth";
 
-// Fixed, self-bootstrapping personal dev-login account (spec.md subtask 2).
-// Not security-sensitive - a throwaway account with no real data value,
-// matching the TEST_EMAIL/TEST_PASSWORD convention used throughout this
-// project's app/spike-*/page.tsx verification routes.
+// Self-bootstrapping dev login account. It holds no real data.
 const DEV_EMAIL = "dev@skylines.local";
 const DEV_PASSWORD = "DevLogin123!";
 
-// Ported from ../note_taking_app/app/login/page.tsx (spec.md subtask 21),
-// rebranded NoteFlow -> Skylines. Email/password sign-in is unchanged
-// (`signInWithEmailAndPassword`) per spec.md's explicit "leave as-is".
-// Google sign-in replaces `signInWithPopup` with a system-browser +
-// deep-link flow - see lib/auth/googleOAuth.ts for why, and for the
-// external Google Cloud Console configuration this needs before it can
-// work end to end.
+// Google sign-in runs through the system browser and a deep link; see
+// lib/auth/googleOAuth.ts.
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -70,21 +62,16 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
-    // Handles the deep-link callback while this app instance keeps running
-    // (the common case: system browser hands off `skylines://auth-callback`
-    // and tauri-plugin-single-instance's `deep-link` feature forwards it
-    // here as a `deep-link://new-url` event - see src-tauri/src/lib.rs).
+    // Deep-link callback while the app is running (forwarded by the
+    // single-instance plugin).
     const unlistenPromise = onOpenUrl((urls) => {
       const callbackUrl = urls.find(isGoogleAuthCallbackUrl);
       if (callbackUrl && shouldProcessCallbackUrl(callbackUrl)) void finishGoogleSignIn(callbackUrl);
     });
 
-    // Handles the case where the app was launched fresh by the deep link
-    // (e.g. it had been closed while the browser step was in progress).
-    // getCurrent() returns the same cached URL on every call (it's never
-    // cleared plugin-side), so this is also guarded by
-    // shouldProcessCallbackUrl - otherwise remounting this page later (e.g.
-    // after signing out) would reprocess a stale, already-consumed callback.
+    // Callback that launched the app fresh. getCurrent() keeps returning the
+    // same URL, so shouldProcessCallbackUrl guards against reprocessing it on a
+    // later mount.
     void getCurrent().then((urls) => {
       const callbackUrl = urls?.find(isGoogleAuthCallbackUrl);
       if (callbackUrl && shouldProcessCallbackUrl(callbackUrl)) void finishGoogleSignIn(callbackUrl);
@@ -135,13 +122,9 @@ export default function LoginPage() {
       try {
         await signInWithEmailAndPassword(auth, DEV_EMAIL, DEV_PASSWORD);
       } catch (err) {
-        // Only self-bootstrap the account when sign-in failed because it
-        // genuinely doesn't exist yet ("auth/user-not-found", or
-        // "auth/invalid-credential" on projects with email enumeration
-        // protection enabled, which hides whether the account exists).
-        // Any other failure (network error, wrong password on an account
-        // that already exists correctly, etc.) is rethrown as-is so it
-        // isn't masked by an account-creation attempt.
+        // Only create the account when sign-in failed because it doesn't exist
+        // ("auth/invalid-credential" when email enumeration protection hides
+        // that). Rethrow every other error.
         const code = err instanceof FirebaseError ? err.code : undefined;
         if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
           await createUserWithEmailAndPassword(auth, DEV_EMAIL, DEV_PASSWORD);
@@ -170,9 +153,7 @@ export default function LoginPage() {
     setGoogleLoading(true);
     try {
       const url = buildGoogleAuthUrl();
-      // Opens the URL in the OS's actual default browser, NOT this app's
-      // webview - required because Google's OAuth policy blocks sign-in
-      // from embedded/non-standard webviews (see lib/auth/googleOAuth.ts).
+      // Must be the OS browser: Google blocks OAuth inside embedded webviews.
       await openInBrowser(url);
     } catch {
       setError("Could not open the system browser for Google sign-in.");

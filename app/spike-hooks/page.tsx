@@ -19,19 +19,9 @@ import { createNote } from "@/lib/db/notes";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { getSyncStatus } from "@/lib/sync/engine";
 
-// spec.md subtask 15 verification route (M4 "auth + data hooks rewire").
-// Exercises the whole rewired data layer end-to-end against real Firestore +
-// real SQLite: AuthProvider/useAuth, useFolders/useNotes now reading from
-// lib/db/folders.ts/notes.ts instead of Firestore onSnapshot,
-// lib/db/events.ts's change-notification driving automatic store updates,
-// useSyncEngine wiring lib/sync/engine.ts into lifecycle (start on sign-in,
-// stop on sign-out, syncStatus mirrored into stores/appStore.ts), and the
-// "local write schedules a push, remote-origin write does not" distinction
-// (no manual scheduleDirtyPush/pushDirtyRows call anywhere in this file -
-// every push observed here must come from the real wiring). Signs in with a
-// throwaway test account solely to satisfy firestore.rules (same pattern as
-// app/spike-engine/page.tsx, app/spike-pull/page.tsx) - cleanup deletes
-// Firestore test docs BEFORE the auth account, always. Not production UI.
+// Dev-only verification page for the auth and data hooks against real Firestore
+// and SQLite. Every push here must come from the real wiring: no manual push
+// calls. Not production UI.
 
 const TEST_EMAIL = "skylines-hooks-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -101,10 +91,7 @@ function SpikeHooksInner() {
     append(`created LOCAL note id=${id} via lib/db/notes.ts createNote only (no scheduleDirtyPush call here)`);
   }
 
-  /** Polls the store directly (bypassing this component's own render cycle)
-   * to confirm useFolders/useNotes re-fetched automatically off the
-   * lib/db/events.ts change-notification, with no manual re-fetch call from
-   * this test. */
+  /** Polls the store directly to confirm the hooks refetched on their own. */
   async function checkStoreAutoUpdated() {
     if (createdFolderIdsRef.current.length === 0 && createdNoteIdsRef.current.length === 0) {
       return append("create a local folder/note first");
@@ -124,9 +111,6 @@ function SpikeHooksInner() {
     append(`STORE AUTO-UPDATE RESULT: ${foldersOk && notesOk ? "PASS" : "FAIL"}`);
   }
 
-  /** Confirms a local create actually reaches Firestore automatically -
-   * never calling scheduleDirtyPush/pushDirtyRows/flushDirtyPush from this
-   * test code, only relying on useSyncEngine's real wiring (step 7). */
   async function checkAutoPush() {
     if (createdFolderIdsRef.current.length === 0) return append("create a local folder first");
     const folderId = createdFolderIdsRef.current[createdFolderIdsRef.current.length - 1];
@@ -147,14 +131,7 @@ function SpikeHooksInner() {
     append(`AUTO-PUSH RESULT: ${found ? "PASS" : "FAIL"} (firestoreDocExists=${found}, local.dirty=${localDirty})`);
   }
 
-  /** Confirms pulling a remote-only change does NOT get redundantly
-   * re-pushed as if it were a new local dirty write: writes a doc directly
-   * to Firestore, confirms it lands locally (dirty=false, since
-   * upsertFolderFromRemote sets dirty=false and notifies "remote", which
-   * useSyncEngine's subscriber explicitly does NOT forward to
-   * scheduleDirtyPush), then waits past a full debounce+max-wait cycle and
-   * re-checks that the row is still not dirty and Firestore's document is
-   * untouched (same updatedAt as originally written). */
+  /** A pulled remote change must not be pushed back as a local write. */
   async function runRemoteWriteNoLoopTest() {
     if (!user) return append("sign in first");
     try {
@@ -195,18 +172,11 @@ function SpikeHooksInner() {
     }
   }
 
-  /** Confirms the engine actually stopped on sign-out: creates a local dirty
-   * row using the last known uid (auth.currentUser is null post-signout, so
-   * this simulates "an edit happened right after teardown"), waits past a
-   * full debounce+max-wait window, and confirms it was NOT auto-pushed -
-   * proving useSyncEngine's teardown (and its scheduleDirtyPush wiring)
-   * really stopped rather than lingering. Checks ONLY the local `dirty`
-   * flag (via lib/db/folders.ts, not a Firestore read): a successful push
-   * is the only thing that ever flips `dirty` back to false
-   * (markFolderSynced), so `dirty` staying true is sufficient proof no push
-   * happened - reading Firestore itself isn't needed, and firestore.rules
-   * denies reads while signed out anyway (`request.auth != null`), which
-   * would make a `getDoc` call here throw instead of proving anything. */
+  /**
+   * Signing out must stop the engine. A local edit made afterwards must stay
+   * dirty, since only a successful push clears dirty. Firestore can't be read
+   * while signed out, so the dirty flag is the proof.
+   */
   async function checkEngineStoppedAfterSignout() {
     if (!lastUidRef.current) return append("sign in (and out) at least once first");
     if (auth.currentUser) return append("sign out first - engine is still running for the current session");

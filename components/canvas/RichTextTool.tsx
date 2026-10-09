@@ -1,35 +1,15 @@
 "use client";
 
-// Custom tldraw StateNode tool that stays the persistent default tool
-// (unlike tldraw's own text/note tools, which hand back to `select` after
-// one shape). tldraw's own framework force-switches `currentTool` to
-// `select.editing_shape` whenever `editingShapeId` goes null -> non-null, no
-// opt-out - so right after creating/editing a shape, `currentTool` is really
-// `select`, not `rich-text`. `installRichTextToolAutoReturn` watches for
-// this tool's own edit sessions ending and switches back to `rich-text`, so
-// repeated clicks on empty canvas keep creating shapes without reselecting a
-// tool. Only shapes whose edit session THIS tool's own click handling
-// started are eligible for that auto-return (tracked in
-// `shapesWithEditSessionOwnedByThisTool`) - a shape edited via Select's own
-// double-click-to-edit must behave like normal tldraw, untouched by this
-// tool.
+// The app's persistent default tool: unlike tldraw's text tool, it doesn't hand
+// back to select after one shape. tldraw force-switches currentTool to
+// select.editing_shape whenever editing starts, so the auto-return watcher
+// switches back to rich-text when an edit session this tool started ends.
+// Shapes edited through Select's own double-click behave like normal tldraw.
 //
-// tldraw's raw canvas pointerdown always reports `target: 'canvas'` (no
-// real-DOM shape hit-testing) - `getHitShapeOnCanvasPointerDown` (tldraw's
-// own helper, also used by its Select tool) does the actual geometry hit
-// test.
-//
-// Click-vs-drag (`Idle` -> `PointingCanvas`/`PointingShape`) mirrors
-// tldraw's own Select tool chart. `Brushing`/`Translating` aren't
-// importable directly (excluded from tldraw's package exports), so a drag
-// hands the gesture off to the real, already-registered `select` tool
-// instance instead (`editor.setCurrentTool('select')` +
-// `.transition('brushing'|'translating', info)`) - the same code path
-// tldraw's own Select tool uses. `currentTool` stays on `select` for as
-// long as the resulting selection is non-empty, so native resize/rotate/
-// Delete/drag all keep working (those only wire up while `currentTool` is
-// genuinely `select`); `installReturnToRichTextWatcher` switches back once
-// the selection empties out.
+// Click vs drag mirrors tldraw's Select tool chart. Brushing and Translating
+// aren't exported, so a drag hands off to the real select tool, which stays
+// current while the selection is non-empty so resize, rotate, Delete and drag
+// keep working.
 import {
   StateNode,
   createShapeId,
@@ -47,13 +27,9 @@ import type { RichTextShape } from "./RichTextShape";
 const DEFAULT_WIDTH = 320;
 const DEFAULT_HEIGHT = 200;
 
-// Transient, in-memory, session-scoped tracking of shape ids whose current
-// edit session was started by this tool's own click handling (create in
-// `PointingCanvas`, or click-to-edit-existing in `PointingShape`) - not a
-// permanent `meta` flag, since a permanent flag would misfire on a later,
-// unrelated Select-tool double-click-to-edit of the same shape. Populated
-// on edit-session start, consumed (deleted) the first time the auto-return
-// handler sees that session end.
+// Shapes whose current edit session this tool started. Kept in memory rather
+// than as shape meta, which would misfire on a later Select double-click edit.
+// Consumed when that session ends.
 const shapesWithEditSessionOwnedByThisTool = new Set<TLShapeId>();
 
 function handOffToBrushing(editor: Editor, info: TLPointerEventInfo & { target: "canvas" }) {
@@ -64,8 +40,7 @@ function handOffToBrushing(editor: Editor, info: TLPointerEventInfo & { target: 
   requestReturnToRichText();
 }
 
-// Selects the dragged shape first, mirroring tldraw's own
-// `PointingShape.startTranslating` (bails to idle if nothing's selected).
+// Select the shape first, like tldraw's PointingShape.startTranslating.
 function handOffToTranslating(
   editor: Editor,
   info: TLPointerEventInfo & { target: "shape"; shape: TLShape },
@@ -81,31 +56,17 @@ function handOffToTranslating(
   requestReturnToRichText();
 }
 
-// A resize/rotate-handle pointer-down can never reach this tool's `Idle`:
-// handle DOM elements are only pointer-interactive while `currentTool` is
-// genuinely `select`, and `Idle.onPointerDown` only ever runs while
-// `currentTool` is `rich-text` - mutually exclusive. So there's no
-// `info.target === 'selection'` branch here; native handle/Delete/drag
-// behavior is fully covered by keeping `currentTool` on `select` for as
-// long as a selection persists (see `installReturnToRichTextWatcher`).
-
-// Single persistent flags (not per-gesture one-shot watchers) driving
-// `installReturnToRichTextWatcher` below. `requestReturnToRichText()` is
-// called any time this tool's OWN logic (not a deliberate user tool choice)
-// hands control to `select` and wants it back - the brush/translate
-// hand-offs, an edit session this tool owned ending, and Escape while idle.
-// `mayReenterEdit` additionally covers the edit-to-edit-click case (see
-// `resolvePendingReturnToRichText`) - only set by the sideEffects handler
-// below, never by hand-offs or Escape, since a marquee-select or Escape
-// settling on one selected shape must never auto-open it for editing.
+// No handle branch is needed here: resize and rotate handles only respond while
+// currentTool is select, and Idle only runs under rich-text.
+//
+// requestReturnToRichText() is called whenever this tool's own logic (not a
+// user tool choice) hands control to select and wants it back. mayReenterEdit
+// is set only for edit-to-edit clicks, never for hand-offs or Escape, so a
+// marquee or Escape never opens a shape for editing.
 let pendingReturnToRichText = false;
 let pendingReturnMayReenterEdit = false;
-// The shape whose edit session ending triggered this pending return, when
-// known (only the sideEffects handler in `installRichTextToolAutoReturn`
-// below provides one - an edit session just ended on this exact shape).
-// `undefined` for the brush/translate hand-offs and Escape, which aren't
-// associated with any one shape's edit session, so per-shape suppression
-// below simply doesn't apply to them.
+// The shape whose edit session ended, when known. Undefined for hand-offs and
+// Escape, which aren't tied to one shape.
 let pendingReturnShapeId: TLShapeId | undefined = undefined;
 let explicitToolSwitchInProgress = false;
 
@@ -121,32 +82,20 @@ export function suppressReenterEditAfterEndingSession() {
   pendingReturnMayReenterEdit = false;
 }
 
-// Directly clears any dangling pending-return state, rather than merely
-// suppressing it. The watcher below only re-evaluates `pendingReturnToRichText`
-// when getCurrentToolId()/isIn("select.idle")/getSelectedShapeIds() actually
-// change value - ending an edit session purely via focus loss (no canvas
-// pointer event, e.g. clicking a portaled dialog's own button) can set
-// `pendingReturnToRichText = true` with NO such signal change following it,
-// so the watcher never re-runs and the flag stays dangling until some
-// unrelated LATER click finally triggers it - by which point a merely
-// time-scoped suppression (like `reenterEditSuppressed` while a dialog is
-// open) has already been lifted. Called by RichTextShape.tsx when its link
-// dialog closes, to flush this out definitively instead of racing it.
+// Clears a dangling pending return outright. Ending an edit through focus loss
+// (such as clicking a portaled dialog button) sets the flag without changing
+// any signal the watcher tracks, so it would otherwise fire on a later
+// unrelated click.
 export function clearPendingReturnToRichText() {
   pendingReturnToRichText = false;
   pendingReturnMayReenterEdit = false;
   pendingReturnShapeId = undefined;
 }
 
-// Persistent (not one-shot) version of the above, toggled by RichTextShape.tsx
-// while its link dialog is open. tldraw's own FocusManager ends the edit
-// session on any outside mousedown (e.g. the dialog's Cancel/X button, which
-// is portaled outside .tl-container) - without this, resolvePendingReturnToRichText
-// below would then reenter edit on that same shape at the click's screen
-// point, which looks like a phantom new text box appearing under the dialog.
-// Keyed per-shape id (not a single flag) so one shape's dialog closing can
-// never clear suppression for a DIFFERENT shape whose dialog is still open,
-// mirroring `shapesWithEditSessionOwnedByThisTool` above.
+// Shapes whose link dialog is open. tldraw ends the edit session on any outside
+// mousedown, including the dialog's own buttons, and re-entering edit at that
+// point would look like a phantom text box. Per shape, so one dialog closing
+// can't clear another's suppression.
 const shapesWithSuppressedReenter = new Set<TLShapeId>();
 export function setReenterEditSuppressed(shapeId: TLShapeId, suppressed: boolean) {
   if (suppressed) {
@@ -156,16 +105,10 @@ export function setReenterEditSuppressed(shapeId: TLShapeId, suppressed: boolean
   }
 }
 
-// Ribbon.tsx's Draw-tab tool buttons call this INSTEAD OF a raw
-// `editor.setCurrentTool(id)`, for two reasons: (1) it suppresses
-// `requestReturnToRichText()` for the duration via
-// `explicitToolSwitchInProgress`, so a deliberate switch is never hijacked
-// by the auto-return watcher; (2) `StateNode.transition()` no-ops when the
-// target id already matches the active child, so a raw
-// `setCurrentTool('select')` while mid-edit (where `currentTool` is
-// already `'select'`, via tldraw's own force-switch) would otherwise do
-// nothing at all - the exit+enter below mirrors tldraw's own workaround
-// for this in its Select toolbar button.
+// Use this instead of setCurrentTool for deliberate tool switches. It stops the
+// auto-return watcher from hijacking the switch, and forces an exit and
+// re-enter because transition() does nothing when select is already active (as
+// it is mid-edit).
 export function switchToToolExplicitly(editor: Editor, toolId: string) {
   explicitToolSwitchInProgress = true;
   try {
@@ -186,40 +129,21 @@ export function switchToToolExplicitly(editor: Editor, toolId: string) {
   }
 }
 
-// Persistent (not one-shot) reactive watcher, installed once for the
-// editor's lifetime. Only acts while `pendingReturnToRichText` is true, and
-// requires BOTH `select.idle` and an empty selection (not idle alone) -
-// resize/rotate handles and native Delete only work while `currentTool` is
-// genuinely `select` with a live selection, so returning to `rich-text` the
-// instant `select.idle` is reached, before a hand-off's selection is even
-// visible, would silently break all of that.
+// Installed once per editor. Acts only while a return is pending, and only once
+// select is idle with an empty selection: returning earlier would break resize,
+// rotate and Delete, which need select with a live selection.
 //
-// `react()` rebuilds its dependency set from scratch every run, from
-// exactly the signals read that run - an early return before reading a
-// signal means that signal is never tracked going forward. All three
-// signals below are therefore read unconditionally, before any branching,
-// so a sub-state-only transition within `select` (which doesn't change
-// `getCurrentToolId()`) still reliably reruns this effect.
+// All three signals are read before any branching because react() only tracks
+// what each run reads.
 //
-// The reactive callback itself only reads signals and schedules work - it
-// never calls an `editor.*` write directly. `react()` reruns synchronously
-// and reentrantly the instant a tracked signal changes, including a
-// transient value mid-way through a still-in-progress tldraw internal
-// transition (e.g. clicking a second shape while editing a first briefly,
-// reentrantly, visits `select.idle` with the OLD shape still selected,
-// before the new one is actually selected). Acting on that transient state
-// synchronously - calling `setEditingShape` from inside a reentrant,
-// nested call - corrupts tldraw's own transition bookkeeping and can throw.
-// So the actual work is deferred via `queueMicrotask` to a fresh top-level
-// call stack that only runs once the whole synchronous dispatch has
-// unwound, and re-reads everything fresh at that point rather than trusting
-// this run's readings (this depends specifically on microtask semantics -
-// swapping for `setTimeout`/`requestAnimationFrame`/anything `await`-based
-// would let these module-level flags leak across an editor teardown).
+// The callback never writes to the editor directly. react() can rerun
+// reentrantly mid-transition (clicking a second shape while editing visits
+// select.idle with the old selection), and writing then corrupts tldraw's
+// state. Work is deferred with queueMicrotask and re-reads everything; a timer
+// or await would let these module-level flags outlive an editor teardown.
 function installReturnToRichTextWatcher(editor: Editor): () => void {
-  // Catches any rich-text -> select transition we didn't cause ourselves
-  // (e.g. tldraw's own Ctrl+A/delete/group/etc. actions force-switch to
-  // select internally) and treats it the same as our own hand-offs.
+  // Treat rich-text -> select switches we didn't cause (tldraw's Ctrl+A,
+  // delete, group and similar) like our own hand-offs.
   let lastToolId = editor.getCurrentToolId();
   const stop = react("rich-text tool: persistent return-to-rich-text watcher", () => {
     const toolId = editor.getCurrentToolId();
@@ -244,17 +168,10 @@ function installReturnToRichTextWatcher(editor: Editor): () => void {
   return stop;
 }
 
-// Deferred resolution for the watcher above - see its comment for why this
-// runs on a fresh call stack instead of inline. If the settled selection is
-// exactly one editable `rich-text` shape and `pendingReturnMayReenterEdit`
-// is set, re-enters edit mode on it directly (placing the cursor at the
-// click position) instead of leaving it merely selected - this covers
-// clicking directly from one text box's edit session into another, which
-// tldraw's own Select tool only selects (never edits) since single-click-
-// to-edit is entirely this tool's own behavior and isn't active during an
-// edit-to-edit click. `mayReenterEdit` is consumed unconditionally the
-// moment it's evaluated (not only on a successful reentry), so it can't
-// wrongly fire on a later, unrelated ordinary click.
+// Runs on a fresh call stack (see the watcher above). If the settled selection
+// is one editable rich-text shape and re-entering is allowed, edit it at the
+// click point: clicking from one text box straight into another only selects it
+// in tldraw. mayReenterEdit is consumed whether or not it's used.
 function resolvePendingReturnToRichText(editor: Editor) {
   if (editor.getCurrentToolId() !== "select") return;
   if (!editor.isIn("select.idle")) return;
@@ -266,14 +183,8 @@ function resolvePendingReturnToRichText(editor: Editor) {
   pendingReturnMayReenterEdit = false;
   pendingReturnShapeId = undefined;
 
-  // While a link dialog is open (or was open when this session ended, see
-  // RichTextShape.tsx) for the SPECIFIC shape whose edit session ending
-  // triggered this pending return, neither reentering edit NOR switching to
-  // the crosshair-arming "rich-text" tool is safe for it - both branches
-  // below assume this was a genuine canvas interaction, but a session
-  // ending purely via focus loss to that shape's portaled dialog isn't one.
-  // Keyed per-shape so a DIFFERENT shape's dialog closing can't wrongly
-  // clear this suppression.
+  // A session that ended because focus moved to this shape's link dialog isn't
+  // a canvas interaction, so neither re-enter edit nor re-arm the tool.
   if (shapeIdThisRun && shapesWithSuppressedReenter.has(shapeIdThisRun)) {
     pendingReturnToRichText = false;
     return;
@@ -302,9 +213,8 @@ function resolvePendingReturnToRichText(editor: Editor) {
   editor.setCurrentTool("rich-text");
 }
 
-// Click-vs-drag on empty canvas (or a locked/non-editable shape). A plain
-// click creates a new shape at the origin point; a real drag hands off to
-// tldraw's marquee-select instead.
+// Click on empty canvas (or a locked shape) creates a shape; a drag hands off
+// to tldraw's marquee select.
 class PointingCanvas extends StateNode {
   static override id = "pointing_canvas";
 
@@ -353,24 +263,19 @@ class PointingCanvas extends StateNode {
 
     shapesWithEditSessionOwnedByThisTool.add(id);
 
-    // RichTextShape.tsx's own `useIsEditing` effect focuses the Tiptap
-    // editor once `getEditingShapeId()` matches, so no further wiring is
-    // needed here.
+    // RichTextShape focuses its editor once it becomes the editing shape.
     editor.select(id);
     editor.setEditingShape(id);
   }
 }
 
-// Click-vs-drag on an existing, interactable shape. A plain click enters
-// edit mode (for an editable `rich-text` shape) or no-ops (anything else);
-// a real drag hands off to tldraw's real shape-translate.
+// Click on a shape edits it (if it's an editable rich-text shape); a drag hands
+// off to tldraw's translate.
 class PointingShape extends StateNode {
   static override id = "pointing_shape";
 
   private hitShape = {} as TLShape;
-  // Client/viewport-space point the original pointer-down landed at -
-  // captured on enter (not re-hit-tested on pointer-up), matching what
-  // `posAtCoords()` expects downstream in RichTextShape.tsx.
+  // Viewport coordinates of the pointer-down, which posAtCoords() expects.
   private clickPoint = { x: 0, y: 0 };
 
   override onEnter(info: TLPointerEventInfo & { target: "shape" }) {
@@ -421,9 +326,8 @@ class PointingShape extends StateNode {
       clientY: this.clickPoint.y,
     });
 
-    // Editing an existing shape (not just creating one) also needs to be
-    // tracked, so clicking away from it correctly primes the auto-return
-    // watcher instead of stranding `currentTool` on `select`.
+    // Track edits of existing shapes too, so leaving them triggers the
+    // auto-return.
     shapesWithEditSessionOwnedByThisTool.add(hitShape.id);
 
     editor.select(hitShape.id);
@@ -445,9 +349,8 @@ class Idle extends StateNode {
 
     if (hitShape) {
       if (hitShape.type === "rich-text") {
-        // `canEditShape()` (not just `!hitShape.isLocked`) also walks up
-        // via ancestor lock state, so a shape inside a locked group/frame
-        // still correctly reads as non-editable.
+        // canEditShape() also respects locked ancestors such as groups and
+        // frames.
         if (editor.canEditShape(hitShape.id)) {
           this.parent.transition("pointing_shape", { ...info, target: "shape", shape: hitShape });
           return;
@@ -463,15 +366,12 @@ class Idle extends StateNode {
   }
 
   override onCancel() {
-    // Escape forces `currentTool` to `select` regardless of what this tool
-    // wants - prime the auto-return so control bounces straight back once
-    // `select` settles (in practice, near-instant).
+    // Escape forces select; queue the return to rich-text.
     requestReturnToRichText();
     this.editor.setCurrentTool("select");
   }
 }
 
-/** @public */
 export class RichTextTool extends StateNode {
   static override id = "rich-text";
   static override initial = "idle";
@@ -480,8 +380,8 @@ export class RichTextTool extends StateNode {
   }
 }
 
-// Call once per tldraw editor instance (CanvasEditor.tsx's `onMount`) and
-// call the returned cleanup on unmount.
+// Call once per editor (CanvasEditor's onMount); call the returned cleanup on
+// unmount.
 export function installRichTextToolAutoReturn(editor: Editor): () => void {
   const unregister = editor.sideEffects.registerAfterChangeHandler(
     "instance_page_state",
@@ -493,12 +393,9 @@ export function installRichTextToolAutoReturn(editor: Editor): () => void {
       );
       if (!editSessionOwnedByThisTool) return;
       if (explicitToolSwitchInProgress) return;
-      // `mayReenterEdit: true` only here - covers the same click ending
-      // this edit session possibly also landing `select` on a different,
-      // editable `rich-text` shape (see `resolvePendingReturnToRichText`).
-      // `shapeId` is this exact shape (`prev.editingShapeId`), so per-shape
-      // reenter suppression below only ever applies to the shape whose
-      // session actually just ended.
+      // The click that ended this session may also have landed on another
+      // editable shape, so allow re-entering edit; shapeId scopes the dialog
+      // suppression to this shape.
       requestReturnToRichText({ mayReenterEdit: true, shapeId: prev.editingShapeId });
     },
   );

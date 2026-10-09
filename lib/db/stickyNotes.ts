@@ -2,12 +2,7 @@ import type { StickyNote } from "@/types";
 import { getDb } from "./client";
 import { notifyDataChange } from "./events";
 
-// Local SQLite data-access layer for `sticky_notes` (spec.md subtask 7),
-// mirroring lib/db/pages.ts's/lib/db/notes.ts's exact function-naming/shape
-// conventions. Unlike `pages` (scoped by `noteId`, a page always belongs to
-// exactly one note) sticky notes are their own top-level entity - they are
-// NOT scoped to a note/page, so `getStickyNotes` lists by `userId` directly,
-// the same way `getNotes` in lib/db/notes.ts does.
+// Sticky notes aren't scoped to a note, so they're listed by user.
 
 const TABLE = "sticky_notes";
 
@@ -57,12 +52,7 @@ export async function getStickyNotes(userId: string): Promise<StickyNote[]> {
   return rows.map(rowToStickyNote);
 }
 
-/**
- * Fetches every sticky note for a user with `dirty = 1`, including
- * soft-deleted ones (deletedAt tombstones must be pushed too - see
- * `getDirtyNotes` in lib/db/notes.ts). Used by lib/sync/push.ts to find
- * rows that need to go to Firestore.
- */
+/** Includes soft-deleted rows, since tombstones must be pushed too. */
 export async function getDirtyStickyNotes(userId: string): Promise<StickyNote[]> {
   const db = await getDb();
   const rows = await db.select<StickyNoteRow[]>(
@@ -72,11 +62,7 @@ export async function getDirtyStickyNotes(userId: string): Promise<StickyNote[]>
   return rows.map(rowToStickyNote);
 }
 
-/**
- * Marks a sticky note as successfully synced: clears `dirty` and stamps
- * `syncedAt` with the same client timestamp used for the Firestore write, so
- * local and remote agree on when the push happened.
- */
+/** Uses the same timestamp as the Firestore write. */
 export async function markStickyNoteSynced(id: string, syncedAt: number): Promise<void> {
   const db = await getDb();
   await db.execute(
@@ -85,13 +71,7 @@ export async function markStickyNoteSynced(id: string, syncedAt: number): Promis
   );
 }
 
-/**
- * Fetches every soft-deleted sticky note for a user whose `deletedAt` is
- * older than `cutoffMs` (a Unix-ms timestamp, i.e. `Date.now() - maxAgeMs`
- * in lib/sync/cleanup.ts). These are tombstones old enough to be
- * hard-deleted by the periodic cleanup pass - see `getOldTombstoneNotes` in
- * lib/db/notes.ts for why non-dirty AND dirty rows are both included.
- */
+/** Old tombstones, dirty or not; see getOldTombstoneFolders. */
 export async function getOldTombstoneStickyNotes(
   userId: string,
   cutoffMs: number,
@@ -104,23 +84,13 @@ export async function getOldTombstoneStickyNotes(
   return rows.map(rowToStickyNote);
 }
 
-/**
- * Genuinely `DELETE FROM`s a sticky note row - unlike every other write in
- * this file, this does not soft-delete. Only meant to be called by the
- * periodic tombstone cleanup pass (lib/sync/cleanup.ts) on rows that are
- * already tombstones old enough to purge.
- */
+/** A real DELETE, for tombstone cleanup only. */
 export async function hardDeleteStickyNote(id: string): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM ${TABLE} WHERE id = $1`, [id]);
   notifyDataChange("remote");
 }
 
-/**
- * Single-row getter by id, mirroring `getNoteById` in lib/db/notes.ts - a
- * later subtask needs this to open a specific sticky note by id in its own
- * pop-out window.
- */
 export async function getStickyNoteById(id: string): Promise<StickyNote | null> {
   const db = await getDb();
   const rows = await db.select<StickyNoteRow[]>(
@@ -130,27 +100,14 @@ export async function getStickyNoteById(id: string): Promise<StickyNote | null> 
   return rows.length > 0 ? rowToStickyNote(rows[0]) : null;
 }
 
-/**
- * Same as `getStickyNoteById`, but does NOT filter out soft-deleted rows.
- * Pull sync (lib/sync/pull.ts) needs to find the local row for LWW
- * comparison even when it's a tombstone - `getStickyNoteById` would silently
- * report "no local row" and cause an incorrect re-insert. Mirrors
- * `getNoteRowById` in lib/db/notes.ts.
- */
+/** Includes soft-deleted rows; see getNoteRowById. */
 export async function getStickyNoteRowById(id: string): Promise<StickyNote | null> {
   const db = await getDb();
   const rows = await db.select<StickyNoteRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [id]);
   return rows.length > 0 ? rowToStickyNote(rows[0]) : null;
 }
 
-/**
- * Shape of a `sticky_notes` Firestore document as written by
- * lib/sync/push.ts's (future) `stickyNoteToFirestoreDoc`, plus the
- * Firestore doc id (same as local `id`). `content` is a plain object here
- * (as stored in Firestore), not a JSON string - `upsertStickyNoteFromRemote`
- * below stringifies it the same way `updateStickyNote` does before writing
- * to the local `TEXT` column.
- */
+/** content is an object here and stringified on write. */
 export type RemoteStickyNoteData = {
   id: string;
   userId: string;
@@ -164,15 +121,7 @@ export type RemoteStickyNoteData = {
   deletedAt: number | null;
 };
 
-/**
- * Inserts a new local sticky note row from remote (Firestore) data, or
- * overwrites an existing one, via `INSERT ... ON CONFLICT(id) DO UPDATE`.
- * This is the write primitive pull sync (lib/sync/pull.ts) uses once it has
- * already decided - via LWW/conflict comparison - that the remote data
- * should land locally; this function does not itself make that decision.
- * See `upsertNoteFromRemote` in lib/db/notes.ts for the full reasoning on
- * why `dirty`/`syncedAt` are caller-supplied rather than hardcoded.
- */
+/** See upsertFolderFromRemote. */
 export async function upsertStickyNoteFromRemote(
   remote: RemoteStickyNoteData,
   dirty: boolean,
@@ -213,7 +162,6 @@ export async function upsertStickyNoteFromRemote(
   notifyDataChange("remote");
 }
 
-/** Creates a new sticky note row for `userId`. Used by a future "new sticky note" UI action. */
 export async function createStickyNote(
   userId: string,
   title = "Untitled",

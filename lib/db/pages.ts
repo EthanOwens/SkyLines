@@ -2,16 +2,8 @@ import type { Page } from "@/types";
 import { getDb } from "./client";
 import { notifyDataChange } from "./events";
 
-// Local SQLite data-access layer for `pages` (spec.md M6 subtask 14),
-// mirroring lib/db/notes.ts's exact function names/shapes/conventions - see
-// that file's header comment for the reasoning behind the one-shot-query
-// (no realtime listener) model. `getPages` is scoped by `noteId` (a page
-// always belongs to exactly one note, per the Page type's required `noteId`
-// FK) rather than by `userId` directly, since that's how callers will
-// actually want to read pages (all pages for the note currently open) - the
-// `user_id` column is still kept on every row/query below so sync
-// (getDirtyPages/getOldTombstonePages) can use the same flat
-// `WHERE user_id = $1` pattern as every other synced entity.
+// Read by note, but every row still keeps user_id so sync can query with the
+// same WHERE user_id pattern as other tables.
 
 const TABLE = "pages";
 
@@ -62,12 +54,7 @@ export async function getPages(noteId: string): Promise<Page[]> {
   return rows.map(rowToPage);
 }
 
-/**
- * Fetches every page for a user with `dirty = 1`, including soft-deleted
- * ones (deletedAt tombstones must be pushed too - see `getDirtyNotes` in
- * lib/db/notes.ts). Used by lib/sync/push.ts (spec.md subtask 15) to find
- * rows that need to go to Firestore.
- */
+/** Includes soft-deleted rows, since tombstones must be pushed too. */
 export async function getDirtyPages(userId: string): Promise<Page[]> {
   const db = await getDb();
   const rows = await db.select<PageRow[]>(
@@ -77,11 +64,7 @@ export async function getDirtyPages(userId: string): Promise<Page[]> {
   return rows.map(rowToPage);
 }
 
-/**
- * Marks a page as successfully synced: clears `dirty` and stamps
- * `syncedAt` with the same client timestamp used for the Firestore write, so
- * local and remote agree on when the push happened.
- */
+/** Uses the same timestamp as the Firestore write. */
 export async function markPageSynced(pageId: string, syncedAt: number): Promise<void> {
   const db = await getDb();
   await db.execute(
@@ -90,14 +73,7 @@ export async function markPageSynced(pageId: string, syncedAt: number): Promise<
   );
 }
 
-/**
- * Fetches every soft-deleted page for a user whose `deletedAt` is older
- * than `cutoffMs` (a Unix-ms timestamp, i.e. `Date.now() - maxAgeMs` in
- * lib/sync/cleanup.ts). These are tombstones old enough to be hard-deleted
- * by the periodic cleanup pass (spec.md subtask 15) - see
- * `getOldTombstoneNotes` in lib/db/notes.ts for why non-dirty AND dirty
- * rows are both included.
- */
+/** Old tombstones, dirty or not; see getOldTombstoneFolders. */
 export async function getOldTombstonePages(userId: string, cutoffMs: number): Promise<Page[]> {
   const db = await getDb();
   const rows = await db.select<PageRow[]>(
@@ -107,12 +83,7 @@ export async function getOldTombstonePages(userId: string, cutoffMs: number): Pr
   return rows.map(rowToPage);
 }
 
-/**
- * Genuinely `DELETE FROM`s a page row - unlike every other write in this
- * file, this does not soft-delete. Only meant to be called by the periodic
- * tombstone cleanup pass (lib/sync/cleanup.ts, spec.md subtask 15) on rows
- * that are already tombstones old enough to purge.
- */
+/** A real DELETE, for tombstone cleanup only. */
 export async function hardDeletePage(pageId: string): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM ${TABLE} WHERE id = $1`, [pageId]);
@@ -128,26 +99,14 @@ export async function getPageById(pageId: string): Promise<Page | null> {
   return rows.length > 0 ? rowToPage(rows[0]) : null;
 }
 
-/**
- * Same as `getPageById`, but does NOT filter out soft-deleted rows. Pull
- * sync (lib/sync/pull.ts, spec.md subtask 15) needs to find the local row
- * for LWW comparison even when it's a tombstone - `getPageById` would
- * silently report "no local row" and cause an incorrect re-insert.
- */
+/** Includes soft-deleted rows; see getNoteRowById. */
 export async function getPageRowById(pageId: string): Promise<Page | null> {
   const db = await getDb();
   const rows = await db.select<PageRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [pageId]);
   return rows.length > 0 ? rowToPage(rows[0]) : null;
 }
 
-/**
- * Shape of a `pages` Firestore document as written by lib/sync/push.ts's
- * (future) `pageToFirestoreDoc`, plus the Firestore doc id (same as local
- * `id`). `content`/`canvasData` are plain objects here (as stored in
- * Firestore), not JSON strings - `upsertPageFromRemote` below stringifies
- * them the same way `updatePage` does before writing to the local `TEXT`
- * columns.
- */
+/** content and canvasData are objects here and stringified on write. */
 export type RemotePageData = {
   id: string;
   noteId: string;
@@ -161,15 +120,7 @@ export type RemotePageData = {
   deletedAt: number | null;
 };
 
-/**
- * Inserts a new local page row from remote (Firestore) data, or overwrites
- * an existing one, via `INSERT ... ON CONFLICT(id) DO UPDATE`. This is the
- * write primitive pull sync (lib/sync/pull.ts) uses once it has already
- * decided - via LWW/conflict comparison - that the remote data should land
- * locally; this function does not itself make that decision. See
- * `upsertNoteFromRemote` in lib/db/notes.ts for the full reasoning on why
- * `dirty`/`syncedAt` are caller-supplied rather than hardcoded.
- */
+/** See upsertFolderFromRemote. */
 export async function upsertPageFromRemote(
   remote: RemotePageData,
   dirty: boolean,
@@ -211,14 +162,8 @@ export async function upsertPageFromRemote(
 }
 
 /**
- * Creates a new page row for `noteId`. Used directly by a future "add page"
- * UI action (spec.md subtask 17). `lib/db/notes.ts`'s `createNote` does NOT
- * call this - it needs its own note-insert and page-insert to land in the
- * same pooled SQLite connection to be truly atomic (see the comment on
- * `createNote` in lib/db/notes.ts, and `deleteFolder` in lib/db/folders.ts
- * for the established precedent), so it inlines an equivalent
- * `BEGIN; INSERT notes; INSERT pages; COMMIT;` multi-statement `db.execute()`
- * call instead of calling this function.
+ * createNote doesn't call this: it inserts its first page in its own
+ * single-call transaction.
  */
 export async function createPage(
   noteId: string,

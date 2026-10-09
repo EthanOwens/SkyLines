@@ -1,8 +1,4 @@
-// Quick access toolbar visibility persistence (spec.md subtask 13, "Quick
-// access toolbar"). Mirrors lib/lastOpen.ts's exact defensive pattern (SSR
-// guard, try/catch around localStorage/JSON.parse, never throws) - this is
-// per-device UI convenience state, not user data, so it stays out of the
-// Firestore sync engine just like lastOpen.ts.
+// Per-device UI state in localStorage, deliberately not synced.
 
 const STORAGE_KEY = "skylines:quickAccessVisibility";
 
@@ -32,10 +28,8 @@ function isQuickAccessVisibility(value: unknown): value is QuickAccessVisibility
 }
 
 /**
- * Reads the quick-access visibility prefs from `localStorage`. Returns the
- * "all visible" default if `localStorage` is unavailable (SSR/static export
- * build-time rendering), nothing has been stored yet, or the stored value is
- * corrupt/malformed - never throws.
+ * Returns the "all visible" default when localStorage is unavailable, empty or
+ * corrupt. Never throws.
  */
 export function getQuickAccessVisibility(): QuickAccessVisibility {
   if (typeof window === "undefined") return DEFAULT_VISIBILITY;
@@ -56,11 +50,7 @@ export function getQuickAccessVisibility(): QuickAccessVisibility {
   }
 }
 
-/**
- * Persists the quick-access visibility prefs. Silently no-ops if
- * `localStorage` is unavailable - this is best-effort convenience state, not
- * something worth surfacing an error for.
- */
+/** Best-effort; does nothing when localStorage is unavailable. */
 export function setQuickAccessVisibility(state: QuickAccessVisibility): void {
   if (typeof window === "undefined") return;
 

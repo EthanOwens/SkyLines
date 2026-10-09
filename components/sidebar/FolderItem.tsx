@@ -40,37 +40,12 @@ import {
 import { NoteItem } from "./NoteItem";
 import type { Folder as FolderType, Note } from "@/types";
 
-// Ported from ../note_taking_app/components/sidebar/FolderItem.tsx (spec.md
-// subtask 16). Mutations now go through the SQLite-backed lib/db/notes.ts /
-// lib/db/folders.ts instead of lib/firestore/notes.ts / folders.ts.
-// `deleteFolder` here already recursively soft-deletes all descendant
-// subfolders and notes (fixed in subtask 10) - the redundant per-note
-// `deleteNote` cascade the reference did for direct child notes is dropped
-// since it's now fully handled inside `deleteFolder` itself. Note/canvas
-// links use the query-param routing form (/note?id=..., /canvas?id=...) per
-// subtask 5 instead of /note/[id] / /canvas/[id]. The "···" trigger uses
-// `<DropdownMenuTrigger render={<button .../>} />` instead of the
-// reference's `asChild` - see components/sidebar/Sidebar.tsx's header
-// comment for why.
+// Folder row. Draggable, and a drop target: the top or bottom edge reorders
+// among siblings, the middle band moves the item inside. A folder can't be
+// dropped into itself or its descendants.
 //
-// M4 (spec.md subtask 7, "Sidebar drag-and-drop"): this row is now
-// draggable (moves the folder when dropped elsewhere), and is itself a drop
-// target two ways - drop near the TOP/BOTTOM edge to reorder among sibling
-// folders (`siblingFolderIds`, passed down from the parent level), or drop
-// on the MIDDLE band to move the dragged note/folder INSIDE this folder
-// (re-parent). A folder can never be dropped onto itself or one of its own
-// descendants (`isFolderOrDescendant`) - doing so would corrupt the tree.
-//
-// M4 (spec.md subtask 8, "Right-click context menu"): this row now also
-// opens a real `onContextMenu`-triggered menu (via `ContextMenu`/
-// `ContextMenuTrigger`, components/ui/context-menu.tsx) with the same
-// actions as the existing "···" `DropdownMenu` trigger, PLUS Cut/Copy/Paste
-// against the generic clipboard mechanism (stores/appStore.ts's
-// `clipboard` field + lib/clipboard/sidebarClipboard.ts's
-// `pasteClipboardEntry`). "Paste" only appears here (a folder row) when the
-// clipboard is non-empty; pasting is blocked (`pasteClipboardEntry` itself
-// no-ops) if it would move this folder into itself or one of its own
-// descendants.
+// The right-click menu repeats the "···" actions plus Cut, Copy and Paste
+// (Paste only when the clipboard has something).
 
 interface Props {
   folder: FolderType;
@@ -78,14 +53,11 @@ interface Props {
   allNotes: Note[];
   userId: string;
   depth: number;
-  /** Ordered ids of the sibling folders at this same level (same parent),
-   * including this folder itself - used to compute the new order when a
-   * dragged folder is dropped before/after this one. */
   siblingFolderIds: string[];
-  /** Called from this row's own `handleDragOver` (in addition to its own
-   * `e.stopPropagation()`) so the root `FolderTree` container can clear its
-   * "drop to root" highlight while a specific row is being hovered - see
-   * `FolderTree.tsx`'s `handleRowDragOver` comment for why this is needed. */
+  /**
+   * Lets FolderTree clear its root-drop highlight: rows stop dragover
+   * propagation, so the container can't see the pointer move onto a row.
+   */
   onDragOverRow: () => void;
 }
 
@@ -164,13 +136,7 @@ export function FolderItem({
   }
 
   async function addNote() {
-    // A note created inside this folder inherits the folder's notebook -
-    // `folder.notebookId` is guaranteed non-null in practice, see the
-    // notebookId comment on the `Folder` type in types/index.ts (same
-    // reasoning `addSubfolder` below already relies on). spec.md subtask 6
-    // ("Merge note creation UI"): every note is now the merged free-form-
-    // canvas editor, so this always creates `type: "canvas"` and routes to
-    // /canvas?id=... - there's no longer a separate "New canvas" action.
+    // New notes inherit the folder's notebook.
     const id = await createNote(
       userId,
       "canvas",
@@ -184,10 +150,7 @@ export function FolderItem({
   }
 
   async function addSubfolder() {
-    // A new subfolder inherits its parent's notebook (folders don't move
-    // between notebooks by being nested) - `folder.notebookId` is
-    // guaranteed non-null in practice, see the notebookId comment on the
-    // `Folder` type in types/index.ts.
+    // Subfolders inherit the parent's notebook.
     await createFolder(
       userId,
       "New Folder",
@@ -242,8 +205,7 @@ export function FolderItem({
           order: nextOrderValue(childNotes.map((n) => n.order)),
         });
       } else {
-        // A dragged page has no valid drop target here - folders/notebooks
-        // don't contain pages (pages only live inside a note), so ignore.
+        // Pages can't be dropped on folders.
         return;
       }
       setOpen(true);
@@ -254,10 +216,8 @@ export function FolderItem({
     // the dragged item to this row's parent if it came from elsewhere.
     if (payload.type === "folder") {
       if (payload.id === folder.id) return;
-      // Reordering moves the dragged folder to `folder.parentId` (this
-      // row's own parent). That's only a cycle if `folder.parentId` is the
-      // dragged folder itself or one of ITS descendants - a null
-      // `folder.parentId` (moving to root) is always safe.
+      // Moving to this row's parent is only a cycle if that parent is the
+      // dragged folder or one of its descendants.
       if (folder.parentId && isFolderOrDescendant(allFolders, payload.id, folder.parentId)) {
         return;
       }
@@ -270,21 +230,15 @@ export function FolderItem({
         }
       }
     } else {
-      // A note dropped before/after a folder row has no note siblings here
-      // to reorder against - treat it as "move into this folder's parent
-      // level, appended at the end" isn't well-defined for a folder target,
-      // so ignore (notes only reorder against other notes; use the
-      // "inside" band to move a note into a folder).
+      // Notes reorder only against other notes; drop on the middle band to move
+      // a note into a folder.
       return;
     }
   }
 
   const paddingLeft = depth * 12 + 8;
 
-  // Shared between the "···" `DropdownMenu` trigger and the right-click
-  // `ContextMenu` trigger below (spec.md subtask 8) - both open the exact
-  // same set of actions, just via different entry points, so the item list
-  // itself is only written once.
+  // Used by both the "···" menu and the right-click menu.
   function menuItems() {
     return (
       <>
@@ -340,12 +294,9 @@ export function FolderItem({
               }`}
               style={{ paddingLeft }}
               onClick={(e) => {
-                // Selecting a folder for toolbar-creation scoping is layered
-                // on top of the pre-existing expand/collapse toggle, not a
-                // replacement for it (spec.md M2 subtask 4). Stop
-                // propagation so this doesn't also bubble up to
-                // FolderTree.tsx's own container click, which clears the
-                // selection back to root-scoped for clicks on empty space.
+                // Selecting a folder (for scoped creation) layers on the expand
+                // toggle. Stop propagation so FolderTree's empty-space click
+                // doesn't clear the selection.
                 e.stopPropagation();
                 setOpen((v) => !v);
                 setSelectedFolder(folder.id);

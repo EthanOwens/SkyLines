@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "mcp-bridge",
+  "description": "Lets the Tauri MCP server inspect and drive every window during development. The plugin is only registered in debug builds, so this grant does nothing in release builds.",
+  "windows": ["main", "sticky-*", "image-editor-*"],
+  "permissions": ["mcp-bridge:default"]
+}

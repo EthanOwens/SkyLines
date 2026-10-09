@@ -1,19 +1,8 @@
 "use client";
 
-// spec.md subtask 11 ("Ctrl+K dialog"). Replaces the bare
-// `window.prompt("URL", prev)` both RichTextEditor.tsx (full-page notes) and
-// RichTextShape.tsx (canvas shape) used to call directly from their own
-// `setLink()` - shared here so the actual `setLink`/`unsetLink`/
-// `extendMarkRange` chain (identical in both callers) isn't duplicated.
-//
-// Offers three ways to end up with a link: paste a URL (exact prior
-// behavior), create a brand-new sticky note (creates the row, opens its
-// pop-out window immediately, embeds `sticky:<id>` at the cursor), or pick an
-// existing sticky note from a searchable list (embeds `sticky:<id>` the same
-// way). Per spec.md's explicit sequencing note, `sticky:<id>` is just applied
-// through the existing Tiptap Link mark - a later subtask (12) is
-// responsible for giving that href scheme its own click/render behavior;
-// until then it behaves like (and looks like) a normal link.
+// Ctrl+K dialog shared by RichTextEditor and RichTextShape. A link can be a
+// URL, a new sticky note or an existing one; sticky notes are stored as
+// sticky:<id> hrefs on the normal Link mark.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
@@ -35,20 +24,11 @@ interface LinkOrStickyDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editor: Editor | null;
-  // The link URL currently under the cursor/selection, if editing an
-  // existing link - pre-fills the URL input, mirroring
-  // `window.prompt("URL", prev)`'s previous `prev` argument.
   currentUrl: string | null;
-  // The signed-in user's id - required to list/create sticky notes. `null`
-  // while auth hasn't resolved yet, in which case the sticky-note tabs are
-  // simply unusable (the URL tab still works).
+  // Null until auth resolves; only the URL tab works until then.
   userId: string | null;
 }
 
-// Applies `href` (a real URL, or a `sticky:<id>` reference) to the editor's
-// current selection via the exact chain both callers previously ran inline,
-// then closes the dialog. Shared here so it's identical for the URL submit,
-// "create new sticky note", and "pick existing sticky note" paths.
 function applyLink(editor: Editor, href: string) {
   if (href === "") {
     editor.chain().focus().extendMarkRange("link").unsetLink().run();
@@ -68,20 +48,10 @@ export function LinkOrStickyDialog({
   const [search, setSearch] = useState("");
   const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
   const [creating, setCreating] = useState(false);
-  // Toggles the existing-notes list between the flat title-only rows and
-  // rows with a mini text/thumbnail preview underneath the title.
   const [showPreview, setShowPreview] = useState(false);
 
-  // Guards against double-firing when a real click DOES land both events
-  // (possible outside the canvas-shape scenario this file's header comment
-  // describes - e.g. this dialog opened somewhere else, or the upstream
-  // pointer-capture bug going away). onMouseDown runs the action and flags
-  // it as handled; the following onClick (real pointer clicks always fire
-  // both) sees the flag and skips. A keyboard Enter/Space activation only
-  // ever fires onClick, never onMouseDown, so it still runs the action -
-  // that's the actual point of keeping onClick at all. Single shared ref is
-  // fine even for the mapped sticky-note buttons below since only one
-  // button can be mid-interaction at a time.
+  // Prevents running an action twice when a click fires both mousedown and
+  // click. Keyboard activation fires only click, so it still runs.
   const handledByMouseDownRef = useRef(false);
   function makeHandlers(action: () => void) {
     return {
@@ -99,9 +69,6 @@ export function LinkOrStickyDialog({
     };
   }
 
-  // Re-seed the URL input and reload the sticky-note list every time the
-  // dialog opens, same "always fresh on open" seeding pattern
-  // ThemeEditor.tsx's own dialog-open effect uses.
   useEffect(() => {
     if (!open) return;
     setUrlInput(currentUrl ?? "");
@@ -151,13 +118,11 @@ export function LinkOrStickyDialog({
           <DialogTitle>Insert link</DialogTitle>
         </DialogHeader>
 
-        {/* Opened over a tldraw canvas shape, whose own pointer capture can
-            steal the mouseup that would normally follow a click here,
-            silently swallowing onClick - onMouseDown fires reliably instead,
-            so every action in this dialog runs from onMouseDown. onClick is
-            still wired to the same action (guarded via makeHandlers) so
-            keyboard Enter/Space activation, which only ever fires onClick,
-            keeps working. */}
+        {/*
+          Actions run on mousedown because a tldraw shape's pointer capture can
+          swallow the mouseup, and with it the click. onClick stays wired for
+          keyboard Enter/Space.
+        */}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -236,9 +201,8 @@ export function LinkOrStickyDialog({
             )}
             {filteredStickyNotes.map((note) => {
               const rawPreview = showPreview ? extractPlainText(note.content) : "";
-              // extractPlainText falls back to a "[Image]" placeholder for
-              // image nodes - strip it wherever it appears (not just when
-              // it's the whole string) so it never leaks into preview text.
+              // Strip extractPlainText's "[Image]" placeholders from the
+              // preview.
               const preview = rawPreview.replace(/\[Image\]\s*/g, "").trim();
               const imageSrc = showPreview && !preview ? extractFirstImageSrc(note.content) : null;
               return (

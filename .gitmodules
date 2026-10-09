@@ -1,0 +1,3 @@
+[submodule ".claude"]
+	path = .claude
+	url = git@github.com:EthanOwens/claude-kit.git

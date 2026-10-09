@@ -1,8 +1,7 @@
 "use client";
 
-// Saves go through lib/db/pages.ts's `updatePage`, which writes to local
-// SQLite and schedules a debounced Firestore push via the sync engine - no
-// manual syncStatus toggling needed here.
+// updatePage writes to SQLite and schedules the Firestore push, so there's no
+// sync status to manage here.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -19,31 +18,22 @@ import type { Note } from "@/types";
 import { RichTextShapeUtil, type RichTextShape } from "./RichTextShape";
 import { RichTextTool, installRichTextToolAutoReturn } from "./RichTextTool";
 
-// Module-level constants so <Tldraw> sees stable identities across
-// re-renders (it re-creates internal registries otherwise).
+// Module-level so <Tldraw> sees stable identities; it rebuilds internal
+// registries otherwise.
 const shapeUtils = [RichTextShapeUtil];
 const tools = [RichTextTool];
-// Defensive backstop: even with RichTextTool.tsx's own tool-state fix,
-// disable tldraw's native double-click-creates-a-text-shape behavior so a
-// future edge case can never surface a native shape instead of ours.
+// Backstop so tldraw can never create its native text shape on double-click.
 const tldrawOptions = { createTextOnCanvasDoubleClick: false };
 
-// Module-level (survives remounts) in-flight guard for the "note has zero
-// pages, lazily create a default one" self-healing path below, keyed by
-// note.id - prevents React Strict Mode's double-invoke from creating two
-// duplicate default pages for the same note.
+// Module-level guard so Strict Mode's double invoke can't create two default
+// pages for the same note.
 const inFlightDefaultPageCreation = new Map<string, Promise<string>>();
 
-// Default "page-sized" bound in tldraw page-space units (roughly a
-// Letter/A4 page's proportions at 1 unit = 1px@100%). The floor the
-// confined area never shrinks below - see `applyPageCameraConstraints` and
-// its caller in `handleMount`.
+// Minimum page area in tldraw units (roughly Letter/A4 proportions at 100%).
 const DEFAULT_PAGE_BOUNDS = { x: 0, y: 0, w: 850, h: 1100 };
 
-// `behavior: 'inside'` keeps the whole bounds box clamped within the
-// viewport - pannable within the page, but not fully out of view.
-// `setCameraOptions` re-clamps the current camera immediately, so calling
-// this again with a larger `bounds` after mount takes effect live.
+// 'inside' keeps the page within the viewport. setCameraOptions re-clamps
+// immediately, so calling this again with larger bounds takes effect live.
 function applyPageCameraConstraints(editor: Editor, bounds: Box) {
   editor.setCameraOptions({
     ...editor.getCameraOptions(),
@@ -62,12 +52,8 @@ interface Props {
   note: Note;
 }
 
-// Long-form "Wednesday, September 5, 2026 2:55 PM" stamp for the page
-// header's last-edited line - deliberately separate from RichTextShape.tsx's
-// own short-form timestamp formatter (different format, different file).
-// Formatted as two separate calls rather than one combined formatter:
-// Intl's default en-US pattern inserts "at" between date and time when both
-// are requested from a single formatter.
+// Two formatters, because a single en-US date+time formatter inserts "at"
+// between them.
 const longDateFormatter = new Intl.DateTimeFormat(undefined, {
   weekday: "long",
   year: "numeric",
@@ -85,9 +71,8 @@ function formatLongLastEdited(ms: number) {
 
 export function CanvasEditor({ note }: Props) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Whether a debounced save is pending, so it can be flushed synchronously
-  // on unmount (this component is keyed by note.id, so unmount always means
-  // leaving this exact note).
+  // Lets a pending debounced save flush on unmount (the component is keyed by
+  // note id).
   const pendingSaveRef = useRef(false);
   const setActiveCanvasEditor = useAppStore((s) => s.setActiveCanvasEditor);
 
@@ -107,12 +92,9 @@ export function CanvasEditor({ note }: Props) {
     (async () => {
       let notePages = await getPages(note.id);
 
-      // Notes that predate the Page model have zero page rows - lazily
-      // create a default one on open instead of crashing/rendering blank.
-      // Must not drop pre-existing content: if `note.canvasData` is
-      // truthy, copy it onto the new page; if only `note.content` is
-      // truthy (old Tiptap-only note), that half of the migration needs a
-      // live editor and is deferred to `handleMount` below.
+      // Notes from before pages existed have no page rows: create a default
+      // page and carry over canvasData. Tiptap-only content needs a live editor
+      // and is migrated in handleMount.
       if (notePages.length === 0) {
         let creation = inFlightDefaultPageCreation.get(note.id);
         if (!creation) {
@@ -146,9 +128,8 @@ export function CanvasEditor({ note }: Props) {
   const selectedPage =
     pages.find((p) => p.id === selectedPageId) ?? pages[0] ?? null;
 
-  // Local editing buffer for the inline title header, mirroring
-  // PageItem.tsx's own rename input - committed on blur/Enter via the same
-  // `updatePage` + `setPages` path the sidebar uses, so both stay in sync.
+  // Committed on blur or Enter through the same path as PageItem's rename, so
+  // both stay in sync.
   const [titleDraft, setTitleDraft] = useState(selectedPage?.title || "Untitled");
 
   useEffect(() => {
@@ -161,9 +142,8 @@ export function CanvasEditor({ note }: Props) {
     setTitleDraft(trimmed);
     if (trimmed !== selectedPage.title) {
       await updatePage(selectedPage.id, { title: trimmed });
-      // Read fresh store state rather than the `pages` closed over at
-      // render time - PageSidebar's own refresh could land in the await
-      // above and would otherwise get clobbered.
+      // Read fresh store state: PageSidebar may have refreshed pages during the
+      // await.
       const freshPages = useAppStore.getState().pages;
       setPages(
         freshPages.map((p) =>
@@ -183,16 +163,11 @@ export function CanvasEditor({ note }: Props) {
       // Exposes the live editor to TopBar's Undo/Redo.
       setActiveCanvasEditor(editor);
 
-      // Fresh per mount, since <Tldraw>'s key={selectedPage.id} fully
-      // remounts on page switch. `confinedBounds` only ever grows (see
-      // `Box.Common` below), never shrinks, for the lifetime of this mount.
+      // Fresh per mount (the editor remounts on page switch); only ever grows.
       let confinedBounds = Box.From(DEFAULT_PAGE_BOUNDS);
       applyPageCameraConstraints(editor, confinedBounds);
 
-      // Reactively expands the confined area to include shape content that
-      // grows past it. `react()` re-runs whenever `getCurrentPageBounds()`
-      // changes; `Box.Common` unions against the current bounds so this
-      // only ever grows.
+      // Grows the confined area to cover content that extends past it.
       const stopConfinementWatcher = react(
         "canvas confinement: expand bounds to include shape content",
         () => {
@@ -211,17 +186,14 @@ export function CanvasEditor({ note }: Props) {
         },
       );
 
-      // tldraw hardcodes `initialState="select"` with no override prop, so
-      // switch to this app's own default tool right after mount instead.
+      // tldraw always starts in "select", so switch to this app's default tool
+      // after mount.
       editor.setCurrentTool("rich-text");
 
       const uninstallRichTextToolAutoReturn = installRichTextToolAutoReturn(editor);
 
-      // Load the selected page's own snapshot - the source of truth once
-      // populated. The remaining case (a true old-format note with real
-      // Tiptap `content` and no `canvasData` at all) needs a live editor to
-      // wrap into a RichTextShape, so it's handled here instead of above;
-      // once persisted, `page.canvasData` is truthy on every later open.
+      // The page's snapshot is the source of truth. An old note with Tiptap
+      // content and no canvasData is wrapped into a RichTextShape below.
       if (page.canvasData) {
         try {
           editor.loadSnapshot(page.canvasData as TLEditorSnapshot);
@@ -233,11 +205,8 @@ export function CanvasEditor({ note }: Props) {
         page.id === pages[0]?.id &&
         editor.getCurrentPageShapes().length === 0
       ) {
-        // Checking the live editor's shape count (not just the possibly
-        // stale `page`/`note` props) keeps this idempotent across Strict
-        // Mode's double-invoke of onMount. Gated to the note's first page
-        // (not a cleared `note.content` flag) so a new/other page never
-        // gets a duplicate injection of the old note-level content.
+        // Checking the live shape count keeps this idempotent under Strict
+        // Mode. Only the note's first page receives the old content.
         editor.createShape<RichTextShape>({
           type: "rich-text",
           x: 40,
@@ -248,7 +217,6 @@ export function CanvasEditor({ note }: Props) {
         void updatePage(page.id, { canvasData: snapshot as unknown as object });
       }
 
-      // Listen for changes and auto-save
       const unlisten = editor.store.listen(
         () => {
           if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -256,9 +224,8 @@ export function CanvasEditor({ note }: Props) {
           saveTimer.current = setTimeout(() => {
             const snapshot = editor.getSnapshot();
             void updatePage(page.id, { canvasData: snapshot as unknown as object }).then(() => {
-              // `updatePage` only writes to the DB - without this, the
-              // in-memory `pages` store (and the header's `updatedAt`
-              // display) would go stale until something else refreshes it.
+              // updatePage only writes the DB; refresh the in-memory pages so
+              // the header's updatedAt stays current.
               const freshPages = useAppStore.getState().pages;
               setPages(
                 freshPages.map((p) =>
@@ -278,8 +245,7 @@ export function CanvasEditor({ note }: Props) {
         unlisten();
         stopConfinementWatcher();
         uninstallRichTextToolAutoReturn();
-        // Flush any pending debounced save so navigating away mid-debounce
-        // doesn't silently drop the edit.
+        // Flush a pending save so leaving mid-debounce doesn't drop the edit.
         if (pendingSaveRef.current) {
           pendingSaveRef.current = false;
           const snapshot = editor.getSnapshot();
@@ -307,9 +273,6 @@ export function CanvasEditor({ note }: Props) {
 
   return (
     <div className="canvas-editor-container relative flex h-full w-full flex-1 flex-col">
-      {/* Rendered above the canvas as a separate layer, unaffected by the
-          camera confinement below. Border-bottom (a real border, not text
-          decoration), inline-editable like PageItem.tsx's rename input. */}
       <div className="shrink-0 border-b border-border px-4 py-2">
         <input
           className="w-full bg-transparent text-lg font-semibold text-foreground outline-none"
@@ -330,16 +293,14 @@ export function CanvasEditor({ note }: Props) {
         {formatLongLastEdited(selectedPage.updatedAt)}
       </div>
       <div className="canvas-editor-canvas relative flex-1">
-      {/* Hides tldraw's own native toolbar/menu/style-panel chrome so
-          Ribbon.tsx's Draw tab is the sole tool-switcher - not `hideUi`,
-          which would also suppress Toasts/Dialogs/A11y this app still
-          uses. `null` fully opts a component slot out. */}
-      {/* key={selectedPage.id} forces a full remount on page switch, since
-          tldraw's own onMount only fires once per editor/store instance -
-          without it, loadSnapshot/autosave would stay pinned to whichever
-          page was selected at first mount. Accepted tradeoff: a brief
-          re-init flash per switch (LoadingScreen: null below suppresses
-          tldraw's own spinner during it). */}
+      {/*
+        Hide tldraw's own toolbar and panels (the Ribbon switches tools). Not
+        hideUi, which would also remove toasts and dialogs.
+      */}
+      {/*
+        Keyed by page: tldraw's onMount fires once per editor instance, so a
+        page switch needs a full remount.
+      */}
       <Tldraw
         key={selectedPage.id}
         shapeUtils={shapeUtils}

@@ -8,9 +8,7 @@ interface ThemePreviewProps {
   draftVariables: Partial<Record<ThemeVariableKey, string>>;
 }
 
-// Fixed dimensions for the bounded mini-canvas and the draggable text box
-// inside it, used to clamp the box's position so it can't be dragged out of
-// view.
+// The text box is clamped inside these bounds.
 const CANVAS_W = 420;
 const CANVAS_H = 280;
 const BOX_W = 180;
@@ -20,21 +18,10 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-// Center-region live preview (spec.md M7 subtask 16). A bounded, hand-built
-// mock mini-canvas - NOT a real embedded tldraw instance - that demonstrates
-// the theme's variables in miniature: its own background, a "sidebar" strip,
-// a "card", and a movable/editable default text box.
-//
-// Critically, this scopes the draft's CSS variables to ONLY this preview's
-// own root element via an inline `style` prop (`--background`, `--card`,
-// etc., the exact same names app/globals.css's `@theme` block maps Tailwind
-// colors from), rather than calling lib/themes/apply.ts or touching
-// `document.documentElement`. That keeps `draftVariables` - an unsaved,
-// in-progress draft - from leaking into the real app theme before Save; the
-// preview's own markup below then just uses `var(--...)` directly (not
-// Tailwind's `bg-background` utilities, since those resolve against
-// `:root`'s real variables, not this scoped subtree) so normal CSS
-// inheritance does the live-updating for free as draftVariables changes.
+// A hand-built mini canvas, not a tldraw instance. The draft's variables are
+// set inline on this root only, so the unsaved draft never touches the real
+// theme. Children use var(--...) directly, because Tailwind's utilities resolve
+// against :root.
 export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps) {
   const [boxPos, setBoxPos] = useState({ x: 40, y: 100 });
   const [boxText, setBoxText] = useState("Edit me");
@@ -61,11 +48,7 @@ export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps
     e.currentTarget.releasePointerCapture(e.pointerId);
   }, []);
 
-  // Build the full set of scoped `--variable: value` inline styles from all
-  // 31 ThemeVariableKeys, mirroring the same `draftVariables[key] ??
-  // editingTheme.variables[key]` fallback the right sidebar's color editor
-  // already uses (ThemeEditor.tsx) so the preview always agrees with what
-  // the sidebar is showing as each field's current value.
+  // Same draft-then-theme fallback as the color editor, so they always agree.
   const scopedVariableStyle = THEME_VARIABLE_KEYS.reduce<Record<string, string>>((acc, key) => {
     const value = draftVariables[key] ?? editingTheme.variables[key];
     if (value !== undefined) {
@@ -121,10 +104,10 @@ export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps
         Card
       </div>
 
-      {/* Movable, editable default text box - the required demo affordance.
-          Position is purely local UI state, not part of the theme itself.
-          The drag handle bar (top strip) owns the pointer-drag logic so it
-          doesn't fight with the input's own text-selection/caret dragging. */}
+      {/*
+        Position is local UI state. The handle bar owns dragging so it doesn't
+        fight the input's text selection.
+      */}
       <div
         className="absolute flex flex-col overflow-hidden border shadow-sm"
         style={{

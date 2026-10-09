@@ -1,31 +1,9 @@
-// spec.md subtask 12 ("Sticky note embed rendering"). Both
-// components/editor/RichTextEditor.tsx and components/canvas/RichTextShape.tsx
-// insert sticky-note references as a plain Tiptap `Link` mark with a
-// `sticky:<id>` href (spec.md subtask 11's bridging convention), and both
-// already configure `Link.configure({ openOnClick: false })`, which fully
-// disables Link's OWN click handling (see @tiptap/extension-link's
-// clickHandler.ts - `openOnClick: false` just skips its `window.open` call,
-// it doesn't stop the click event or prevent other plugins' `handleClick`
-// props from running). This adds click interception SPECIFICALLY for
-// `sticky:` hrefs on top of that, via ProseMirror's `handleClick` editorProp
-// - the exact same mechanism (not `handleClickOn`, which iterates DOM NODES
-// around the click and is meant for node-view-style click targets; a link is
-// a MARK on a text node, not a distinct node, so Tiptap's own Link extension
-// itself uses `handleClick`, checking `event.target`/`closest("a")` - see
-// node_modules/@tiptap/extension-link/dist/index.js's `clickHandler`) that
-// extension's own (disabled) click handling uses, so this exactly reuses its
-// convention rather than introducing a different interception mechanism for
-// no reason. Multiple plugins' `handleClick` props all run per click
-// (ProseMirror stops at the first one that returns `true`), so this can
-// coexist with Link's own now-inert handler with no conflict.
+// Handles clicks on sticky:<id> links. Link's openOnClick: false only stops its
+// window.open; other handleClick props still run, so this can sit alongside it.
+// handleClick rather than handleClickOn because a link is a mark, not a node
+// (Tiptap's Link uses the same approach).
 //
-// Exported as a single `editorProps` fragment (not a full custom Extension)
-// since both call sites already pass a plain `editorProps` object to
-// `useEditor`/`useTiptapEditor` - spreading this in is the smallest change
-// that avoids duplicating the click-interception logic itself in both files,
-// per spec.md's explicit instruction. Deliberately not hardcoded to either
-// call site (no assumptions about surrounding editorProps) so it's trivially
-// reusable by components/editor/StickyNoteEditor.tsx too (subtask 13).
+// An editorProps fragment, so each editor can spread it in.
 import type { EditorView } from "@tiptap/pm/view";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
 

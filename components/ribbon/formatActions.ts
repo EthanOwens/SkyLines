@@ -1,11 +1,6 @@
 "use client";
 
-// Formatting-action definitions for the ribbon's Format tab (spec.md
-// subtask 10, "Format tab") - ported from the toggle/insert logic that used
-// to live in components/editor/EditorToolbar.tsx. Pulled into its own
-// module (rather than inlined in Ribbon.tsx) so subtask 11's bubble menu
-// can reuse the same action list/state selector without duplicating the
-// editor-command wiring.
+// Format actions shared by the Ribbon's Format tab and the bubble menus.
 
 import type { Editor } from "@tiptap/react";
 import type { LucideIcon } from "lucide-react";
@@ -26,14 +21,9 @@ import {
   Redo,
 } from "lucide-react";
 
-// The reactive slice of editor state the Format tab (and, later, the bubble
-// menu) needs to render active/disabled states. Read via Tiptap's
-// `useEditorState` hook (see Ribbon.tsx) rather than calling
-// `editor.isActive(...)` directly in render - the `editor` object's
-// identity does not change when marks/selection change, so components
-// outside the editor's own re-render cycle (like Ribbon, a sibling of
-// RichTextEditor.tsx rather than a descendant) need this explicit
-// subscription to stay in sync.
+// Components outside the editor's render cycle read this through
+// useEditorState, because the editor's identity doesn't change when marks or
+// the selection do.
 export interface FormatActionState {
   bold: boolean;
   italic: boolean;
@@ -52,9 +42,7 @@ export interface FormatActionState {
   fontFamily: string;
   fontSize: string;
   color: string;
-  // `null` when no highlight mark is active at all; `""` when active but with
-  // no explicit `color` attribute set (falls back to the mark's own default
-  // styling); otherwise the active highlight's color.
+  // null when no highlight is active; "" when active without an explicit color.
   highlight: string | null;
 }
 
@@ -93,11 +81,8 @@ export interface FormatAction {
   run: (editor: Editor) => void;
 }
 
-// Undo/redo, marks, headings, lists, blockquote, divider - ported 1:1 from
-// EditorToolbar.tsx. Insert-image/insert-link are intentionally NOT here:
-// they need component-local state (a file input ref / a `window.prompt`
-// call), so they're handled directly in Ribbon.tsx, same as
-// EditorToolbar.tsx originally did.
+// Image and link insertion need component state, so the Ribbon handles them
+// itself.
 export const formatActions: FormatAction[] = [
   { id: "undo", tip: "Undo", icon: Undo, isActive: () => false, isDisabled: (s) => !s.canUndo, run: (e) => e.chain().focus().undo().run() },
   { id: "redo", tip: "Redo", icon: Redo, isActive: () => false, isDisabled: (s) => !s.canRedo, run: (e) => e.chain().focus().redo().run() },
@@ -115,9 +100,7 @@ export const formatActions: FormatAction[] = [
   { id: "hr", tip: "Divider", icon: Minus, isActive: () => false, run: (e) => e.chain().focus().setHorizontalRule().run() },
 ];
 
-// Small fixed sets rather than an open-ended picker, per spec.md subtask
-// 10's explicit guidance ("don't over-engineer"). Empty-string value means
-// "unset" (falls back to the editor's default styling).
+// Small fixed sets. An empty value means "unset" (the editor's default).
 export const FONT_FAMILIES: { label: string; value: string }[] = [
   { label: "Default", value: "" },
   { label: "Serif", value: "Georgia, 'Times New Roman', serif" },
@@ -158,11 +141,8 @@ export function applyTextColor(editor: Editor, value: string) {
   else editor.chain().focus().unsetColor().run();
 }
 
-// Highlight-mark color swatches (spec.md M3 subtask 6, bubble menu). Uses
-// `@tiptap/extension-highlight`'s `multicolor: true` mode (registered in
-// RichTextShape.tsx's extensions list), so - unlike `TEXT_COLORS` above,
-// which stores its color on a shared `textStyle` mark - each swatch here
-// sets the `highlight` mark's own `color` attribute directly.
+// These set the highlight mark's own color (multicolor mode), unlike
+// TEXT_COLORS, which use the textStyle mark.
 export const HIGHLIGHT_COLORS: { label: string; value: string }[] = [
   { label: "Yellow", value: "#fef08a" },
   { label: "Green", value: "#bbf7d0" },
@@ -171,8 +151,6 @@ export const HIGHLIGHT_COLORS: { label: string; value: string }[] = [
   { label: "Orange", value: "#fed7aa" },
 ];
 
-// The color a plain "toggle highlight" click (no explicit swatch picked)
-// applies - mirrors highlighter-pen tools elsewhere defaulting to yellow.
 export const DEFAULT_HIGHLIGHT_COLOR = HIGHLIGHT_COLORS[0].value;
 
 export function toggleHighlight(editor: Editor) {

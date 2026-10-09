@@ -1,18 +1,9 @@
 "use client";
 
-// spec.md subtask 16 ("Screenshot-to-sticky-note capture"). Lets the user
-// pick an open OS window, captures it via tauri-plugin-screenshots (a
-// maintained Tauri v2 wrapper around the `xcap` crate - see src-tauri's
-// Cargo.toml/lib.rs), shows a live preview, and double-clicking the preview
-// creates a new sticky note whose content is that image.
-//
-// "Drawable on" scope: this implements a LIGHTWEIGHT freehand-draw overlay
-// on the capture preview itself (a plain <canvas>, not tldraw), baked into
-// the image's pixels before the sticky note is created. It does NOT make an
-// already-created sticky note's image drawable-on again after reopening it -
-// that would need a custom Tiptap node view hosting a canvas over the
-// `image` node, which is a materially bigger, separate piece of work. See
-// this subtask's implementation report for the full reasoning.
+// Pick an open window, capture it with tauri-plugin-screenshots, optionally
+// draw on the preview, then double-click to create a sticky note from it.
+// Drawings are baked into the image; a saved note's image can't be drawn on
+// again here.
 
 import { useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
@@ -38,10 +29,8 @@ interface ScreenshotCaptureProps {
   onCapture: (dataUrl: string) => void;
 }
 
-// Reads the PNG file tauri-plugin-screenshots wrote to disk and returns it
-// as a `data:image/png;base64,...` URL - built in chunks to avoid blowing
-// the call stack that `String.fromCharCode(...bytes)` would hit on a
-// full-resolution screenshot's byte array.
+// Builds the data URL in chunks: String.fromCharCode(...bytes) overflows the
+// call stack on a full-resolution screenshot.
 async function fileToDataUrl(path: string): Promise<string> {
   const { readFile } = await import("@tauri-apps/plugin-fs");
   const bytes = await readFile(path);
@@ -63,9 +52,6 @@ export function ScreenshotCapture({ open, onOpenChange, onCapture }: ScreenshotC
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isPointerDownRef = useRef(false);
 
-  // Reload the window list every time the picker opens, resetting any prior
-  // capture/preview state - same "always fresh on open" pattern
-  // StickyNotesHome.tsx uses for its own note list.
   useEffect(() => {
     if (!open) {
       setWindows(null);
@@ -80,9 +66,8 @@ export function ScreenshotCapture({ open, onOpenChange, onCapture }: ScreenshotC
     })();
   }, [open]);
 
-  // Sizes the annotation canvas to the image's natural (full) resolution so
-  // strokes bake in at full quality, then lets CSS scale it down to match
-  // the displayed <img> size.
+  // The drawing canvas uses the image's full resolution so strokes bake in at
+  // full quality; CSS scales it down.
   function handleImageLoad() {
     const img = imgRef.current;
     const canvas = canvasRef.current;
@@ -140,19 +125,14 @@ export function ScreenshotCapture({ open, onOpenChange, onCapture }: ScreenshotC
       const path = await getWindowScreenshot(win.id);
       setPreviewSrc(await fileToDataUrl(path));
     } catch (err) {
-      // e.g. the plugin's own "Minimized windows can't take screenshots" /
-      // "Window not found" errors - the window list isn't live, so the
-      // target can close/minimize between listing and picking it.
+      // The window list isn't live, so the target can close or minimize before
+      // it's captured.
       setCaptureError(err instanceof Error ? err.message : String(err));
     } finally {
       setCapturing(null);
     }
   }
 
-  // Composites the captured image and any freehand annotations onto a
-  // single full-resolution canvas and hands the result off as a data URL -
-  // the caller (StickyNotesHome) turns that into a new sticky note's
-  // content.
   function handleCreateFromPreview() {
     const img = imgRef.current;
     const drawCanvas = canvasRef.current;

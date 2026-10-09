@@ -1,16 +1,8 @@
-// Built-in themes (spec.md subtask 18, "Built-in themes"). Ships three
-// bundled `Theme` objects as first-class, selectable themes on top of the
-// engine subtask 17 built - these are ordinary in-memory `Theme` values
-// (not read from `<app-config-dir>/themes` via lib/themes/loader.ts, which
-// is reserved for user-authored theme files), imported directly from app
-// code, and each defines ALL 27 `ThemeVariableKey`s (a complete base theme,
-// not a partial override set) so any one of them is enough on its own to
-// fully paint the app.
+// Built-in themes. Each defines every variable, so it can paint the app on its
+// own.
 //
-// LIGHT_THEME and DARK_THEME are literal copies of app/globals.css's
-// `:root` and `.dark` blocks respectively - see that file for the source of
-// truth. This file must never invent different values for those two; only
-// GRUVBOX_DARK_THEME is a genuinely new palette.
+// LIGHT_THEME and DARK_THEME are exact copies of globals.css's :root and .dark
+// blocks; keep them identical.
 
 import type { Theme } from "./types";
 
@@ -84,18 +76,11 @@ export const DARK_THEME: Theme = {
   },
 };
 
-// A new palette using the canonical Gruvbox Dark colors
-// (https://github.com/morhetz/gruvbox), mapped onto this app's 31 semantic
-// tokens:
-//   bg0/bg0_h  #282828 / #1d2021   fg1/fg4    #ebdbb2 / #a89984
-//   bg1/bg2    #3c3836 / #504945   bg3/bg4    #665c54 / #7c6f64
-//   bright red    #fb4934          bright yellow #fabd2f
-//   bright green  #b8bb26          bright blue   #83a598
-//   bright purple #d3869b          bright aqua   #8ec07c
-//   bright orange #fe8019
-// `radius` is kept identical to LIGHT_THEME/DARK_THEME's `0.625rem` -
-// this subtask is about color palettes, not layout geometry, and there's no
-// reason for a color scheme swap to also reflow corner rounding.
+// Canonical Gruvbox Dark colors (https://github.com/morhetz/gruvbox):
+//
+// bg0/bg0_h #282828/#1d2021, fg1/fg4 #ebdbb2/#a89984, bg1/bg2 #3c3836/#504945,
+// bg3/bg4 #665c54/#7c6f64, red #fb4934, yellow #fabd2f, green #b8bb26, blue
+// #83a598, purple #d3869b, aqua #8ec07c, orange #fe8019.
 export const GRUVBOX_DARK_THEME: Theme = {
   id: "gruvbox-dark",
   name: "Gruvbox Dark",
@@ -130,12 +115,7 @@ export const GRUVBOX_DARK_THEME: Theme = {
   },
 };
 
-// A soft, warm light palette - gray/cream/beige tones with real tonal
-// variation across slots (not a single flat off-white reused everywhere),
-// mirroring how GRUVBOX_DARK_THEME varies its own bg0/bg1/bg2 tones. Text
-// stays dark (this is a light theme), and `radius` matches LIGHT_THEME /
-// DARK_THEME / GRUVBOX_DARK_THEME's `0.625rem` for the same reason noted
-// above - this is a color palette swap, not a layout change.
+// Warm light palette with real tonal variation between slots.
 export const OFF_WHITE_THEME: Theme = {
   id: "off-white",
   name: "Off-white",
@@ -170,7 +150,6 @@ export const OFF_WHITE_THEME: Theme = {
   },
 };
 
-// Collected list - the natural hand-off point for subtask 19's theme picker.
 export const BUILTIN_THEMES: Theme[] = [
   LIGHT_THEME,
   DARK_THEME,

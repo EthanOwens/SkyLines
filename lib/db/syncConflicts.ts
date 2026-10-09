@@ -1,22 +1,11 @@
 import { getDb } from "./client";
 
-// Local data-access for the `sync_conflicts` table (spec.md subtask 12,
-// migration version 2 in src-tauri/src/lib.rs). Pull sync
-// (lib/sync/pull.ts) writes here whenever it detects that a row was
-// touched on both the local (dirty) and remote (Firestore) sides since the
-// last sync - the "real conflict" case from SPEC_iter1.md Part 2 "Sync
-// engine" - so the losing version isn't silently discarded by the LWW
-// overwrite.
+// Backup of the losing version when pull sync finds a row changed on both sides
+// since the last sync, so last-write-wins doesn't silently discard it.
 
 const TABLE = "sync_conflicts";
 
-/**
- * Snapshots a losing row version into `sync_conflicts` before pull sync
- * overwrites (or, in the local-wins case, before Firestore's stale copy
- * gets overwritten by a future push). `losingRow` is stored as an opaque
- * JSON blob - this table is a forensic backup, not something queried
- * relationally, so there's no need to normalize it into columns.
- */
+/** Stored as an opaque JSON blob: it's a backup, not queried by column. */
 export async function recordSyncConflict(
   tableName: "folders" | "notes" | "notebooks" | "pages",
   rowId: string,
@@ -49,12 +38,7 @@ export type SyncConflict = {
   createdAt: number;
 };
 
-/**
- * Reads back the conflict-backup rows for a given table/row id, most recent
- * first. Not required by the pull sync write path itself - added so
- * verification harnesses (and any future conflict-review UI) can inspect
- * what got backed up without reaching for raw SQL.
- */
+/** Not used by sync itself; for inspection and verification pages. */
 export async function getSyncConflicts(
   tableName: "folders" | "notes" | "notebooks" | "pages",
   rowId: string,

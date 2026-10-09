@@ -1,24 +1,11 @@
 "use client";
 
-// spec.md subtask 8 ("Sticky note pop-out window"). A minimal Tiptap editor
-// for a single sticky note's content, hosted in its own pop-out window (see
-// app/sticky/page.tsx). Reuses the exact same extensions list as
-// components/editor/RichTextEditor.tsx (copied, not guessed at) so sticky
-// note content stays structurally compatible with the rest of the app's
-// Tiptap-based editors. Also hosts the top bar (spec.md subtask 9) and
-// bottom formatting bar (spec.md subtask 10, see StickyNoteBottomBar below).
+// Editor for one sticky note, in its own window. Uses the same extensions as
+// RichTextEditor so content stays compatible.
 //
-// Window-focus tracking (real Tauri `Window.onFocusChanged`, not a DOM
-// focus/blur event - see StickyNoteTopBar.tsx's header comment for why) is
-// owned here, not duplicated per-bar, since both the top and bottom bars
-// need the same "only show while the OS window is focused" gating.
-//
-// spec.md subtask 3 reworked focus/blur: losing OS focus no longer resizes
-// the window at all - it just fades the bottom bar and slims the top bar via
-// CSS transitions (see the `focused` prop passed to both). Resizing the
-// actual window to COLLAPSED_HEIGHT is now a manual, independent `collapsed`
-// toggle (double-click the top bar), which is why `collapsed` is tracked
-// separately from `focused` below.
+// Owns window-focus tracking (Tauri's onFocusChanged; DOM focus events only
+// cover single elements) for both bars. Losing focus only fades the bars;
+// collapsing the window is a separate manual toggle.
 
 import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
@@ -43,15 +30,10 @@ import "./editor.css";
 
 const lowlight = createLowlight(common);
 
-// Same 800ms debounce convention already established by
-// components/canvas/CanvasEditor.tsx's autosave.
 const SAVE_DELAY_MS = 800;
 
-// Collapsed (unfocused) window height in logical pixels - just enough to
-// show the color strip/title, no buttons. The full height (whatever the
-// window's actual current size is when it loses focus, since subtask 8 made
-// the window resizable) is captured live in `originalSizeRef` rather than
-// hardcoded, so refocusing always restores the exact prior size.
+// Height when collapsed: just the color strip and title. The full size is
+// captured in originalSizeRef when collapsing, so restoring returns to it.
 const COLLAPSED_HEIGHT = 48;
 
 interface Props {
@@ -65,21 +47,15 @@ export function StickyNoteEditor({ note }: Props) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContentRef = useRef<object | null>(null);
   const originalSizeRef = useRef<import("@tauri-apps/api/dpi").LogicalSize | null>(null);
-  // Mirrors `collapsed` inside the mount-only effect below (see its
-  // `onResized` handler), since that effect's closure can't see state
-  // updates that happen after it's set up.
+  // Mirrors collapsed for the mount-only effect, whose closure can't see later
+  // state.
   const collapsedRef = useRef(false);
   useEffect(() => {
     collapsedRef.current = collapsed;
   }, [collapsed]);
 
-  // Tracks every still-pending image-editor `listen()` unlisten fn
-  // (handleDoubleClick below, one per double-clicked image) so this
-  // component's own unmount can clean up any that never fired - otherwise a
-  // pop-out closed while loading/errored (never emits) or a crashed pop-out
-  // leaks the listener for the rest of the app session, and if this
-  // component unmounts first, the eventual event would dispatch into a
-  // destroyed ProseMirror view.
+  // Pending image-editor listeners, removed on unmount so a pop-out that never
+  // saves can't leak one or patch a destroyed view.
   const pendingImageEditorUnlistens = useRef<Set<() => void>>(new Set());
   useEffect(() => {
     return () => {
@@ -110,18 +86,10 @@ export function StickyNoteEditor({ note }: Props) {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[80vh] px-1",
       },
       ...stickyLinkClickEditorProps(),
-      // spec.md subtask 12 ("Image editor pop-out shell") + subtask 18
-      // ("Save-back-to-note"). Double-clicking an inserted image opens it in
-      // its own pop-out editor window - the image's `src` is already a data
-      // URL (Image.configure below has `allowBase64: true`), so it's passed
-      // straight through. A one-shot Tauri event listener, scoped to this
-      // specific edit session's own `sourceId` (returned by
-      // `openImageEditorWindow`), patches JUST this image node - by its
-      // exact ProseMirror `pos`, not by matching `src` (fragile with
-      // duplicate images) - when the pop-out window saves, then unregisters
-      // itself. The resulting `setNodeMarkup` dispatch flows through this
-      // editor's own `onUpdate` below, so it's autosaved via
-      // `updateStickyNote` like any other edit.
+      // Double-clicking an image opens it in the image editor window. On save,
+      // a one-shot listener scoped to this edit session patches the node at its
+      // exact pos (matching by src breaks with duplicate images); the change
+      // then autosaves like any edit.
       handleDoubleClick(view, pos, event) {
         const target = event.target as HTMLElement;
         if (target.tagName !== "IMG") return false;
@@ -132,11 +100,8 @@ export function StickyNoteEditor({ note }: Props) {
           const { listen } = await import("@tauri-apps/api/event");
           const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, (e) => {
             pendingImageEditorUnlistens.current.delete(unlisten);
-            // Re-verify the node at `pos` is still the SAME image node
-            // double-clicked - the doc may have shifted (concurrent edits)
-            // while the pop-out was open, so `pos` could now land on an
-            // unrelated or non-image node; dispatching blindly would
-            // silently drop the edit or corrupt a different image.
+            // The doc may have changed while the editor was open: make sure pos
+            // still holds the same image before patching.
             const node = view.state.doc.nodeAt(pos);
             if (node && node.type.name === "image" && node.attrs.src === originalSrc) {
               view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: e.payload }));
@@ -159,13 +124,8 @@ export function StickyNoteEditor({ note }: Props) {
     },
   });
 
-  // Sets up the real Tauri window-focus listener + applies the note's
-  // persisted `pinned` state to the actual OS window on mount. Shared by
-  // both StickyNoteTopBar (spec.md subtask 9) and StickyNoteBottomBar
-  // (spec.md subtask 10) via the `focused` prop below, rather than each bar
-  // subscribing to the same Tauri event separately. Focus changes no longer
-  // resize the window (spec.md subtask 3) - that's now `toggleCollapsed`
-  // below, triggered manually by double-clicking the top bar.
+  // Window focus listener for both bars, and applies the saved pinned state to
+  // the OS window on mount.
   useEffect(() => {
     let cancelled = false;
     let unlistenFocus: (() => void) | undefined;
@@ -193,14 +153,8 @@ export function StickyNoteEditor({ note }: Props) {
         setFocused(isFocused);
       });
 
-      // Keeps `originalSizeRef` in sync if the user resizes the window
-      // while it's focused, so a subsequent collapse/restore cycle restores
-      // the size they actually resized to, not a stale one from before the
-      // resize. Resizes caused by our own collapse-toggle are ignored via
-      // `collapsedRef` - a collapse can now happen while the window IS
-      // focused (it's a manual double-click, not tied to OS focus anymore),
-      // so the old `isFocusedRef`-only guard could no longer tell those
-      // apart from a genuine user resize.
+      // Track user resizes so restoring returns to the size the user chose.
+      // Resizes caused by collapsing are ignored via collapsedRef.
       unlistenResize = await win.onResized(async () => {
         if (!isFocusedRef.current || collapsedRef.current) return;
         originalSizeRef.current = (await win.outerSize()).toLogical(scaleFactor);
@@ -217,9 +171,8 @@ export function StickyNoteEditor({ note }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.id]);
 
-  // Flush any pending debounced save on unmount (e.g. the window closing
-  // mid-debounce) so an edit isn't silently dropped - mirrors
-  // CanvasEditor.tsx's identical unmount-flush pattern.
+  // Flush a pending save on unmount (for example the window closing) so the
+  // edit isn't dropped.
   useEffect(() => {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -230,10 +183,8 @@ export function StickyNoteEditor({ note }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.id]);
 
-  // Toggled by double-clicking StickyNoteTopBar's root div. Performs the
-  // exact resize-to-COLLAPSED_HEIGHT / restore-to-`originalSizeRef` behavior
-  // that used to run automatically on blur/focus (spec.md subtask 3 made it
-  // manual instead).
+  // Double-clicking the top bar resizes the window to COLLAPSED_HEIGHT and
+  // back.
   async function toggleCollapsed() {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const { LogicalSize } = await import("@tauri-apps/api/dpi");
@@ -261,11 +212,8 @@ export function StickyNoteEditor({ note }: Props) {
     }
   }
 
-  // Flushes any unsaved title/content edits synchronously (as much as
-  // awaiting async DB writes allows) - used by StickyNoteTopBar's Exit
-  // button so a debounced edit in flight isn't lost when the window closes,
-  // extending the same unmount-flush pattern above to a title still sitting
-  // unblurred in the input.
+  // Used by the Exit button so pending edits, including an unblurred title, are
+  // saved before the window closes.
   async function flushPendingSave() {
     const trimmed = title.trim() || "Untitled";
     if (trimmed !== note.title) {

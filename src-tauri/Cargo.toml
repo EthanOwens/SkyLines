@@ -29,12 +29,11 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-screenshots = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-mcp-bridge = "=0.13.0"
 
-# `devtools` is intentionally Android-only: it's needed to attach a CDP
-# inspector to a release-profile Android build (release profiles strip the
-# `debug_assertions`-gated auto-enable that Tauri normally relies on), but it
-# must not leak into the already-shipped Windows desktop build, where it
-# would expose the JS/IPC context of a notes app to anyone with local access.
+# `devtools` is Android-only: it lets an inspector attach to release Android
+# builds, but on desktop it would expose the app's JS/IPC context to anyone
+# with local access.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 

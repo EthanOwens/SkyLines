@@ -1,18 +1,9 @@
 /* TipTap editor prose styles */
 .tiptap.ProseMirror {
   outline: none;
-  /* spec.md M5 subtask 8. Base/default (unset) text color follows the
-     active theme's `--foreground` variable, same as the placeholder/
-     blockquote/link rules below - overrides Tailwind Typography's
-     `prose`/`dark:prose-invert` fixed color tokens (which never resolve to
-     this app's theme, since nothing here ever toggles a `.dark` class).
-     Set directly on this outer contenteditable root rather than
-     `--tw-prose-body` so it also covers plain, unstyled text even when the
-     `prose` classes' own color plumbing isn't in play. Any manually-chosen
-     text color (Tiptap's Color extension, via applyTextColor) is applied as
-     an inline `style="color: ..."` directly on the affected text's own
-     element, which always wins over this inherited value regardless of
-     selector specificity - so explicit colors are unaffected. */
+  /* Follow the theme's --foreground. Tailwind Typography's prose colors never
+     resolve to the app's themes (nothing toggles .dark). Colors chosen with
+     the Color extension are inline styles, so they still win. */
   color: var(--foreground);
 }
 
@@ -65,13 +56,8 @@
   cursor: pointer;
 }
 
-/* Sticky note embed references (spec.md subtask 12) - a plain Tiptap `Link`
-   mark whose href uses the `sticky:<id>` scheme (spec.md subtask 11), styled
-   as a pill/chip so it visibly reads as an embedded reference rather than a
-   hyperlink. Selector specificity (`.tiptap a[href^="sticky:"]`, one class +
-   one attribute selector) is higher than the plain `.tiptap a` rule above
-   (one class + one tag selector) regardless of source order, so `color`/
-   `text-decoration` are reliably overridden here. */
+/* sticky:<id> links render as chips. This selector outranks `.tiptap a`
+   regardless of source order. */
 .tiptap a[href^="sticky:"] {
   display: inline-flex;
   align-items: center;

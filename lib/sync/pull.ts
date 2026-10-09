@@ -23,26 +23,16 @@ import { getPageRowById, upsertPageFromRemote, type RemotePageData } from "@/lib
 import { recordSyncConflict } from "@/lib/db/syncConflicts";
 import type { Folder, Note, Notebook, Page } from "@/types";
 
-// Firestore -> local pull (spec.md subtask 12, M3 "sync engine": pull side.
-// Push is subtask 11/lib/sync/push.ts, tombstone hard-delete cleanup is
-// subtask 13, offline/retry/syncStatus is subtask 14 - none of that is here).
-//
-// Uses onSnapshot + docChanges() (per SPEC_iter1.md Part 2 "Sync engine")
-// so each callback only processes the incremental added/modified/removed
-// diff instead of re-diffing the whole collection, then upserts into
-// SQLite guarded by an `updatedAt` LWW comparison against the local row.
+// Firestore -> local pull. onSnapshot + docChanges() so each callback only
+// handles the incremental diff, upserted into SQLite with an updatedAt
+// last-write-wins check.
 
 const FOLDERS_COLLECTION = "folders";
 const NOTES_COLLECTION = "notes";
 const NOTEBOOKS_COLLECTION = "notebooks";
 const PAGES_COLLECTION = "pages";
 
-/**
- * Minimal shape pull needs from a local row to decide what to do with an
- * incoming remote change - deliberately just the sync bookkeeping fields,
- * not the full Folder/Note, so `decidePull` (below) is one function shared
- * by both tables instead of two near-duplicates.
- */
+/** Just the sync fields, so decidePull is shared by every table. */
 type LocalSyncState = {
   updatedAt: number;
   dirty: boolean;
@@ -68,26 +58,11 @@ type PullDecision =
   | "conflict-local-wins";
 
 /**
- * Decides what a pull should do with one remote row given the local row's
- * sync state (or `null` if no local row exists yet).
- *
- * The interesting case is when the local row is dirty: dirty means "edited
- * locally since the last successful push," so the question is whether the
- * remote side ALSO changed since that same last sync - if it didn't, this
- * isn't a conflict at all, just an ordinary pending local edit. We detect
- * that by comparing the remote doc's `updatedAt` against the local row's
- * `syncedAt` (the wall-clock moment lib/sync/push.ts last wrote this row to
- * Firestore). Per SPEC_iter1.md, `updatedAt` is a plain client-generated
- * millisecond timestamp specifically so it's comparable across
- * local/remote on "the same clock" (single-user app, no clock-sync
- * infrastructure) - so `remoteUpdatedAt > local.syncedAt` reliably means
- * "something wrote to this Firestore doc after we last synced it," i.e. a
- * genuine both-sides-touched conflict. `syncedAt === null` (row has never
- * been pushed) is treated the same as "conflict candidate," since we have
- * no baseline to prove the remote row is old news.
- *
- * Once a conflict is confirmed, LWW by `updatedAt` picks the winner, same
- * as every other comparison in this sync engine.
+ * When the local row is dirty, it's only a conflict if the remote doc also
+ * changed since our last sync: remote updatedAt > local syncedAt. updatedAt is
+ * client time in milliseconds, so both sides compare on the same clock. A row
+ * that was never synced counts as a possible conflict. Conflicts are then
+ * decided by updatedAt (last write wins).
  */
 function decidePull(local: LocalSyncState | null, remoteUpdatedAt: number): PullDecision {
   if (!local) return "insert";
@@ -96,21 +71,9 @@ function decidePull(local: LocalSyncState | null, remoteUpdatedAt: number): Pull
     return remoteUpdatedAt > local.updatedAt ? "overwrite" : "skip";
   }
 
-  // A remote `updatedAt` that exactly equals the local dirty row's own
-  // `updatedAt` can only be this same local edit echoing back through our
-  // own pull listener - lib/sync/push.ts writes the row's own `updatedAt`
-  // verbatim to Firestore, and Firestore's onSnapshot delivers that write
-  // back to every listener watching the collection, including this one, on
-  // the same client. That echo can arrive (as either an optimistic
-  // "hasPendingWrites" event or the later server-ack event) BEFORE
-  // push.ts's own `markFolderSynced`/`markNoteSynced` call has cleared
-  // `dirty`/set `syncedAt` - a real race, not a hypothetical - so without
-  // this check, every ordinary push would spuriously look like "local dirty
-  // + remote moved" and generate a bogus conflict-backup row. Since
-  // `updatedAt` is set once per local edit and never altered in transit,
-  // an exact match here is never a genuine third-party conflict - it's
-  // always this row's own pending push. Nothing to reconcile: push.ts's own
-  // bookkeeping will clear `dirty` once its `setDoc` resolves.
+  // An equal updatedAt is our own push echoing back through onSnapshot. It can
+  // arrive before push marks the row synced, and would otherwise create a bogus
+  // conflict backup on every push.
   if (remoteUpdatedAt === local.updatedAt) return "skip";
 
   const remoteMovedSinceLastSync = local.syncedAt === null || remoteUpdatedAt > local.syncedAt;
@@ -178,38 +141,15 @@ function toRemotePageData(id: string, data: DocumentData): RemotePageData {
 }
 
 /**
- * Applies one Firestore `docChanges()` entry for the `folders` collection.
- *
- * "removed" changes only fire here if a `folders` doc was actually deleted
- * from Firestore outright (this app only ever soft-deletes via
- * `deletedAt`, so an outright delete now only comes from
- * lib/sync/cleanup.ts's `cleanupOldTombstones` - spec.md subtask 13 - or
- * manual intervention). `change.doc.data()` is still populated with the
- * doc's last known data for "removed" changes even though the doc is gone,
- * so those are skipped outright rather than treated as a write (see the
- * early return below) - otherwise a hard-deleted Firestore doc would get
- * resurrected locally.
- *
- * Confirmed still correct now that subtask 13 exists and actually triggers
- * real Firestore deletes: `cleanupOldTombstones` only ever hard-deletes a
- * row whose local `deletedAt` is already old, and `deletedAt` is a synced
- * field - so any OTHER device that has pulled this row already has the
- * same old tombstone locally, and that device's own future
- * `cleanupOldTombstones` pass will independently hard-delete its local
- * copy too (its remote `deleteDoc()` call simply becomes a harmless no-op
- * the second time). Hard-delete convergence across devices happens via
- * each device's own periodic cleanup eventually running, not by reacting
- * to "removed" here - reacting here would mean treating "the doc is gone"
- * as a trustworthy signal to hard-delete local data with no LWW
- * protection, and there's no way to distinguish "removed by legitimate
- * tombstone cleanup" from "removed by something else" from a bare
- * `docChanges()` event. So this stays a no-op skip.
+ * "removed" changes are skipped. The doc's old data is still attached, and
+ * applying it would resurrect a hard-deleted row. Firestore deletes only come
+ * from tombstone cleanup, which every device runs on its own copy of the same
+ * old tombstone, so the event isn't needed; and a bare "removed" can't be
+ * trusted as a reason to delete local data.
  */
 async function applyFolderChange(change: DocumentChange<DocumentData>): Promise<void> {
   if (change.type === "removed") {
-    // See the function-level comment above for why this remains a no-op
-    // skip even after subtask 13 (lib/sync/cleanup.ts) started performing
-    // real Firestore hard-deletes.
+    // See applyFolderChange.
     return;
   }
 
@@ -228,12 +168,7 @@ async function applyFolderChange(change: DocumentChange<DocumentData>): Promise<
   );
 }
 
-/**
- * Same as `applyFolderChange`, for the `notes` collection - including
- * skipping "removed" changes outright instead of resurrecting them (see the
- * comment above `applyFolderChange`, including the subtask 13 confirmation
- * that this remains correct).
- */
+/** Same as applyFolderChange, for notes. */
 async function applyNoteChange(change: DocumentChange<DocumentData>): Promise<void> {
   if (change.type === "removed") {
     return;
@@ -254,12 +189,7 @@ async function applyNoteChange(change: DocumentChange<DocumentData>): Promise<vo
   );
 }
 
-/**
- * Same as `applyFolderChange`, for the `notebooks` collection - including
- * skipping "removed" changes outright instead of resurrecting them (see the
- * comment above `applyFolderChange`, including the subtask 13 confirmation
- * that this remains correct).
- */
+/** Same as applyFolderChange, for notebooks. */
 async function applyNotebookChange(change: DocumentChange<DocumentData>): Promise<void> {
   if (change.type === "removed") {
     return;
@@ -284,12 +214,7 @@ async function applyNotebookChange(change: DocumentChange<DocumentData>): Promis
   );
 }
 
-/**
- * Same as `applyFolderChange`, for the `pages` collection - including
- * skipping "removed" changes outright instead of resurrecting them (see the
- * comment above `applyFolderChange`, including the subtask 13 confirmation
- * that this remains correct).
- */
+/** Same as applyFolderChange, for pages. */
 async function applyPageChange(change: DocumentChange<DocumentData>): Promise<void> {
   if (change.type === "removed") {
     return;
@@ -311,14 +236,9 @@ async function applyPageChange(change: DocumentChange<DocumentData>): Promise<vo
 }
 
 /**
- * Shared "given a decision, do the actual writes" step for both tables.
- *
- * Why `conflict-local-wins` never calls `upsert`: the local row already
- * holds the winning (newer-or-equal) content, and it's still `dirty` -
- * this pull just leaves it alone so the next push overwrites Firestore
- * with it. The only thing that needs to happen is backing up the losing
- * remote copy so it isn't silently lost. Every other branch results in the
- * local row matching Firestore exactly, so `dirty=false`/`syncedAt=now`.
+ * conflict-local-wins never upserts: the local row already holds the winning
+ * content and stays dirty for the next push; only the losing remote copy is
+ * backed up. Every other branch leaves the local row matching Firestore.
  */
 async function applyDecision<TLocal, TRemote>(
   decision: PullDecision,
@@ -350,27 +270,18 @@ async function applyDecision<TLocal, TRemote>(
 }
 
 /**
- * Optional observability hooks (spec.md subtask 14, lib/sync/engine.ts)
- * letting a caller derive a real `syncStatus` from pull activity without
- * this file needing to know anything about that state machine itself.
- * Entirely optional/additive - every existing caller that omits `hooks`
- * (e.g. app/spike-pull/page.tsx) behaves exactly as before.
- *
- * `onApplyError` and `onListenError` are deliberately separate: applying one
- * changed doc can fail (`onApplyError`) while the listener itself is still
- * alive and will keep delivering future snapshots just fine (see the
- * per-change `.catch` below, and pull.ts's existing resilience to
- * individual bad changes) - that's not a reason for a caller to resubscribe.
- * The listener itself dying (`onListenError`, onSnapshot's second callback)
- * is different: Firestore does not auto-retry a fatal listen error (e.g.
- * permission-denied), so no more snapshots will ever arrive on this
- * particular listener and a caller that wants to keep receiving updates
- * must call `subscribeFolderPull`/`subscribeNotePull`/`startPullSync` again.
+ * Optional hooks so the engine can derive syncStatus from pull activity.
+ * onApplyError (one doc failed; the listener is fine) is separate from
+ * onListenError (the listener died; Firestore won't retry, so the caller must
+ * resubscribe).
  */
 export type PullHooks = {
   /** A snapshot arrived carrying at least one doc change to apply. */
   onActivity?: () => void;
-  /** The snapshot's doc changes all finished applying (whether or not one of them individually failed - see `onApplyError`). Only fired for snapshots that had at least one change (mirrors `onActivity`). */
+  /**
+   * All doc changes in the snapshot finished applying, even if one failed. Only
+   * fires for snapshots with changes.
+   */
   onIdle?: () => void;
   /** One doc change failed to apply; the listener is still alive. */
   onApplyError?: (err: unknown) => void;
@@ -378,24 +289,12 @@ export type PullHooks = {
   onListenError?: (err: unknown) => void;
 };
 
-/**
- * Subscribes to every `folders` doc owned by `userId` and pulls
- * added/modified/removed changes into SQLite via the LWW/conflict logic
- * above. Returns the Firestore `Unsubscribe` so callers can tear the
- * listener down (e.g. on sign-out or app teardown).
- */
+/** Returns the unsubscribe function. */
 export function subscribeFolderPull(userId: string, hooks?: PullHooks): Unsubscribe {
   const q = query(collection(db, FOLDERS_COLLECTION), where("userId", "==", userId));
-  // A write from this same client to a doc this listener watches delivers
-  // TWO onSnapshot callbacks for it: an optimistic one from the local
-  // Firestore cache (hasPendingWrites: true) and a second once the server
-  // acknowledges the write - both carrying "modified" docChanges. Without
-  // serializing across callbacks (not just within one callback's
-  // docChanges() batch), those two deliveries can run concurrently and both
-  // read the same not-yet-updated local row, double-applying whatever
-  // decision (e.g. writing two conflict-backup rows for one real conflict).
-  // `queue` chains every callback's processing onto the previous one so
-  // only one snapshot's worth of changes is ever being applied at a time.
+  // A write from this client arrives twice (the optimistic cache event, then
+  // the server ack). Processing snapshots one at a time stops both reading the
+  // same stale row and applying the change twice.
   let queue: Promise<void> = Promise.resolve();
   return onSnapshot(
     q,
@@ -513,11 +412,7 @@ export function subscribePagePull(userId: string, hooks?: PullHooks): Unsubscrib
   );
 }
 
-/**
- * Starts all pull listeners for a user and returns a single combined
- * unsubscribe function. `hooks` (optional) are passed through unchanged to
- * every listener - see `PullHooks` above.
- */
+/** Starts every pull listener and returns one combined unsubscribe. */
 export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
   const unsubscribeFolders = subscribeFolderPull(userId, hooks);
   const unsubscribeNotes = subscribeNotePull(userId, hooks);

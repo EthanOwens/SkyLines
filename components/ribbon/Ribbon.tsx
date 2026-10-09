@@ -53,22 +53,16 @@ import {
   type FormatActionState,
 } from "./formatActions";
 
-// Tab bar: File/Format always shown, Draw only when the open note is a
-// canvas note (route is /canvas).
+// The Draw tab only appears on /canvas.
 
 type RibbonTab = "file" | "format" | "draw";
 
-// Same trailing-slash normalization AppShell.tsx uses for its own route
-// checks (next.config.ts sets `trailingSlash: true` for the static export
-// Tauri loads, so usePathname() returns e.g. "/canvas/" not "/canvas").
+// Same trailing-slash normalization as AppShell (trailingSlash: true).
 function normalizePathname(pathname: string | null): string | null {
   if (!pathname) return pathname;
   return pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname;
 }
 
-// Compact icon button matching EditorToolbar.tsx's pre-existing style
-// (ported into the ribbon rather than invented fresh), sized to fit the
-// ribbon's fixed h-24 shell.
 function FormatBtn({
   onClick,
   active,
@@ -104,12 +98,8 @@ function FormatBtn({
   );
 }
 
-// Formatting actions read/write `activeEditor` from stores/appStore.ts,
-// which RichTextEditor.tsx keeps in sync with its own Tiptap instance
-// (Ribbon is a sibling, not a descendant, so needs this indirection).
-// Always renders the full control set - disabled/neutral when there's no
-// `activeEditor` (no note open, or a canvas note with no Tiptap instance),
-// rather than hiding controls.
+// Format controls act on the store's activeEditor (the Ribbon is a sibling of
+// the editor). With no active editor they stay visible but neutral.
 const NEUTRAL_FORMAT_STATE: FormatActionState = {
   bold: false,
   italic: false,
@@ -135,10 +125,8 @@ function FormatTab() {
   const activeEditor = useAppStore((s) => s.activeEditor);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Tiptap's `editor` instance doesn't change identity on internal state
-  // changes (bold toggled, selection moved), so this needs its own
-  // subscription (`useEditorState`) to stay in sync from outside
-  // RichTextEditor.tsx's own re-render cycle.
+  // The editor's identity doesn't change with its state, so subscribe with
+  // useEditorState.
   const liveState = useEditorState({
     editor: activeEditor,
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
@@ -257,11 +245,9 @@ function FormatTab() {
   );
 }
 
-// Draw tab: the sole tldraw tool-switcher, since CanvasEditor.tsx's
-// `<Tldraw>` suppresses the native toolbar/style panel chrome. Reuses
-// `activeCanvasEditor` from stores/appStore.ts. Colors/fills/dashes/sizes
-// below mirror tldraw's own `STYLES` values; swatch hexes are each color's
-// light-mode value (kept static, not theme-reactive - out of scope here).
+// The Draw tab is the only tool switcher, since CanvasEditor hides tldraw's
+// toolbar. Values mirror tldraw's STYLES; swatches use each color's light-mode
+// hex.
 const DRAW_COLORS: { label: string; value: TLDefaultColorStyle; hex: string }[] = [
   { label: "Black", value: "black", hex: "#1d1d1d" },
   { label: "Grey", value: "grey", hex: "#9fa8b2" },
@@ -297,9 +283,7 @@ const DRAW_SIZES: { label: string; value: TLDefaultSizeStyle }[] = [
   { label: "Extra large", value: "xl" },
 ];
 
-// Small CSS-drawn icons (no matching lucide-react icon for tldraw's own
-// fill/dash concepts) rendered at the same h-3.5 w-3.5 size as the other
-// Draw tab icons above.
+// Drawn in CSS: lucide has no icons for tldraw's fill and dash styles.
 function FillIcon({ variant }: { variant: TLDefaultFillStyle }) {
   return (
     <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
@@ -338,9 +322,8 @@ function DashIcon({ variant }: { variant: TLDefaultDashStyle }) {
 function DrawTab() {
   const activeCanvasEditor = useAppStore((s) => s.activeCanvasEditor);
 
-  // `getCurrentToolId()` is a tldraw signal, not a store event, so this
-  // needs `useValue` (not `editor.store.listen`) to stay in sync with tool
-  // changes that happen outside this tab too.
+  // The current tool is a tldraw signal, so it needs useValue to see changes
+  // made outside this tab.
   const liveToolId = useValue(
     "ribbon draw tab: current tool id",
     () => activeCanvasEditor?.getCurrentToolId() ?? null,
@@ -352,10 +335,8 @@ function DrawTab() {
     [activeCanvasEditor],
   );
 
-  // Same reactive-read pattern as `geoStyle` above, for the other three
-  // style props the deleted native panel exposed. `getAsKnownValue` returns
-  // null on a mixed/no-relevant-shape selection - same "no highlight"
-  // fallback as `geoStyle`.
+  // getAsKnownValue returns null for mixed selections, which means no
+  // highlight.
   const colorStyle = useValue(
     "ribbon draw tab: current color style",
     () => activeCanvasEditor?.getSharedStyles().getAsKnownValue(DefaultColorStyle) ?? null,
@@ -381,8 +362,8 @@ function DrawTab() {
     return <div className="flex items-center text-muted-foreground">No canvas available.</div>;
   }
 
-  // Every deliberate tool switch must go through `switchToToolExplicitly`
-  // (not a raw `setCurrentTool`) - see RichTextTool.tsx for why.
+  // Deliberate switches go through switchToToolExplicitly; see
+  // RichTextTool.tsx.
   function setTool(id: string) {
     if (!activeCanvasEditor) return;
     switchToToolExplicitly(activeCanvasEditor, id);
@@ -398,8 +379,8 @@ function DrawTab() {
 
   const isGeo = (geo: "rectangle" | "ellipse") => liveToolId === "geo" && geoStyle === geo;
 
-  // Mirrors tldraw's own native style panel logic: restyle selected shapes
-  // AND the next-shape style, so a subsequently drawn shape keeps it too.
+  // Restyle the selected shapes and the next-shape style, like tldraw's own
+  // style panel.
   function setStyle<T>(style: StyleProp<T>, value: T) {
     if (!activeCanvasEditor) return;
     activeCanvasEditor.run(() => {
@@ -420,8 +401,6 @@ function DrawTab() {
         <FormatBtn tip="Pencil" active={liveToolId === "draw"} onClick={() => setTool("draw")}>
           <Pencil className="h-3.5 w-3.5" />
         </FormatBtn>
-        {/* Quick color caret next to the Pencil button - separate trigger
-            from the full color grid below, same DRAW_COLORS/setStyle. */}
         <Tooltip>
           <DropdownMenu>
             <TooltipTrigger
@@ -557,9 +536,7 @@ export function Ribbon() {
   const [activeTab, setActiveTab] = useState<RibbonTab>("file");
   const [stickyHomeOpen, setStickyHomeOpen] = useState(false);
 
-  // If the Draw tab is currently active and the route navigates away from
-  // /canvas (e.g. the user opens a plain note), fall back to File rather
-  // than leaving an unreachable tab selected with no button to reach it.
+  // Fall back to File if the Draw tab is open when leaving /canvas.
   const effectiveTab = activeTab === "draw" && !isCanvasRoute ? "file" : activeTab;
 
   const tabs: { id: RibbonTab; label: string }[] = [
@@ -568,10 +545,9 @@ export function Ribbon() {
     ...(isCanvasRoute ? ([{ id: "draw", label: "Draw" }] as const) : []),
   ];
 
-  // Switching to File/Format always returns the canvas to the `rich-text`
-  // tool - deferred while a drag gesture is in flight or a selection is
-  // non-empty (would otherwise strand resize/rotate/Delete on the wrong
-  // tool), matching RichTextTool.tsx's own watcher logic.
+  // Leaving the Draw tab returns the canvas to the rich-text tool, deferred
+  // while a drag is in flight or something is selected (switching then would
+  // break resize, rotate and Delete).
   useEffect(() => {
     if (effectiveTab === "draw") return;
     if (!activeCanvasEditor) return;
@@ -625,9 +601,7 @@ export function Ribbon() {
             {tab.label}
           </button>
         ))}
-        {/* Not a RibbonTab - opens the StickyNotesHome dialog (subtask 14)
-            rather than swapping in ribbon-panel content, since a dialog
-            doesn't fit the tab/panel shape the other tabs use. */}
+        {/* Opens the sticky notes dialog instead of a ribbon panel. */}
         <button
           type="button"
           onClick={() => setStickyHomeOpen(true)}

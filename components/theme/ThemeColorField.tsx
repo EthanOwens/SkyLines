@@ -12,17 +12,13 @@ import type { ThemeVariableKey } from "@/lib/themes/types";
 interface ThemeColorFieldProps {
   varKey: ThemeVariableKey;
   label: string;
-  /** The variable's current value - already resolved by the caller from
-   * draftVariables, falling back to the loaded theme's own value. */
+  /** Already resolved by the caller (draft value, else the theme's own). */
   value: string | undefined;
   onChange: (varKey: ThemeVariableKey, value: string) => void;
 }
 
-// A single color-wheel field: a swatch button that opens a react-colorful
-// wheel + a hex-alpha text input, bound to one ThemeVariableKey (spec.md M7
-// subtask 15). Reused for all 30 non-`radius` keys - `radius` is a CSS
-// length, not a color, and gets its own text input in ThemeEditor.tsx
-// instead of this component.
+// Color wheel plus hex-alpha input for one theme variable. radius isn't a color
+// and has its own control in ThemeEditor.
 export function ThemeColorField({ varKey, label, value, onChange }: ThemeColorFieldProps) {
   const pickerHex = themeColorToPickerHex(value);
 
@@ -30,9 +26,6 @@ export function ThemeColorField({ varKey, label, value, onChange }: ThemeColorFi
     onChange(varKey, pickerHexToThemeColor(hex));
   }
 
-  // HexColorInput hands back a bare hex string (no leading "#" guarantee
-  // issues - the component always includes it), same shape the wheel emits,
-  // so it can share the same conversion path.
   function handleHexInputChange(hex: string) {
     onChange(varKey, pickerHexToThemeColor(hex));
   }
@@ -56,9 +49,7 @@ export function ThemeColorField({ varKey, label, value, onChange }: ThemeColorFi
                   backgroundSize: "8px 8px",
                 }}
               >
-                {/* Semi-transparent overlay so the checkerboard shows
-                    through variables that store an alpha < 1 (e.g. the dark
-                    theme's border/input colors). */}
+                {/* Lets the checkerboard show through colors with alpha below 1. */}
                 <span
                   className="absolute inset-0"
                   style={{ backgroundColor: pickerHex }}
