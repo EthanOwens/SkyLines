@@ -12,6 +12,7 @@ import type { ThemeVariableKey } from "@/lib/themes/types";
 interface ThemeColorFieldProps {
   varKey: ThemeVariableKey;
   label: string;
+  description: string;
   /** Already resolved by the caller (draft value, else the theme's own). */
   value: string | undefined;
   onChange: (varKey: ThemeVariableKey, value: string) => void;
@@ -19,7 +20,14 @@ interface ThemeColorFieldProps {
 
 // Color wheel plus hex-alpha input for one theme variable. radius isn't a color
 // and has its own control in ThemeEditor.
-export function ThemeColorField({ varKey, label, value, onChange }: ThemeColorFieldProps) {
+export function ThemeColorField({
+  varKey,
+  label,
+  description,
+  value,
+  onChange,
+}: ThemeColorFieldProps) {
+  const descriptionId = `theme-editor-${varKey}-description`;
   const pickerHex = themeColorToPickerHex(value);
 
   function handlePickerChange(hex: string) {
@@ -32,9 +40,14 @@ export function ThemeColorField({ varKey, label, value, onChange }: ThemeColorFi
 
   return (
     <div className="flex items-center justify-between gap-2 py-1">
-      <label className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground" title={label}>
-        {label}
-      </label>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <label className="truncate text-xs text-sidebar-foreground" title={label}>
+          {label}
+        </label>
+        <span id={descriptionId} className="text-[11px] leading-snug text-muted-foreground">
+          {description}
+        </span>
+      </div>
       <div className="flex shrink-0 items-center gap-1.5">
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -42,6 +55,7 @@ export function ThemeColorField({ varKey, label, value, onChange }: ThemeColorFi
               <button
                 type="button"
                 aria-label={`${label} color`}
+                aria-describedby={descriptionId}
                 className="relative h-6 w-6 shrink-0 overflow-hidden rounded-md border border-border shadow-sm"
                 style={{
                   backgroundImage:

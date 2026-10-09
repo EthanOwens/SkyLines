@@ -61,13 +61,6 @@ interface UndoSnapshot {
 
 const MAX_UNDO_HISTORY = 50;
 
-function labelForKey(key: ThemeVariableKey): string {
-  return key
-    .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
 // Built-in themes use 0.625rem; above about 2rem corners are fully rounded
 // anyway.
 const RADIUS_MIN_REM = 0;
@@ -87,13 +80,50 @@ function parseRadiusValue(value: string | undefined): { num: number; unit: strin
   return { num: Math.min(RADIUS_MAX_REM, Math.max(RADIUS_MIN_REM, num)), unit };
 }
 
+// Display text only: the keys are CSS variable names saved in theme files, so
+// they never change.
+const THEME_VARIABLE_INFO = {
+  background: {
+    name: "Background",
+    description: "Main background behind notes and the canvas",
+  },
+  foreground: { name: "Text", description: "Default text color" },
+  card: {
+    name: "Card background",
+    description: "Background of cards, such as sticky note previews",
+  },
+  "card-foreground": { name: "Card text", description: "Text on cards" },
+  primary: {
+    name: "Accent color",
+    description: "Buttons, selected items and other highlights",
+  },
+  border: { name: "Border", description: "Borders and dividing lines" },
+  radius: { name: "Corner rounding", description: "How rounded corners are" },
+  sidebar: { name: "Sidebar background", description: "Background of the sidebars" },
+  "sidebar-foreground": { name: "Sidebar text", description: "Text in the sidebars" },
+  "sidebar-primary": {
+    name: "Sidebar highlight",
+    description: "Shown in the preview; not used by the app yet",
+  },
+  "sidebar-accent": {
+    name: "Sidebar hover",
+    description: "Hovered and selected items in the sidebars",
+  },
+  "sidebar-border": {
+    name: "Sidebar border",
+    description: "Edges and dividers in the sidebars",
+  },
+} satisfies Partial<Record<ThemeVariableKey, { name: string; description: string }>>;
+
+type EditableThemeVariableKey = keyof typeof THEME_VARIABLE_INFO;
+
 // Only keys the mini preview renders, in render order.
-const THEME_VARIABLE_GROUPS: { label: string; keys: ThemeVariableKey[] }[] = [
-  { label: "Base & Text", keys: ["background", "foreground"] },
-  { label: "Card", keys: ["card", "card-foreground"] },
-  { label: "Primary", keys: ["primary"] },
-  { label: "Border", keys: ["border"] },
-  { label: "Radius", keys: ["radius"] },
+const THEME_VARIABLE_GROUPS: { label: string; keys: EditableThemeVariableKey[] }[] = [
+  { label: "Page", keys: ["background", "foreground"] },
+  { label: "Cards & text boxes", keys: ["card", "card-foreground"] },
+  { label: "Accent", keys: ["primary"] },
+  { label: "Borders", keys: ["border"] },
+  { label: "Corners", keys: ["radius"] },
   {
     label: "Sidebar",
     keys: [
@@ -581,19 +611,27 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                         <div className="flex flex-col divide-y divide-border">
                           {group.keys.map((key) => {
                             const value = draftVariables[key] ?? editingTheme.variables[key];
-                            const label = labelForKey(key);
+                            const { name, description } = THEME_VARIABLE_INFO[key];
 
                             if (key === "radius") {
                               const { num, unit } = parseRadiusValue(value);
                               return (
                                 <div key={key} className="flex flex-col gap-1 py-1.5">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <label
-                                      htmlFor="theme-editor-radius"
-                                      className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground"
-                                    >
-                                      {label}
-                                    </label>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex min-w-0 flex-1 flex-col">
+                                      <label
+                                        htmlFor="theme-editor-radius"
+                                        className="truncate text-xs text-sidebar-foreground"
+                                      >
+                                        {name}
+                                      </label>
+                                      <span
+                                        id="theme-editor-radius-description"
+                                        className="text-[11px] leading-snug text-muted-foreground"
+                                      >
+                                        {description}
+                                      </span>
+                                    </div>
                                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                                       {num}
                                       {unit}
@@ -601,6 +639,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                                   </div>
                                   <input
                                     id="theme-editor-radius"
+                                    aria-describedby="theme-editor-radius-description"
                                     type="range"
                                     min={RADIUS_MIN_REM}
                                     max={RADIUS_MAX_REM}
@@ -622,7 +661,8 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                               <ThemeColorField
                                 key={key}
                                 varKey={key}
-                                label={label}
+                                label={name}
+                                description={description}
                                 value={value}
                                 onChange={handleVariableChange}
                               />

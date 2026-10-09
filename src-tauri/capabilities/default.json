@@ -48,6 +48,14 @@
     {
       "identifier": "fs:allow-read-text-file",
       "allow": [{ "path": "$APPCONFIG/themes/*" }]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "$APPCONFIG/themes/*" }]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [{ "path": "$APPCONFIG/themes/*" }]
     }
   ]
 }

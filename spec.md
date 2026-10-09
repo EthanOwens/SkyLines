@@ -102,7 +102,7 @@ Test steps:
 
 ### T4 Plain-language names and descriptions in the theme editor
 
-Status: todo
+Status: done
 Depends on: none
 
 `components/theme/ThemeEditor.tsx` builds row labels with `labelForKey` (kebab-case to Title Case) and groups them in `THEME_VARIABLE_GROUPS`. Replace `labelForKey` with an explicit map from each listed key to a display name and a one-line description, rename the groups, and show the description under each row's name, in small muted text. Rows are rendered by `components/theme/ThemeColorField.tsx` (color keys) and inline in ThemeEditor (the `radius` row); give ThemeColorField a `description` prop. Keep the `keys` arrays and their order unchanged.
@@ -124,9 +124,12 @@ Names and descriptions:
 | Sidebar | sidebar-accent | Sidebar hover | Hovered and selected items in the sidebars |
 | Sidebar | sidebar-border | Sidebar border | Edges and dividers in the sidebars |
 
-Files: `components/theme/ThemeEditor.tsx`, `components/theme/ThemeColorField.tsx`
+Added during testing (user's decision): saving a theme fails because `src-tauri/capabilities/default.json` grants the themes folder mkdir/exists/read-dir/read-text-file but not write or remove, so `writeTextFile` in `lib/themes/loader.ts` is rejected ("fs.write_text_file not allowed") and Save silently does nothing. Grant `fs:allow-write-text-file` and `fs:allow-remove` scoped to `$APPCONFIG/themes/*` in `default.json`, following the file's existing scoped-permission entries.
+
+Files: `components/theme/ThemeEditor.tsx`, `components/theme/ThemeColorField.tsx`, `src-tauri/capabilities/default.json`
 
 Acceptance:
+- `default.json` grants `fs:allow-write-text-file` and `fs:allow-remove` scoped to `$APPCONFIG/themes/*`, and saving a theme writes its file.
 - `labelForKey` no longer exists; every key in `THEME_VARIABLE_GROUPS` has a name and description from the table above, and the word "Foreground" appears nowhere in the editor UI.
 - Group headers read Page, Cards & text boxes, Accent, Borders, Corners, Sidebar.
 - The `keys` arrays (and so the saved theme format) are unchanged.
@@ -185,3 +188,4 @@ Test steps:
 - [x] T1 Remove the white focus outline around the canvas
 - [x] T2 Drag pop-out windows by their title bars
 - [x] T3 Double-click restores a collapsed sticky note
+- [x] T4 Plain-language names and descriptions in the theme editor

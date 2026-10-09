@@ -1,9 +1,2 @@
-- Remove the white border that appears around the note taking canvas
-- Sticky notes
-  - I can't click and drag the sticky notes top bar to move it around
-  - I can't double click to re-open sticky notes once I've double clicked to close them
-- Theme styler
-  - The names of things need to be tweaked
-    - Text being described as foreground feels misleading, it should just shwo as text
-  - Not everything is descriptive on it's own. For instance I'm not sure what "card" means. Hovering something should indicate where it is on the theme editor canvas
-  - There is not visual for sidebard foreground on the canvas theme.
+- Sticky notes are hard to re-focus when in the back because it uses the same taskbar icon. It would be nice if the sticky notes used their own taskbar icon.
+- 
