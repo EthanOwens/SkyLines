@@ -2,11 +2,13 @@
 
 import { useRef, type FocusEvent, type MouseEvent } from "react";
 import { HexAlphaColorPicker, HexColorInput } from "react-colorful";
+import { Info } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { pickerHexToThemeColor, themeColorToPickerHex } from "@/lib/themes/color";
 import type { ThemeVariableKey } from "@/lib/themes/types";
 
@@ -43,6 +45,41 @@ export function settingRowHighlightHandlers(
       }
     },
   };
+}
+
+// Info icon whose tooltip shows a setting's description. The visually hidden
+// copy carries descriptionId, because the tooltip popup only exists while open
+// and the row's control still needs something for aria-describedby to point at.
+export function SettingInfo({
+  label,
+  description,
+  descriptionId,
+}: {
+  label: string;
+  description: string;
+  descriptionId: string;
+}) {
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={`About ${label}`}
+              className="inline-flex shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </button>
+          }
+        />
+        <TooltipContent>{description}</TooltipContent>
+      </Tooltip>
+      <span id={descriptionId} className="sr-only">
+        {description}
+      </span>
+    </>
+  );
 }
 
 interface ThemeColorFieldProps {
@@ -95,13 +132,11 @@ export function ThemeColorField({
       className="flex items-center justify-between gap-2 py-1"
       {...settingRowHighlightHandlers(varKey, onHighlightChange, () => pickerOpenRef.current)}
     >
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 items-center gap-1">
         <label className="truncate text-xs text-sidebar-foreground" title={label}>
           {label}
         </label>
-        <span id={descriptionId} className="text-[11px] leading-snug text-muted-foreground">
-          {description}
-        </span>
+        <SettingInfo label={label} description={description} descriptionId={descriptionId} />
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         <DropdownMenu onOpenChange={handlePickerOpenChange}>

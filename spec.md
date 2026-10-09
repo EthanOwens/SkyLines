@@ -165,7 +165,7 @@ Test steps:
 5. Open the color picker on "Text" and move into the picker: the Text highlight stays until the picker closes.
 ### T7 Setting descriptions in an info tooltip
 
-Status: todo
+Status: done
 Depends on: T6
 
 T4 shows each setting's description as small muted text under its name. Replace that with a small "i" info icon right after the name (lucide-react `Info`, sized like the editor's other small icons) that shows the description in a tooltip when hovered or keyboard-focused. Use the app's existing tooltip component (`components/ui/tooltip.tsx`; `TooltipProvider` is already mounted in `app/layout.tsx`) the way other components use it. The icon must be focusable (for example a small button with an accessible label such as "About Card background") and must not open the color picker or change any value. Keep the descriptions in `THEME_VARIABLE_INFO`, and keep each control's `aria-describedby` pointing at text that contains its description (for example visually hidden text) so screen readers still get it. This applies to the color rows (`components/theme/ThemeColorField.tsx`) and the inline radius row in `ThemeEditor.tsx`. Hovering the icon is part of hovering the row, so T6's highlight still shows.
@@ -215,3 +215,4 @@ Test steps:
 - [x] T3 Double-click restores a collapsed sticky note
 - [x] T4 Plain-language names and descriptions in the theme editor
 - [x] T6 Hovering a setting highlights it in the preview
+- [x] T7 Setting descriptions in an info tooltip

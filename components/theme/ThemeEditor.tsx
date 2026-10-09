@@ -33,7 +33,7 @@ import { BUILTIN_THEMES, LIGHT_THEME } from "@/lib/themes/builtin";
 import { applyTheme } from "@/lib/themes/apply";
 import { deleteThemeFile, ensureThemesDir, loadThemes, saveTheme } from "@/lib/themes/loader";
 import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/themes/types";
-import { ThemeColorField, settingRowHighlightHandlers } from "./ThemeColorField";
+import { SettingInfo, ThemeColorField, settingRowHighlightHandlers } from "./ThemeColorField";
 import { ThemePreview } from "./ThemePreview";
 
 // Duplicated from AccountMenu rather than imported: AccountMenu imports this
@@ -635,20 +635,19 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                                   className="flex flex-col gap-1 py-1.5"
                                   {...settingRowHighlightHandlers(key, handleHighlightChange)}
                                 >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="flex min-w-0 flex-1 flex-col">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex min-w-0 flex-1 items-center gap-1">
                                       <label
                                         htmlFor="theme-editor-radius"
                                         className="truncate text-xs text-sidebar-foreground"
                                       >
                                         {name}
                                       </label>
-                                      <span
-                                        id="theme-editor-radius-description"
-                                        className="text-[11px] leading-snug text-muted-foreground"
-                                      >
-                                        {description}
-                                      </span>
+                                      <SettingInfo
+                                        label={name}
+                                        description={description}
+                                        descriptionId="theme-editor-radius-description"
+                                      />
                                     </div>
                                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                                       {num}
