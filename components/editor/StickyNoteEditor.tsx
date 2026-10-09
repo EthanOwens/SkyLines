@@ -47,12 +47,9 @@ export function StickyNoteEditor({ note }: Props) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContentRef = useRef<object | null>(null);
   const originalSizeRef = useRef<import("@tauri-apps/api/dpi").LogicalSize | null>(null);
-  // Mirrors collapsed for the mount-only effect, whose closure can't see later
-  // state.
+  // Set synchronously by toggleCollapsed rather than mirrored from state: the
+  // collapse/restore resize events can arrive before React commits.
   const collapsedRef = useRef(false);
-  useEffect(() => {
-    collapsedRef.current = collapsed;
-  }, [collapsed]);
 
   // Pending image-editor listeners, removed on unmount so a pop-out that never
   // saves can't leak one or patch a destroyed view.
@@ -154,10 +151,13 @@ export function StickyNoteEditor({ note }: Props) {
       });
 
       // Track user resizes so restoring returns to the size the user chose.
-      // Resizes caused by collapsing are ignored via collapsedRef.
+      // Resizes caused by collapsing are ignored via collapsedRef, and the
+      // height check catches any collapse event that slips past it.
       unlistenResize = await win.onResized(async () => {
         if (!isFocusedRef.current || collapsedRef.current) return;
-        originalSizeRef.current = (await win.outerSize()).toLogical(scaleFactor);
+        const size = (await win.outerSize()).toLogical(scaleFactor);
+        if (collapsedRef.current || size.height <= COLLAPSED_HEIGHT) return;
+        originalSizeRef.current = size;
       });
     }
 
@@ -192,13 +192,19 @@ export function StickyNoteEditor({ note }: Props) {
     const scaleFactor = await win.scaleFactor();
 
     if (collapsed) {
+      collapsedRef.current = true;
       setCollapsed(false);
-      if (originalSizeRef.current) {
-        await win.setSize(originalSizeRef.current);
+      try {
+        if (originalSizeRef.current) {
+          await win.setSize(originalSizeRef.current);
+        }
+      } finally {
+        collapsedRef.current = false;
       }
     } else {
       const currentSize = (await win.outerSize()).toLogical(scaleFactor);
       originalSizeRef.current = currentSize;
+      collapsedRef.current = true;
       setCollapsed(true);
       await win.setSize(new LogicalSize(currentSize.width, COLLAPSED_HEIGHT));
     }

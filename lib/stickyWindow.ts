@@ -22,5 +22,8 @@ export async function openStickyNoteWindow(id: string): Promise<void> {
     resizable: true,
     maximizable: false,
     decorations: false,
+    // Without it, the first click on an unfocused note only activates the
+    // window on macOS, half-swallowing a double-click on the top bar.
+    acceptFirstMouse: true,
   });
 }

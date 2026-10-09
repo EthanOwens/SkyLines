@@ -79,7 +79,7 @@ Test steps:
 
 ### T3 Double-click restores a collapsed sticky note
 
-Status: todo
+Status: done
 Depends on: T2
 
 Double-clicking a sticky note's top bar collapses the window to `COLLAPSED_HEIGHT`, but double-clicking again doesn't restore it. In `components/editor/StickyNoteEditor.tsx`, `toggleCollapsed` saves the current size into `originalSizeRef` and calls `setSize`, and the `onResized` listener records user resizes into `originalSizeRef` unless `collapsedRef.current` is true. But `collapsedRef` is only updated in an effect after React commits, so the collapse resize event can arrive first and overwrite `originalSizeRef` with the collapsed size. Restoring then "restores" to 48px.
@@ -184,3 +184,4 @@ Test steps:
 <!-- /dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Remove the white focus outline around the canvas
 - [x] T2 Drag pop-out windows by their title bars
+- [x] T3 Double-click restores a collapsed sticky note
