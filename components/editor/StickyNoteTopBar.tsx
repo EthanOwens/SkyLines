@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { updateStickyNote, deleteStickyNote } from "@/lib/db/stickyNotes";
 import { themeColorToPickerHex } from "@/lib/themes/color";
+import { useWindowDrag } from "@/hooks/useWindowDrag";
 import type { StickyNote } from "@/types";
 
 // Shown only until the --primary lookup resolves.
@@ -82,6 +83,7 @@ export function StickyNoteTopBar({ note, title, focused, collapsed, onToggleColl
   // Resolved --primary, so the picker opens on the color the bar actually shows
   // when no custom color is set.
   const [defaultColorHex, setDefaultColorHex] = useState(FALLBACK_PICKER_HEX);
+  const windowDrag = useWindowDrag();
 
   useEffect(() => {
     const primary = getComputedStyle(document.documentElement).getPropertyValue("--primary");
@@ -120,7 +122,7 @@ export function StickyNoteTopBar({ note, title, focused, collapsed, onToggleColl
 
   return (
     <div
-      data-tauri-drag-region
+      {...windowDrag}
       onDoubleClick={onToggleCollapsed}
       className={`flex shrink-0 items-center gap-1 transition-all duration-200 ease-in-out ${
         focused || collapsed ? "h-10 px-2" : "h-6 px-1"

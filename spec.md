@@ -53,7 +53,7 @@ Test steps:
 
 ### T2 Drag pop-out windows by their title bars
 
-Status: todo
+Status: done
 Depends on: none
 
 Dragging a sticky note's top bar doesn't move the window, for two reasons: `src-tauri/capabilities/sticky.json` lacks `core:window:allow-start-dragging`, and the bar's bare `data-tauri-drag-region` only reacts when the click lands on the bar element itself, while the title span and buttons cover most of it. The image editor's header (`components/editor/ImageEditor.tsx`, the row with `data-tauri-drag-region`) has the same two problems.
@@ -183,3 +183,4 @@ Test steps:
 
 <!-- /dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Remove the white focus outline around the canvas
+- [x] T2 Drag pop-out windows by their title bars

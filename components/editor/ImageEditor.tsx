@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Circle, Crop, Eraser, EyeOff, Minus, Pencil, Save, Square, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useWindowDrag } from "@/hooks/useWindowDrag";
 
 interface Props {
   path: string;
@@ -56,6 +57,7 @@ export function ImageEditor({ path }: Props) {
   const [activeTool, setActiveTool] = useState<Tool>("none");
   const [shapeType, setShapeType] = useState<ShapeType>("rectangle");
   const [censorMode, setCensorMode] = useState<CensorMode>("black");
+  const windowDrag = useWindowDrag();
   const isPointerDownRef = useRef(false);
   // The preview restores this snapshot on every move before redrawing, so it
   // doesn't smear.
@@ -577,7 +579,7 @@ export function ImageEditor({ path }: Props) {
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
       <div
-        data-tauri-drag-region
+        {...windowDrag}
         className="flex h-10 shrink-0 items-center gap-2 px-3"
         style={{ background: "var(--primary)" }}
       >

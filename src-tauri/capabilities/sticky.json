@@ -1,11 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "sticky",
-  "description": "Sticky note windows (sticky-<id>): sticky note SQL, close, always-on-top and resize, the clipboard, and opening the image editor (writing its temp file under $APPDATA/image-editor/).",
+  "description": "Sticky note windows (sticky-<id>): sticky note SQL, close, minimize, dragging, always-on-top and resize, the clipboard, and opening the image editor (writing its temp file under $APPDATA/image-editor/).",
   "windows": ["sticky-*"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-size",
     "core:webview:allow-create-webview-window",
