@@ -12,7 +12,9 @@ interface ThemePreviewProps {
 
 type PreviewElement =
   | "root"
+  | "rootText"
   | "sidebarStrip"
+  | "sidebarText"
   | "sidebarPrimaryBar"
   | "sidebarAccentBar"
   | "card"
@@ -23,7 +25,7 @@ type PreviewElement =
 
 const ELEMENTS_BY_KEY: Partial<Record<ThemeVariableKey, readonly PreviewElement[]>> = {
   background: ["root"],
-  foreground: ["root"],
+  foreground: ["root", "rootText"],
   border: ["root"],
   radius: ["root"],
   card: ["card", "textBox"],
@@ -31,7 +33,7 @@ const ELEMENTS_BY_KEY: Partial<Record<ThemeVariableKey, readonly PreviewElement[
   primary: ["textBoxHandle"],
   sidebar: ["sidebarStrip"],
   "sidebar-border": ["sidebarStrip"],
-  "sidebar-foreground": ["sidebarStrip"],
+  "sidebar-foreground": ["sidebarText"],
   "sidebar-primary": ["sidebarPrimaryBar"],
   "sidebar-accent": ["sidebarAccentBar"],
 };
@@ -90,6 +92,9 @@ export function ThemePreview({ editingTheme, draftVariables, hoveredKey = null }
   const highlighted = new Set(hoveredKey ? ELEMENTS_BY_KEY[hoveredKey] ?? [] : []);
   const highlight = (element: PreviewElement) =>
     highlighted.has(element) ? HIGHLIGHT_STYLE : undefined;
+  // Outlined just outside the glyphs instead of over them.
+  const textHighlight = (element: PreviewElement) =>
+    highlighted.has(element) ? { ...HIGHLIGHT_STYLE, outlineOffset: 1 } : undefined;
 
   // Same draft-then-theme fallback as the color editor, so they always agree.
   const scopedVariableStyle = THEME_VARIABLE_KEYS.reduce<Record<string, string>>((acc, key) => {
@@ -115,9 +120,14 @@ export function ThemePreview({ editingTheme, draftVariables, hoveredKey = null }
         } as CSSProperties
       }
     >
+      {/* Inherits the root's color; nothing between it and the root sets one. */}
+      <p className="absolute left-[72px] top-3 text-xs leading-none">
+        <span style={textHighlight("rootText")}>Notes look like this</span>
+      </p>
+
       {/* Mock "sidebar" strip, demonstrating --sidebar/--sidebar-foreground. */}
       <div
-        className="absolute inset-y-0 left-0 w-14 border-r"
+        className="absolute inset-y-0 left-0 w-14 border-r text-[9px] leading-none"
         style={{
           background: "var(--sidebar)",
           color: "var(--sidebar-foreground)",
@@ -125,14 +135,23 @@ export function ThemePreview({ editingTheme, draftVariables, hoveredKey = null }
           ...highlight("sidebarStrip"),
         }}
       >
+        <div className="mx-2 mt-3 font-semibold">
+          <span style={textHighlight("sidebarText")}>Notes</span>
+        </div>
         <div
-          className="mx-2 mt-3 h-2 rounded-full"
+          className="mx-2 mt-2 h-2 rounded-full"
           style={{ background: "var(--sidebar-primary)", ...highlight("sidebarPrimaryBar") }}
         />
         <div
           className="mx-2 mt-1.5 h-2 w-2/3 rounded-full"
           style={{ background: "var(--sidebar-accent)", ...highlight("sidebarAccentBar") }}
         />
+        <div className="mx-2 mt-2.5">
+          <span style={textHighlight("sidebarText")}>Ideas</span>
+        </div>
+        <div className="mx-2 mt-1.5">
+          <span style={textHighlight("sidebarText")}>Tasks</span>
+        </div>
       </div>
 
       {/* Mock "card", demonstrating --card/--card-foreground. */}

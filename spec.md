@@ -186,7 +186,7 @@ Test steps:
 
 ### T5 Preview elements for Text and Sidebar text
 
-Status: todo
+Status: done
 Depends on: T6
 
 In `components/theme/ThemePreview.tsx`, two settings have no visible effect. `foreground` is set as the root's `color`, but every text-bearing child overrides it, so no text uses it. `sidebar-foreground` is set on the mock sidebar strip, which contains only two colored bars and no text. Add a short line of plain text directly on the preview background (for example "Notes look like this") that inherits `var(--foreground)`. In the mock sidebar strip, add small text labels (for example a heading and item names next to or on the existing bars) colored with `var(--sidebar-foreground)`, without changing what the existing bars demonstrate (`sidebar-primary`, `sidebar-accent`). Keep using `var(--...)` directly; Tailwind color utilities resolve against `:root`, not this scoped preview.
@@ -216,3 +216,4 @@ Test steps:
 - [x] T4 Plain-language names and descriptions in the theme editor
 - [x] T6 Hovering a setting highlights it in the preview
 - [x] T7 Setting descriptions in an info tooltip
+- [x] T5 Preview elements for Text and Sidebar text
