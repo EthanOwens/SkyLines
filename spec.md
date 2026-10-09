@@ -142,7 +142,7 @@ Test steps:
 
 ### T6 Hovering a setting highlights it in the preview
 
-Status: todo
+Status: done
 Depends on: T4
 
 Add `hoveredKey` state (`ThemeVariableKey | null`) to `ThemeEditor.tsx`. Set it on mouse enter and focus of each setting row (the root div in `ThemeColorField.tsx` and the `radius` row's wrapper in ThemeEditor), and clear it on leave and blur. Keep it set while that row's color picker popup is open, so the highlight doesn't flicker as the mouse moves into the popup. Pass `hoveredKey` to `ThemePreview`, which maps each key to the elements that use it and draws a clear highlight on them. The preview root has `overflow-hidden` and some elements sit flush at its edges, so use an inset ring or a negative outline offset, which won't be clipped.
@@ -214,3 +214,4 @@ Test steps:
 - [x] T2 Drag pop-out windows by their title bars
 - [x] T3 Double-click restores a collapsed sticky note
 - [x] T4 Plain-language names and descriptions in the theme editor
+- [x] T6 Hovering a setting highlights it in the preview

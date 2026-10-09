@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, type FocusEvent, type MouseEvent } from "react";
 import { HexAlphaColorPicker, HexColorInput } from "react-colorful";
 import {
   DropdownMenu,
@@ -9,6 +10,41 @@ import {
 import { pickerHexToThemeColor, themeColorToPickerHex } from "@/lib/themes/color";
 import type { ThemeVariableKey } from "@/lib/themes/types";
 
+export type SettingHighlightChange = (varKey: ThemeVariableKey, active: boolean) => void;
+
+// Clicking a control focuses it too, so only :focus-visible counts as focus;
+// otherwise a clicked row would stay highlighted after the mouse leaves.
+function rowHasKeyboardFocus(row: HTMLElement): boolean {
+  const focused = document.activeElement;
+  return focused instanceof HTMLElement && row.contains(focused) && focused.matches(":focus-visible");
+}
+
+// Handlers for a setting row: hover or keyboard focus highlights the setting in
+// the preview. isPinned keeps it highlighted (for example while a popup that
+// lives outside the row is open).
+export function settingRowHighlightHandlers(
+  varKey: ThemeVariableKey,
+  onHighlightChange: SettingHighlightChange,
+  isPinned: () => boolean = () => false,
+) {
+  return {
+    onMouseEnter: () => onHighlightChange(varKey, true),
+    onMouseLeave: (e: MouseEvent<HTMLElement>) => {
+      if (!isPinned() && !rowHasKeyboardFocus(e.currentTarget)) {
+        onHighlightChange(varKey, false);
+      }
+    },
+    onFocus: (e: FocusEvent<HTMLElement>) => {
+      if (e.target.matches(":focus-visible")) onHighlightChange(varKey, true);
+    },
+    onBlur: (e: FocusEvent<HTMLElement>) => {
+      if (!isPinned() && !e.currentTarget.matches(":hover")) {
+        onHighlightChange(varKey, false);
+      }
+    },
+  };
+}
+
 interface ThemeColorFieldProps {
   varKey: ThemeVariableKey;
   label: string;
@@ -16,6 +52,7 @@ interface ThemeColorFieldProps {
   /** Already resolved by the caller (draft value, else the theme's own). */
   value: string | undefined;
   onChange: (varKey: ThemeVariableKey, value: string) => void;
+  onHighlightChange: SettingHighlightChange;
 }
 
 // Color wheel plus hex-alpha input for one theme variable. radius isn't a color
@@ -26,9 +63,23 @@ export function ThemeColorField({
   description,
   value,
   onChange,
+  onHighlightChange,
 }: ThemeColorFieldProps) {
   const descriptionId = `theme-editor-${varKey}-description`;
   const pickerHex = themeColorToPickerHex(value);
+
+  const rowRef = useRef<HTMLDivElement>(null);
+  // Pins the highlight while the picker is open: its popup is portalled outside
+  // the row, so moving into it would otherwise count as leaving the row.
+  const pickerOpenRef = useRef(false);
+
+  function handlePickerOpenChange(open: boolean) {
+    pickerOpenRef.current = open;
+    const row = rowRef.current;
+    if (!open && row && !row.matches(":hover") && !rowHasKeyboardFocus(row)) {
+      onHighlightChange(varKey, false);
+    }
+  }
 
   function handlePickerChange(hex: string) {
     onChange(varKey, pickerHexToThemeColor(hex));
@@ -39,7 +90,11 @@ export function ThemeColorField({
   }
 
   return (
-    <div className="flex items-center justify-between gap-2 py-1">
+    <div
+      ref={rowRef}
+      className="flex items-center justify-between gap-2 py-1"
+      {...settingRowHighlightHandlers(varKey, onHighlightChange, () => pickerOpenRef.current)}
+    >
       <div className="flex min-w-0 flex-1 flex-col">
         <label className="truncate text-xs text-sidebar-foreground" title={label}>
           {label}
@@ -49,7 +104,7 @@ export function ThemeColorField({
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={handlePickerOpenChange}>
           <DropdownMenuTrigger
             render={
               <button

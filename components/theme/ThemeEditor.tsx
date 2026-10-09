@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Clipboard, Copy, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import {
@@ -33,7 +33,7 @@ import { BUILTIN_THEMES, LIGHT_THEME } from "@/lib/themes/builtin";
 import { applyTheme } from "@/lib/themes/apply";
 import { deleteThemeFile, ensureThemesDir, loadThemes, saveTheme } from "@/lib/themes/loader";
 import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/themes/types";
-import { ThemeColorField } from "./ThemeColorField";
+import { ThemeColorField, settingRowHighlightHandlers } from "./ThemeColorField";
 import { ThemePreview } from "./ThemePreview";
 
 // Duplicated from AccountMenu rather than imported: AccountMenu imports this
@@ -182,6 +182,15 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   // loads, a delete or paste pushes its own snapshot, or an undo runs.
   const lastEditedKeyRef = useRef<ThemeVariableKey | null>(null);
 
+  // The setting row being hovered or keyboard-focused, outlined in the preview.
+  const [hoveredKey, setHoveredKey] = useState<ThemeVariableKey | null>(null);
+
+  // A row only clears its own key, so a late leave from the previous row
+  // can't wipe out the row that's now hovered.
+  const handleHighlightChange = useCallback((key: ThemeVariableKey, active: boolean) => {
+    setHoveredKey((prev) => (active ? key : prev === key ? null : prev));
+  }, []);
+
   const themeList = unsavedNewTheme
     ? [...availableThemes, unsavedNewTheme]
     : availableThemes;
@@ -203,6 +212,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     setUnsavedNewTheme(null);
     setPendingAction(null);
     setCopiedVariables(null);
+    setHoveredKey(null);
     undoHistoryRef.current = [];
 
     const fallback = availableThemes[0]?.id ?? null;
@@ -586,7 +596,11 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
 
             <div className="flex min-w-0 flex-1 items-center justify-center bg-muted/30 p-3">
               {editingTheme ? (
-                <ThemePreview editingTheme={editingTheme} draftVariables={draftVariables} />
+                <ThemePreview
+                  editingTheme={editingTheme}
+                  draftVariables={draftVariables}
+                  hoveredKey={hoveredKey}
+                />
               ) : (
                 <div className="text-xs text-muted-foreground">No theme selected</div>
               )}
@@ -616,7 +630,11 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                             if (key === "radius") {
                               const { num, unit } = parseRadiusValue(value);
                               return (
-                                <div key={key} className="flex flex-col gap-1 py-1.5">
+                                <div
+                                  key={key}
+                                  className="flex flex-col gap-1 py-1.5"
+                                  {...settingRowHighlightHandlers(key, handleHighlightChange)}
+                                >
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="flex min-w-0 flex-1 flex-col">
                                       <label
@@ -665,6 +683,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                                 description={description}
                                 value={value}
                                 onChange={handleVariableChange}
+                                onHighlightChange={handleHighlightChange}
                               />
                             );
                           })}
