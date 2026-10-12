@@ -234,8 +234,10 @@ export async function updateStickyNote(
 
   params.push(id);
 
+  // A sticky window's debounced save can land after the note was deleted
+  // elsewhere; it must not write to the tombstone.
   await db.execute(
-    `UPDATE ${TABLE} SET ${setClauses.join(", ")} WHERE id = $${i}`,
+    `UPDATE ${TABLE} SET ${setClauses.join(", ")} WHERE id = $${i} AND deleted_at IS NULL`,
     params,
   );
   notifyDataChange("local");

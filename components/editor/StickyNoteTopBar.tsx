@@ -45,6 +45,8 @@ interface Props {
   onMenuOpenChange: (open: boolean) => Promise<void>;
   /** Flushes any unsaved title/content edits; awaited before the window closes. */
   onBeforeExit: () => Promise<void>;
+  /** Drops unsaved edits and blocks further saves, so none can write to the deleted note. */
+  onBeforeDelete: () => void;
 }
 
 function TopBarBtn({
@@ -87,6 +89,7 @@ export function StickyNoteTopBar({
   onToggleCollapsed,
   onMenuOpenChange,
   onBeforeExit,
+  onBeforeDelete,
 }: Props) {
   const [pinned, setPinned] = useState(note.pinned);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -120,10 +123,16 @@ export function StickyNoteTopBar({
     await getCurrentWindow().close();
   }
 
+  // Closes even if the delete fails: edits are already discarded, and leaving
+  // the window open would strand it.
   async function handleDelete() {
-    await deleteStickyNote(note.id);
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().close();
+    onBeforeDelete();
+    try {
+      await deleteStickyNote(note.id);
+    } finally {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().close();
+    }
   }
 
   // Opening waits for the window to grow, so the menu is placed in the final

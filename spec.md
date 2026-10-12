@@ -92,7 +92,7 @@ Test steps:
 
 ### T12 Deleted sticky note windows can be closed
 
-Status: todo
+Status: done
 Depends on: none
 
 Added after T2: a sticky note deleted during testing left its window open. When that window reloaded, `app/sticky/page.tsx` showed only "Sticky note not found." Sticky windows have `decorations: false`, so there was no way to close it. Three changes:
@@ -371,3 +371,4 @@ Test steps:
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Collapsed sticky notes keep their top bar buttons
 - [x] T2 Live sticky note previews on the home page
+- [x] T12 Deleted sticky note windows can be closed

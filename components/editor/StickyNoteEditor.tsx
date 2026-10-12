@@ -20,7 +20,7 @@ import { createLowlight, common } from "lowlight";
 import { TextStyle, FontSize } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
-import { updateStickyNote } from "@/lib/db/stickyNotes";
+import { STICKY_NOTE_CHANGED_EVENT, getStickyNoteById, updateStickyNote } from "@/lib/db/stickyNotes";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import type { StickyNote } from "@/types";
@@ -57,6 +57,9 @@ export function StickyNoteEditor({ note }: Props) {
   // Mirrors `collapsed` synchronously; collapsedRef can't tell a collapsed note
   // from one mid-restore.
   const isCollapsedRef = useRef(false);
+  // Once the note is deleted, no save may run: a late write would land on the
+  // deleted row.
+  const deletedRef = useRef(false);
 
   // Pending image-editor listeners, removed on unmount so a pop-out that never
   // saves can't leak one or patch a destroyed view.
@@ -118,10 +121,12 @@ export function StickyNoteEditor({ note }: Props) {
       },
     },
     onUpdate({ editor }) {
+      if (deletedRef.current) return;
       const content = editor.getJSON();
       pendingContentRef.current = content;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
+        if (deletedRef.current) return;
         void updateStickyNote(note.id, { content });
         pendingContentRef.current = null;
       }, SAVE_DELAY_MS);
@@ -183,9 +188,46 @@ export function StickyNoteEditor({ note }: Props) {
   useEffect(() => {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      if (pendingContentRef.current) {
+      if (pendingContentRef.current && !deletedRef.current) {
         void updateStickyNote(note.id, { content: pendingContentRef.current });
       }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note.id]);
+
+  function discardPendingSave() {
+    deletedRef.current = true;
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    pendingContentRef.current = null;
+  }
+
+  // Closes the window when its note is deleted from anywhere else (for example
+  // the sticky notes home). The event also fires for edits, so the row is
+  // re-checked rather than assumed gone.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const fn = await listen<{ id: string }>(STICKY_NOTE_CHANGED_EVENT, async (e) => {
+        if (e.payload.id !== note.id || deletedRef.current) return;
+        const current = await getStickyNoteById(note.id).catch(() => undefined);
+        if (current !== null || deletedRef.current) return;
+        discardPendingSave();
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().close();
+      });
+      if (cancelled) fn();
+      else unlisten = fn;
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.id]);
@@ -235,6 +277,7 @@ export function StickyNoteEditor({ note }: Props) {
   }
 
   function handleTitleBlur() {
+    if (deletedRef.current) return;
     const trimmed = title.trim() || "Untitled";
     setTitle(trimmed);
     if (trimmed !== note.title) {
@@ -245,6 +288,7 @@ export function StickyNoteEditor({ note }: Props) {
   // Used by the Exit button so pending edits, including an unblurred title, are
   // saved before the window closes.
   async function flushPendingSave() {
+    if (deletedRef.current) return;
     const trimmed = title.trim() || "Untitled";
     if (trimmed !== note.title) {
       await updateStickyNote(note.id, { title: trimmed });
@@ -269,6 +313,7 @@ export function StickyNoteEditor({ note }: Props) {
         onToggleCollapsed={toggleCollapsed}
         onMenuOpenChange={handleMenuOpenChange}
         onBeforeExit={flushPendingSave}
+        onBeforeDelete={discardPendingSave}
       />
       <div className={`flex flex-1 flex-col overflow-y-auto px-4 py-4 ${collapsed ? "hidden" : ""}`}>
         <input
