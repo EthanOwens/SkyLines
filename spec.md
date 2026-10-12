@@ -90,6 +90,30 @@ Test steps:
 4. Rename the sticky note in its window and click out of the title: the card's title updates.
 5. Delete the test note from its dot menu: its card disappears from the open home.
 
+### T12 Deleted sticky note windows can be closed
+
+Status: todo
+Depends on: none
+
+Added after T2: a sticky note deleted during testing left its window open. When that window reloaded, `app/sticky/page.tsx` showed only "Sticky note not found." Sticky windows have `decorations: false`, so there was no way to close it. Three changes:
+- On the not-found screen (and the no-id screen), keep a slim top bar with the app's drag behaviour (`useWindowDrag` from `hooks/useWindowDrag.ts`) and a Close button that calls `getCurrentWindow().close()`, styled like the Close button in `components/editor/StickyNoteTopBar.tsx`.
+- An open sticky window closes itself when its note is deleted from anywhere. Listen for `sticky-note:changed` (`STICKY_NOTE_CHANGED_EVENT` in `lib/db/stickyNotes.ts`, from T2) for its own id, check `getStickyNoteById`, and if the note is gone, close the window without saving. Deleting from the home page's card menu therefore closes that note's window too.
+- Find out why deleting from the top bar's dot menu (`handleDelete` in `StickyNoteTopBar.tsx`) can leave the window open, and fix it if the cause is in the app. The second change also catches this case, but report what you find.
+
+Files: `app/sticky/page.tsx`, `components/editor/StickyNoteEditor.tsx` or `app/sticky/page.tsx` (listener), `components/editor/StickyNoteTopBar.tsx`
+
+Acceptance:
+- The not-found and no-id screens show a draggable bar with a working Close button.
+- Deleting a sticky note from the home page closes its open window.
+- Deleting from the window's own dot menu closes the window.
+- A pending debounced save in a window whose note was deleted doesn't bring the note back or write to it.
+
+Test steps:
+1. Create a sticky note from the Sticky notes home so its window opens. Then delete it from its card's menu in the home: its window closes.
+2. Create another, type a word, and delete it from its own dot menu: the window closes.
+3. Use `webview_execute_js` in main to open a sticky window for an id that doesn't exist (for example via `openStickyNoteWindow` or by creating a `WebviewWindow` with label `sticky-<fake id>` and url `/sticky/?id=<fake id>`): it shows "Sticky note not found." under a bar with a Close button. Click Close: the window closes.
+4. Check the Sticky notes home: neither test note is listed.
+
 ### T3 Sticky windows get their own taskbar group, icon and title
 
 Status: todo
