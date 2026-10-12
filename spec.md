@@ -1,219 +1,347 @@
-# Canvas edge, sticky note window fixes, clearer theme editor
+# Sticky note polish, working bullet lists, references to anything
 
-Source: planning.md, 2026-10-09
+Source: planning.md, 2026-10-12
 
 ## Goal
 
-Fix three rough edges. Remove the white frame around the note canvas. Make sticky note windows draggable by their top bar, and make double-click restore a collapsed note again. Make the theme editor self-explanatory: plain-language names with short descriptions, a preview element for every setting, and highlighting of where a setting is used when you hover it.
+Three areas. Sticky notes get their own taskbar group and icon on Windows, keep their top bar buttons when collapsed, and show previews on the home page that update live. Bullet lists in every text editor become visible and behave like VS Code's Markdown editing. The broken "embed a sticky note" link becomes a general reference system: anything in the app (notebook, folder, note, page, canvas shape, sticky note) can be copied as a reference, pasted or picked into any text box, shown as a prefixed chip with a hover preview, and followed with a click.
 
 ## Context
 
-- Tauri v2 app (Rust in `src-tauri/`) around a Next.js static export. Pop-out windows are created at runtime: sticky notes by `lib/stickyWindow.ts` (label `sticky-<id>`, `decorations: false`) and the image editor by `lib/imageEditorWindow.ts` (label `image-editor-<id>`). Each label pattern has its own capability file in `src-tauri/capabilities/` (`sticky.json`, `image-editor.json`); `default.json` covers only `main`. A window can only call Tauri commands its capability grants.
-- Tauri APIs (`@tauri-apps/api/window` etc.) are imported dynamically inside handlers and effects, because no Tauri runtime exists during the static export build. Follow that pattern.
-- Installed Tauri is 2.11.5. In its injected drag script, a bare `data-tauri-drag-region` only drags when the clicked element itself carries the attribute, and on double-click it calls `internal_toggle_maximize` (a no-op here, since these windows aren't maximizable).
-- tldraw always runs in its light theme in this app (themes are applied as inline CSS variables on `<html>`; nothing toggles `.dark`). `app/globals.css` already rebinds tldraw's `--tl-color-background` to the app's `--background` under `.canvas-editor-container .tl-container.tl-theme__light/dark`.
-- Theme variable keys (`lib/themes/types.ts`) are CSS variable names stored in users' theme files on disk. Never rename a key; only change what the editor displays.
+- Tauri v2.11.5 (Rust, `src-tauri/`) around a Next.js static export. `@tauri-apps/api` 2.11.1. Tauri APIs are imported dynamically inside handlers and effects (no Tauri runtime during the static build); follow that pattern.
+- Windows created at runtime: sticky notes via `openStickyNoteWindow` in `lib/stickyWindow.ts` (label `sticky-<id>`, `decorations: false`), image editor via `lib/imageEditorWindow.ts`. Each label pattern has a capability file in `src-tauri/capabilities/` (`default.json` = `main` only, `sticky.json`, `image-editor.json`). A window can only use the plugin/core permissions its file grants.
+- Cross-window communication uses Tauri events: `emit` / `listen` from `@tauri-apps/api/event`, as in `image-editor:saved:<id>` (`components/editor/ImageEditor.tsx` emits, `StickyNoteEditor.tsx` / `RichTextShape.tsx` listen). `lib/db/events.ts` (`notifyDataChange` / `subscribeDataChange`) is in-memory per window and does not cross windows.
+- Data hierarchy: Notebook → Folder (nested via `parent_id`) → Note (`/canvas?id=<noteId>`) → Page (`pages` table, `canvas_data` = tldraw snapshot JSON) → tldraw shapes. Sticky notes (`sticky_notes`) sit outside the tree. All row IDs are `crypto.randomUUID()`. Shape IDs (`shape:<nanoid>`) live inside a page's snapshot, are only unique within that page and are duplicated when a page is copied, so a shape is identified by `(pageId, shapeId)`. Types in `types/index.ts`, DB access in `lib/db/*.ts`, migrations in `src-tauri/src/lib.rs` (never edit an existing one).
+- The main window's store (`stores/appStore.ts`) holds notebooks, folders and notes for all notebooks (loaded by `components/AppShell.tsx`); pages are loaded only for the open note (`getPages(noteId)` for others). Sticky and image-editor windows have no shell and no loaded store.
+- Navigation: `setSelectedNotebook(id)` + `router.push("/")` shows a notebook's tree; notes open with `router.push("/canvas?id=<noteId>")`; `CanvasEditor.tsx` picks the first page on load (`setSelectedPageId`) and loads the snapshot in `handleMount`.
+- Three Tiptap 3.29.2 editors each build their own extension list today: `components/editor/RichTextEditor.tsx`, `components/editor/StickyNoteEditor.tsx`, `components/canvas/RichTextShape.tsx` (a tldraw shape; also adds `Highlight`). All three add `Link.configure({ openOnClick: false })` on top of StarterKit v3, which already bundles Link with `openOnClick: true`, so two `link` extensions run.
+- Tiptap's Link rejects any href whose scheme isn't http/https/ftp/mailto/tel/etc. (`isAllowedUri`), so `sticky:<id>` links set by `components/editor/LinkOrStickyDialog.tsx` have never been applied. `lib/tiptap/stickyLinkClick.ts` and the `a[href^="sticky:"]` styles in `components/editor/editor.css` have therefore never matched anything.
+- Canvas text boxes (`RichTextShape.tsx`) have `pointer-events: none` on their content unless being edited, and `setEditable(false)` when not editing. The auto-return-to-text-tool logic is in `components/canvas/RichTextTool.tsx` (`requestReturnToRichText`, `clearPendingReturnToRichText`, `shapesWithSuppressedReenter`, `switchToToolExplicitly`).
+- Context menus: the sidebar items share a `menuItems()` function between the "···" `DropdownMenu` and a Base UI `ContextMenu` (`components/ui/context-menu.tsx`), in `FolderItem.tsx`, `NoteItem.tsx`, `PageItem.tsx`; sticky cards have one in `components/sticky/StickyNotesHome.tsx`. The canvas uses tldraw's default context menu with no overrides. Base UI has no `asChild`; use `render`.
+- Clipboard: only `writeImage` from `@tauri-apps/plugin-clipboard-manager` is used and granted. Text needs `clipboard-manager:allow-write-text` / `allow-read-text` added to the relevant capability files.
+- External URLs open with `@tauri-apps/plugin-opener` (`openUrl`); `opener:default` is granted in `default.json` only.
+- Verification and testing per `CLAUDE.md`. Development and the tester run on macOS, so Windows-only code (`#[cfg(windows)]`) isn't compiled by `cargo check`; if `rustup target list --installed` shows a Windows target, also run `cargo check --target <it>`.
 
 ## Decisions
 
-- Canvas: remove only tldraw's focus outline. The themed line under the page title stays, and tldraw's other light-only colors are left alone.
-- Window dragging is handled by the app instead of `data-tauri-drag-region`: a native drag starts only once the mouse has moved a few pixels while held down. A click or double-click without movement never starts a drag, so double-click to collapse/restore keeps working on macOS, where a native drag swallows the mouse-up.
-- The image editor's title bar has the same drag bug and gets the same fix.
-- Sticky windows also get `core:window:allow-minimize`, which the existing Minimize button needs and currently lacks.
-- Sticky windows get `acceptFirstMouse: true`, so the first click on an unfocused note reaches the page instead of only focusing the window.
-- Theme editor names use the plain-language set below, each with a one-line description. Hovering (or focusing) a setting outlines the preview elements that use it.
-- Changed after T4 (user's request): descriptions move out of the row into a tooltip on a small "i" icon next to each name, and the hover highlight (T6) comes before the new preview elements (T5). T6 starts with placeholder mappings for Text and Sidebar text, which T5 then points at its new elements.
-- `sidebar-primary` isn't used anywhere in the app outside the preview. It keeps its row, with a description saying so.
+- **Collapsed sticky bar:** when collapsed, the top bar shows the dot menu, Pin, Minimize and Close whether or not the window is focused. Expanded behaviour is unchanged (controls only while focused).
+- **Sticky home previews** refresh live through a Tauri event emitted whenever a sticky note is created, updated or deleted, and show up to 3 lines of text.
+- **Taskbar:** on Windows, sticky windows get their own taskbar group (a separate AppUserModelID, `SkyLines.StickyNotes`) and a sticky-note icon. macOS shows one Dock icon per app, so there (and on Windows too) each sticky window's title is the note's title instead of "Sticky note", which names it in the Dock's right-click list, the Window menu and Alt-Tab. The implementer makes a simple placeholder icon (`src-tauri/icons/sticky.png`) that the user can replace.
+- **Bullets:** "- " (dash then space) at the start of a line starts a bullet list; a dash alone stays a dash. Enter adds a bullet at the same level; Enter on an empty nested bullet moves it out one level, and on an empty top-level bullet ends the list (stock behaviour). Tab indents and Shift+Tab outdents the bullet(s) the cursor or selection touches. Where there's nothing to indent or outdent (plain text, the first bullet of a list, Shift+Tab on a top-level bullet, a selection crossing the list's edge), Tab and Shift+Tab do nothing and focus stays in the editor. Backspace at the start of a bullet removes it (stock). The same applies to numbered and task lists.
+- **List styling:** markers by depth (disc, circle, square, then repeat) and a left indent per level, in `editor.css`, scoped to `.tiptap` and excluding task lists. Don't install `@tailwindcss/typography`; it would restyle headings and paragraphs everywhere.
+- **The three editors share one extension factory** in `lib/tiptap/extensions.ts`.
+- **Reference format:** the clipboard text is `skylines://<kind>/<id>` with kind `notebook`, `folder`, `note`, `page` or `sticky`, and `skylines://shape/<pageId>/<shapeId>` for a canvas shape. It reuses the app's registered deep-link scheme, though opening these from outside the app is out of scope.
+- **Reference rendering:** an inline atom node (not a Link mark, which avoids URL sanitisation) shown as a chip. In-app places use "#" plus a short path ending in the item's live title (for example "#Week 3 › Lecture notes"), and sticky notes use "%" plus the title. If the user had text selected when inserting, that text becomes the chip's fixed label (after the prefix) instead of the live title. A reference whose target is gone shows its last known title struck through, with "Not found" in its preview. Web links stay normal Link marks with a small "↗" after them.
+- **Inserting references:** paste a `skylines://` token into any text box and it becomes a chip. The Insert link dialog (Ctrl/Cmd+K, the bubble menu's link button and the Ribbon Format tab's link button) has a URL field, a paste-reference field, a searchable tree (notebooks › folders › notes › pages › text boxes), the sticky notes list and "Create new sticky note".
+- **Copying references:** right-click › "Copy reference" on notebooks, folders, notes, pages, sticky cards (home and the sticky window's dot menu) and canvas shapes.
+- **Following references:** in a canvas text box that isn't being edited, a single click on a chip or web link follows it. While editing, and in the always-editable sticky and main editors, Ctrl/Cmd+click follows it. Notebook: show it in the sidebar on the home page. Folder: same, with the folder selected and expanded. Note: open it. Page: open its note on that page. Shape: open the note on that page, then select the shape and zoom to it. Sticky: open its window. From a sticky window, in-app references bring the main window forward and navigate there. Web links open in the default browser.
+- **Hover preview:** hovering a chip or web link for about 400ms shows a card with the kind, the path, the title, and up to 3 lines of text (or the first image if there's no text). For web links it shows the full URL.
+- The ID uniqueness rule means a copied page's shapes keep their IDs. A shape reference always includes its page, so it still resolves to the original page.
 
 ## Out of scope
 
-- Mapping tldraw's other light-only colors (menus, panels, dividers) to the app theme.
-- Removing the border under the canvas page title.
-- Renaming theme variable keys or changing saved theme files.
-- Changes to the sticky note bottom bar or the image editor's tools.
+- Syncing sticky notes to Firestore. References to sticky notes won't resolve on another device until sticky sync exists.
+- Opening `skylines://` references from outside the app (OS deep links).
+- Typing a prefix ("#", "%") to search and insert a reference inline.
+- Backlinks ("what references this?") and updating references when items are copied.
+- Per-window Dock icons on macOS (not possible).
+- Changing the sticky note bottom bar or the image editor.
 
 ## Tasks
 
-### T1 Remove the white focus outline around the canvas
+### T1 Collapsed sticky notes keep their top bar buttons
 
-Status: done
+Status: todo
 Depends on: none
 
-tldraw adds `.tl-container__focused` whenever the canvas has focus, and tldraw.css draws `outline: 1px solid var(--tl-color-low)` on it. `--tl-color-low` comes from tldraw's light theme (near-white), so in dark app themes the canvas gets a white frame. In `app/globals.css`, next to the existing `--tl-color-background` rule, add a rule scoped under `.canvas-editor-container` that removes the outline from the focused container. Use at least three classes in the selector so it outranks tldraw's single-class rule regardless of import order, as the existing rule does.
+In `components/editor/StickyNoteTopBar.tsx`, the controls block (Pin, the `MoreVertical` dot menu, Minimize, Close) renders only when `focused && !collapsed`. Change it to render when `focused || collapsed`. The collapsed bar is already the tall `h-10` variant and fits inside the 48px collapsed window (`COLLAPSED_HEIGHT` in `StickyNoteEditor.tsx`). Keep the button group's `onDoubleClick` stopPropagation so double-clicking a button doesn't toggle collapse. Update the file's header comment to describe the new rule.
 
-Files: `app/globals.css`
+Files: `components/editor/StickyNoteTopBar.tsx`
 
 Acceptance:
-- A rule in `app/globals.css` scoped to `.canvas-editor-container` sets `outline: none` on `.tl-container.tl-container__focused`.
-- No other tldraw variables or app borders change.
+- The controls block renders when the note is collapsed, focused or not, and when it is expanded and focused.
+- When expanded and unfocused, the bar still shows only the title.
+- Double-clicking a button in the group doesn't collapse or restore the window.
 
 Test steps:
-1. With a dark theme active (Dark or Gruvbox in the account menu), open any canvas note and click on the canvas.
-2. No white or light 1px frame appears around the canvas area; the canvas edge blends into the background.
-3. Click into the page title input, then back onto the canvas: nothing appears or disappears at the canvas edge.
+1. Open a sticky note window and double-click its top bar: it collapses, and the dot menu, Pin, Minimize and Close buttons are visible.
+2. Click the main window so the sticky note loses focus: the collapsed bar still shows all four buttons.
+3. Click the dot menu on the collapsed note: the menu opens. Close it.
+4. Double-click the bar's title: the note restores to its previous size.
 
-### T2 Drag pop-out windows by their title bars
+### T2 Live sticky note previews on the home page
 
-Status: done
+Status: todo
 Depends on: none
 
-Dragging a sticky note's top bar doesn't move the window, for two reasons: `src-tauri/capabilities/sticky.json` lacks `core:window:allow-start-dragging`, and the bar's bare `data-tauri-drag-region` only reacts when the click lands on the bar element itself, while the title span and buttons cover most of it. The image editor's header (`components/editor/ImageEditor.tsx`, the row with `data-tauri-drag-region`) has the same two problems.
+`StickyNotesHome` (`components/sticky/StickyNotesHome.tsx`) loads notes once per open, so edits made in a sticky window don't show until it's reopened. In `lib/db/stickyNotes.ts`, after `createStickyNote`, `updateStickyNote` and `deleteStickyNote` write to SQLite, emit a Tauri event `sticky-note:changed` with `{ id }` (dynamic import of `@tauri-apps/api/event`, ignore failures). In `StickyNotesHome`, while `open`, `listen` for it and re-fetch with `getStickyNotes` (also refresh `openNoteIds`), unlistening on close. Make sure a rename being typed on a card isn't overwritten by a refresh (the card's local `title` state). For previews, call `extractPlainText(note.content, 300)` (`lib/tiptap/extractText.ts`) and change the preview span's `line-clamp-2` to `line-clamp-3`.
 
-Add a small shared hook (for example `hooks/useWindowDrag.ts`) that returns mouse handlers for a title bar. On a primary-button mousedown whose target isn't interactive (button, input, link, `[role=button]`, or inside one), record the point. On mousemove with the button still held and more than about 4px of movement, call `getCurrentWindow().startDragging()` once (dynamic import), then stop tracking. Stop tracking on mouseup. Use it on the root of `components/editor/StickyNoteTopBar.tsx` and on the image editor header, and remove `data-tauri-drag-region` from both, so Tauri's own drag script no longer handles them.
-
-Add `core:window:allow-start-dragging` to `sticky.json` and `image-editor.json`, and `core:window:allow-minimize` to `sticky.json`.
-
-Files: `hooks/useWindowDrag.ts` (new), `components/editor/StickyNoteTopBar.tsx`, `components/editor/ImageEditor.tsx`, `src-tauri/capabilities/sticky.json`, `src-tauri/capabilities/image-editor.json`
+Files: `lib/db/stickyNotes.ts`, `components/sticky/StickyNotesHome.tsx`
 
 Acceptance:
-- `sticky.json` grants `core:window:allow-start-dragging` and `core:window:allow-minimize`; `image-editor.json` grants `core:window:allow-start-dragging`.
-- Neither title bar uses `data-tauri-drag-region`.
-- Both title bars use the shared hook. A mousedown on a button or input never starts a drag, and a click or double-click without movement never calls `startDragging`.
-- The sticky top bar's existing `onDoubleClick` (collapse toggle) and its buttons (Pin, menu, Minimize, Close) still work.
+- `createStickyNote`, `updateStickyNote` and `deleteStickyNote` emit `sticky-note:changed`.
+- The home listens only while open and cleans up the listener on close and unmount.
+- Card previews use up to 300 characters, clamped to 3 lines.
 
 Test steps:
-1. Open a sticky note window. Press on the title text in its top bar and drag: the window follows the mouse.
-2. Drag from empty space in the top bar: the window moves.
-3. Click Pin, the menu button and Minimize: each does its job and the window doesn't move.
-4. Double-click the top bar without moving the mouse: the note collapses, as before.
-5. Open an image in the image editor (double-click an image in a note) and drag its header by the title: the window moves; Save and Close still work.
+1. In the main window, open Sticky notes from the Ribbon. Create a sticky note, so its window opens alongside.
+2. Type three or four lines of text into the sticky note and wait about a second: the card in the still-open home updates without closing the dialog.
+3. The card shows up to 3 lines of preview text.
+4. Rename the sticky note in its window and click out of the title: the card's title updates.
+5. Delete the test note from its dot menu: its card disappears from the open home.
 
-### T3 Double-click restores a collapsed sticky note
+### T3 Sticky windows get their own taskbar group, icon and title
 
-Status: done
-Depends on: T2
-
-Double-clicking a sticky note's top bar collapses the window to `COLLAPSED_HEIGHT`, but double-clicking again doesn't restore it. In `components/editor/StickyNoteEditor.tsx`, `toggleCollapsed` saves the current size into `originalSizeRef` and calls `setSize`, and the `onResized` listener records user resizes into `originalSizeRef` unless `collapsedRef.current` is true. But `collapsedRef` is only updated in an effect after React commits, so the collapse resize event can arrive first and overwrite `originalSizeRef` with the collapsed size. Restoring then "restores" to 48px.
-
-Set `collapsedRef.current` synchronously inside `toggleCollapsed`: true before shrinking, and on restore keep it true until the restore `setSize` has resolved, then false. Also have the `onResized` listener ignore any size whose logical height is at or below `COLLAPSED_HEIGHT`. In `lib/stickyWindow.ts`, add `acceptFirstMouse: true` to the `WebviewWindow` options so a double-click on an unfocused note isn't half-swallowed by window activation.
-
-Files: `components/editor/StickyNoteEditor.tsx`, `lib/stickyWindow.ts`
-
-Acceptance:
-- `toggleCollapsed` sets `collapsedRef.current` itself before each `setSize` call, and clears it only after the restore `setSize` completes.
-- The `onResized` listener never stores a height at or below `COLLAPSED_HEIGHT` in `originalSizeRef`.
-- `openStickyNoteWindow` passes `acceptFirstMouse: true`.
-
-Test steps:
-1. Open a sticky note and resize it to something distinctive (for example noticeably taller than default).
-2. Double-click the top bar: the window collapses to just the top bar.
-3. Double-click the top bar again: the window returns to the exact size from step 1, and the editor and bottom bar are visible.
-4. Collapse it again, click on another window so the note loses focus, then double-click the collapsed note's bar: it restores.
-5. Repeat collapse and restore three times: the size is the same every time.
-
-### T4 Plain-language names and descriptions in the theme editor
-
-Status: done
+Status: todo
 Depends on: none
 
-`components/theme/ThemeEditor.tsx` builds row labels with `labelForKey` (kebab-case to Title Case) and groups them in `THEME_VARIABLE_GROUPS`. Replace `labelForKey` with an explicit map from each listed key to a display name and a one-line description, rename the groups, and show the description under each row's name, in small muted text. Rows are rendered by `components/theme/ThemeColorField.tsx` (color keys) and inline in ThemeEditor (the `radius` row); give ThemeColorField a `description` prop. Keep the `keys` arrays and their order unchanged.
+Add a Rust command `setup_sticky_window(label: String)` in `src-tauri/src/lib.rs` and register it in the invoke handler. It looks up the window and sets its icon from an embedded `src-tauri/icons/sticky.png` (`tauri::image::Image::from_bytes(include_bytes!(..))`; enable the `image-png` feature on `tauri` in `Cargo.toml`). Under `#[cfg(windows)]` only, it gets the window's `hwnd()` and sets `PKEY_AppUserModel_ID` to `SkyLines.StickyNotes` through `SHGetPropertyStoreForWindow`, using the `windows` crate as a Windows-only dependency with the needed Win32 features. That splits sticky notes into their own taskbar group. On other platforms that part is a no-op. Create `sticky.png` as a simple placeholder (a yellow square sticky note with a folded corner, 256×256) using whatever tooling is at hand.
 
-Names and descriptions:
+In `lib/stickyWindow.ts`, pass the note's title (or "Untitled") as the window `title` (the caller fetches it with `getStickyNoteById`, or `openStickyNoteWindow` takes an optional title), and call `invoke("setup_sticky_window", { label })` after the window's `tauri://created` event. In `StickyNoteEditor.tsx`, call `getCurrentWindow().setTitle(...)` when the title is saved. Add `core:window:allow-set-title` to `sticky.json`. Also check whether `existing.setFocus()` in `openStickyNoteWindow` needs `core:window:allow-set-focus` in `default.json` (it runs from the main window) and add it if missing.
 
-| Group | Key | Name | Description |
-|---|---|---|---|
-| Page | background | Background | Main background behind notes and the canvas |
-| Page | foreground | Text | Default text color |
-| Cards & text boxes | card | Card background | Background of cards, such as sticky note previews |
-| Cards & text boxes | card-foreground | Card text | Text on cards |
-| Accent | primary | Accent color | Buttons, selected items and other highlights |
-| Borders | border | Border | Borders and dividing lines |
-| Corners | radius | Corner rounding | How rounded corners are |
-| Sidebar | sidebar | Sidebar background | Background of the sidebars |
-| Sidebar | sidebar-foreground | Sidebar text | Text in the sidebars |
-| Sidebar | sidebar-primary | Sidebar highlight | Shown in the preview; not used by the app yet |
-| Sidebar | sidebar-accent | Sidebar hover | Hovered and selected items in the sidebars |
-| Sidebar | sidebar-border | Sidebar border | Edges and dividers in the sidebars |
-
-Added during testing (user's decision): saving a theme fails because `src-tauri/capabilities/default.json` grants the themes folder mkdir/exists/read-dir/read-text-file but not write or remove, so `writeTextFile` in `lib/themes/loader.ts` is rejected ("fs.write_text_file not allowed") and Save silently does nothing. Grant `fs:allow-write-text-file` and `fs:allow-remove` scoped to `$APPCONFIG/themes/*` in `default.json`, following the file's existing scoped-permission entries.
-
-Files: `components/theme/ThemeEditor.tsx`, `components/theme/ThemeColorField.tsx`, `src-tauri/capabilities/default.json`
+Files: `src-tauri/src/lib.rs`, `src-tauri/Cargo.toml`, `src-tauri/icons/sticky.png` (new), `lib/stickyWindow.ts`, `components/editor/StickyNoteEditor.tsx`, `src-tauri/capabilities/sticky.json`, `src-tauri/capabilities/default.json`
 
 Acceptance:
-- `default.json` grants `fs:allow-write-text-file` and `fs:allow-remove` scoped to `$APPCONFIG/themes/*`, and saving a theme writes its file.
-- `labelForKey` no longer exists; every key in `THEME_VARIABLE_GROUPS` has a name and description from the table above, and the word "Foreground" appears nowhere in the editor UI.
-- Group headers read Page, Cards & text boxes, Accent, Borders, Corners, Sidebar.
-- The `keys` arrays (and so the saved theme format) are unchanged.
+- `setup_sticky_window` is registered, sets the window icon from `sticky.png` on every platform, and sets the AppUserModelID only under `#[cfg(windows)]`.
+- The `windows` crate dependency is Windows-only.
+- Sticky windows open with the note's title as their window title, and the title updates on rename.
+- `cargo check` passes on macOS.
 
 Test steps:
-1. Open the account menu and choose "Edit themes...".
-2. The right sidebar shows the groups and names from the table, each with its description underneath; no setting is called "Foreground".
-3. Change a color (for example Text) and save: the theme saves and applies as before.
+1. Open an existing sticky note: it opens normally, with no errors in the logs about `setup_sticky_window` or set-focus.
+2. Read the sticky window's title (`manage_window` / window info): it's the note's title, not "Sticky note".
+3. Rename the note in its title field and click away: the window title changes to match.
+4. Manual, Windows: open two sticky notes. They appear as a separate taskbar group from the main SkyLines window, with the sticky-note icon, and hovering the group lists them by title.
+5. Manual, macOS: right-click the Dock icon. Each sticky window is listed by its note's title.
 
-### T6 Hovering a setting highlights it in the preview
+### T4 Shared editor extensions and visible lists
 
-Status: done
+Status: todo
+Depends on: none
+
+Bullet lists already work underneath (typing "- " creates one), but nothing draws them. The editors use `prose` classes from `@tailwindcss/typography`, which isn't installed, and Tailwind's preflight strips list markers and padding. Create `lib/tiptap/extensions.ts` exporting a factory (for example `createEditorExtensions({ placeholder, highlight })`) that returns the extension list the three editors build today, and switch `RichTextEditor.tsx`, `StickyNoteEditor.tsx` and `RichTextShape.tsx` to it with no behaviour change (keep the duplicate Link for now; T9 cleans it up). In `components/editor/editor.css`, style `.tiptap ul:not([data-type="taskList"])` and `.tiptap ol`: markers disc → circle → square by nesting depth and decimal for `ol`, a left padding of about 1.25em per level, and small vertical spacing between items. Check that canvas text boxes still size sensibly.
+
+Files: `lib/tiptap/extensions.ts` (new), `components/editor/RichTextEditor.tsx`, `components/editor/StickyNoteEditor.tsx`, `components/canvas/RichTextShape.tsx`, `components/editor/editor.css`
+
+Acceptance:
+- All three editors get their extensions from `lib/tiptap/extensions.ts`; only the canvas passes the option that adds `Highlight`.
+- Bullet lists show markers that change with depth, and each nesting level is indented.
+- Numbered lists show numbers; task list styling is unchanged.
+
+Test steps:
+1. In a canvas text box, type "- one", Enter, "two": two bullet points with visible dots.
+2. Press Tab on "two" (it has a bullet above it): it indents and its marker changes to a hollow circle.
+3. Type "1. first" on a new line outside the list: a numbered list with "1." appears.
+4. In a sticky note, type "- a", Enter, "b": visible bullets there too.
+5. Delete the test text and close the sticky note if you created it.
+
+### T5 Tab and Shift+Tab in lists
+
+Status: todo
 Depends on: T4
 
-Add `hoveredKey` state (`ThemeVariableKey | null`) to `ThemeEditor.tsx`. Set it on mouse enter and focus of each setting row (the root div in `ThemeColorField.tsx` and the `radius` row's wrapper in ThemeEditor), and clear it on leave and blur. Keep it set while that row's color picker popup is open, so the highlight doesn't flicker as the mouse moves into the popup. Pass `hoveredKey` to `ThemePreview`, which maps each key to the elements that use it and draws a clear highlight on them. The preview root has `overflow-hidden` and some elements sit flush at its edges, so use an inset ring or a negative outline offset, which won't be clipped.
+Add a Tiptap extension in `lib/tiptap/listKeymap.ts` and include it in the factory. Its `addKeyboardShortcuts` handles `Tab` and `Shift-Tab` with high priority:
+- Tab: if the selection is in a `listItem` or `taskItem`, run `sinkListItem` for that type.
+- Shift-Tab: run `liftListItem` only if the item is nested inside another list item. For a top-level item, do nothing.
+- Always return true while the editor is focused, so a failed command (first bullet, plain text, a selection crossing the list's edge) never lets the browser move focus.
 
-Key to element mapping (from the current preview): background, foreground, border and radius map to the preview root; card to the mock card and the text box; card-foreground to the card's text and the text box input; primary to the text box's drag handle; sidebar and sidebar-border to the sidebar strip; sidebar-foreground to the sidebar strip for now (T5 adds sidebar text and remaps it); sidebar-primary and sidebar-accent to their bars.
+The stock "- " input rule, Enter and Backspace behaviour stay as they are. Make sure the handler doesn't affect other keyboard handling, such as the Ctrl/Cmd+K handler in `editorProps.handleKeyDown` or tldraw's shortcuts when the canvas text box isn't being edited.
 
-Files: `components/theme/ThemeEditor.tsx`, `components/theme/ThemeColorField.tsx`, `components/theme/ThemePreview.tsx`
-
-Acceptance:
-- `ThemePreview` accepts an optional `hoveredKey` and highlights exactly the elements mapped to that key, with nothing highlighted when it's null.
-- Every key in `THEME_VARIABLE_GROUPS` maps to at least one element.
-- Hover and keyboard focus on a row both set the highlight; leaving or blurring clears it, except while that row's picker popup is open.
-- Highlights aren't clipped at the preview's edges.
-
-Test steps:
-1. Open the theme editor and hover "Card background": the mock card and the movable text box are outlined in the preview, and nothing else.
-2. Hover "Sidebar border": only the sidebar strip is outlined.
-3. Hover "Accent color": the text box's handle bar is outlined.
-4. Move the mouse off the settings list: no highlight remains.
-5. Open the color picker on "Text" and move into the picker: the Text highlight stays until the picker closes.
-### T7 Setting descriptions in an info tooltip
-
-Status: done
-Depends on: T6
-
-T4 shows each setting's description as small muted text under its name. Replace that with a small "i" info icon right after the name (lucide-react `Info`, sized like the editor's other small icons) that shows the description in a tooltip when hovered or keyboard-focused. Use the app's existing tooltip component (`components/ui/tooltip.tsx`; `TooltipProvider` is already mounted in `app/layout.tsx`) the way other components use it. The icon must be focusable (for example a small button with an accessible label such as "About Card background") and must not open the color picker or change any value. Keep the descriptions in `THEME_VARIABLE_INFO`, and keep each control's `aria-describedby` pointing at text that contains its description (for example visually hidden text) so screen readers still get it. This applies to the color rows (`components/theme/ThemeColorField.tsx`) and the inline radius row in `ThemeEditor.tsx`. Hovering the icon is part of hovering the row, so T6's highlight still shows.
-
-Files: `components/theme/ThemeColorField.tsx`, `components/theme/ThemeEditor.tsx`
+Files: `lib/tiptap/listKeymap.ts` (new), `lib/tiptap/extensions.ts`
 
 Acceptance:
-- No description text is visible under the setting names.
-- All 12 setting rows have an info icon next to the name; hovering or focusing it shows that setting's description from `THEME_VARIABLE_INFO` in a tooltip.
-- Clicking or pressing Enter on the icon doesn't open the color picker or change any value.
-- Each control still has an accessible description of its setting.
+- Tab indents and Shift+Tab outdents the list items touched by the cursor or a selection inside one list, for bullet, numbered and task lists.
+- Tab and Shift+Tab never move focus out of the editor and never insert a tab character.
+- Shift+Tab on a top-level list item leaves it unchanged.
+- A dash alone at the start of a line doesn't start a list; "- " does.
 
 Test steps:
-1. Open the theme editor: each setting shows its name with a small "i" icon and no description text underneath.
-2. Hover the "i" next to "Card background": a tooltip reads "Background of cards, such as sticky note previews", and the card elements in the preview are outlined.
-3. Hover the "i" next to "Corner rounding": the tooltip reads "How rounded corners are".
-4. Click an "i" icon: no color picker opens and nothing changes.
+1. In a canvas text box, type "- one", Enter, "two", Enter. On the new empty bullet press Tab: it becomes a sub-bullet. Type "three".
+2. Press Shift+Tab: "three" moves back to the top level.
+3. Select part of "two" and "three" together and press Tab: both indent under "one".
+4. Put the cursor on "one" (the first bullet) and press Tab: nothing changes and you can keep typing in the text box.
+5. Press Shift+Tab on "one": nothing changes and focus stays.
+6. Press Enter on an empty nested bullet: it moves out one level. Press Enter on an empty top-level bullet: the list ends.
+7. On a plain line, type "-x": it stays as text.
+8. Repeat steps 1–4 in a sticky note. Delete all test text and close any sticky note you created.
 
-### T5 Preview elements for Text and Sidebar text
+### T6 Fix the Insert link dialog on the canvas
 
-Status: done
-Depends on: T6
+Status: todo
+Depends on: none
 
-In `components/theme/ThemePreview.tsx`, two settings have no visible effect. `foreground` is set as the root's `color`, but every text-bearing child overrides it, so no text uses it. `sidebar-foreground` is set on the mock sidebar strip, which contains only two colored bars and no text. Add a short line of plain text directly on the preview background (for example "Notes look like this") that inherits `var(--foreground)`. In the mock sidebar strip, add small text labels (for example a heading and item names next to or on the existing bars) colored with `var(--sidebar-foreground)`, without changing what the existing bars demonstrate (`sidebar-primary`, `sidebar-accent`). Keep using `var(--...)` directly; Tailwind color utilities resolve against `:root`, not this scoped preview.
+On a canvas text box, the Insert link dialog (`components/editor/LinkOrStickyDialog.tsx`, rendered inside the shape at the bottom of `RichTextShape.tsx`) leaves tldraw stuck in its Select tool. React events from the portalled dialog still bubble through the shape's React tree into tldraw's canvas handlers (`useCanvasEvents` on `.tl-canvas`), so a pointerdown in the dialog captures the pointer and ends text editing. The auto-return then gets suppressed (`shapesWithSuppressedReenter` in `RichTextTool.tsx`) and nothing switches back to the text tool.
 
-T6 maps `foreground` and `sidebar-foreground` to the preview root and the sidebar strip as placeholders. Update that hover mapping so `foreground` also highlights the new text line and `sidebar-foreground` highlights only the new sidebar text.
+Fix:
+- Stop pointer, mouse and key events from the dialog's content and backdrop propagating through the React tree, for example with a wrapper that calls `stopPropagation` on `onPointerDown`, `onPointerUp`, `onMouseDown`, `onClick` and `onKeyDown`.
+- Snapshot the editor selection `{from, to}` when the dialog opens and restore it before applying.
+- When the dialog closes, return the shape to editing (or at least `switchToToolExplicitly(editor, "rich-text")`) so the canvas is never left in Select.
+- If the selection is empty when a URL is inserted, insert the URL as linked text at the cursor.
+- Once events no longer leak, remove the `makeHandlers` mousedown workaround and use plain `onClick`.
 
-Files: `components/theme/ThemePreview.tsx`
+Leave the sticky-note sections working as they do now; T11 rebuilds the dialog.
+
+Files: `components/editor/LinkOrStickyDialog.tsx`, `components/canvas/RichTextShape.tsx`, `components/canvas/RichTextTool.tsx`
 
 Acceptance:
-- Some visible preview text uses `var(--foreground)` and isn't covered by a child color override.
-- The sidebar strip shows text colored by `var(--sidebar-foreground)`.
-- Every key listed in `THEME_VARIABLE_GROUPS` now has at least one visible preview element.
-- Hovering Text highlights the new text line (along with the preview root); hovering Sidebar text highlights only the new sidebar text.
+- Clicking anywhere in the dialog, its backdrop, Cancel or the close button doesn't end the text box's editing session or change tldraw's current tool.
+- After the dialog closes, by any route, the canvas is in the rich-text tool: clicking empty canvas creates a text box and clicking a text box edits it.
+- Inserting a URL with text selected links that text; with no selection, it inserts the URL as linked text.
 
 Test steps:
-1. Open the theme editor.
-2. Change Text (foreground) to a bright color such as red: a line of text on the preview background turns red.
-3. Change Sidebar text to a bright color: the text in the preview's sidebar strip changes; the sidebar bars keep their own colors.
-4. Hover "Sidebar text": only the sidebar strip's text is outlined. Hover "Text": the new text line is outlined.
+1. Create a canvas text box, type "docs", select it, press Ctrl/Cmd+K, enter `https://example.com` and press Insert link: "docs" becomes a link and the text box is still being edited.
+2. Click on empty canvas: a new text box is created (not stuck in Select).
+3. In a text box with the cursor at the end, press Ctrl/Cmd+K, enter `https://example.org` and insert: the URL appears as linked text.
+4. Open the dialog again and click its backdrop, then reopen and press Cancel: each time, clicking an existing text box enters editing.
+5. Delete the text boxes you created.
+
+### T7 Reference chips
+
+Status: todo
+Depends on: T4
+
+Add `lib/references/`:
+- `format.ts`: a `Reference` type `{ kind: "notebook" | "folder" | "note" | "page" | "shape" | "sticky", id, pageId?, shapeId? }`, with `formatReference` / `parseReference` for the `skylines://<kind>/<id>` and `skylines://shape/<pageId>/<shapeId>` tokens.
+- `resolve.ts`: `resolveReference(ref)` returns `{ exists, title, path: string[], previewText, previewImage }` by reading SQLite through `lib/db/*`. A shape is found in its page's `canvasData`; its title is `extractPlainText` of a rich-text shape's content, or the shape type. It must work in sticky windows too, which have no loaded store.
+
+Add a Tiptap inline atom node `reference` (`lib/tiptap/reference.ts`) with attrs `{ kind, id, pageId, shapeId, label, lastTitle }`. It renders a chip through a React node view: "#" plus the last one or two path segments and the title for in-app items (for example "#Week 3 › Lecture notes"), and "%" plus the title for sticky notes. It uses `label` instead of the live title when set, stores the resolved title in `lastTitle`, and shows a struck-through chip with `lastTitle` when `exists` is false. It parses and serializes HTML via a `span[data-reference]`. Add a paste rule or `handlePaste`: plain text that is exactly one `skylines://` token (trimmed) becomes a `reference` node at the cursor, replacing any selection and using the selected text as `label`. Add it to the factory. Style the chip in `editor.css` (rounded, subtle background, theme colours) and replace the dead `a[href^="sticky:"]` chip styles. Clicking and hovering come in T9 and T10.
+
+Files: `lib/references/format.ts` (new), `lib/references/resolve.ts` (new), `lib/tiptap/reference.ts` (new), `lib/tiptap/extensions.ts`, `components/editor/editor.css`
+
+Acceptance:
+- `parseReference(formatReference(r))` round-trips every kind, and `parseReference` returns null for anything else.
+- Pasting exactly one token into any of the three editors inserts a chip; pasting other text behaves as before.
+- Chips show "#" or "%" per kind with the live title or the fixed label, and a missing target renders struck through.
+- The node survives a save and reload (it's part of the stored Tiptap JSON).
+
+Test steps:
+1. Create a note and page for testing. Find its note ID (from the URL `id=` or via `webview_execute_js`) and put `skylines://note/<id>` on the clipboard.
+2. Paste it into a canvas text box: a "#…" chip with that note's title appears.
+3. Rename the note in the sidebar: the chip's title updates (after re-render or reload).
+4. Paste `skylines://sticky/<id>` for a test sticky note into another text box: a "%<title>" chip appears.
+5. Paste `skylines://note/00000000-0000-0000-0000-000000000000`: a struck-through chip appears.
+6. Reload the note: all chips are still there.
+7. Delete the test note, text boxes and sticky note.
+
+### T8 Copy reference from right-click menus
+
+Status: todo
+Depends on: T7
+
+Add a "Copy reference" item that writes the item's `formatReference` token to the OS clipboard with `writeText` from `@tauri-apps/plugin-clipboard-manager`. Add `clipboard-manager:allow-write-text` and `allow-read-text` to `default.json` and `sticky.json`. Put it:
+- in the `menuItems()` of notebooks (wherever notebook items have a menu; add one following the `NoteItem` pattern if they don't), `FolderItem`, `NoteItem` and `PageItem`;
+- in the sticky card menu in `StickyNotesHome.tsx` and the dot menu in `StickyNoteTopBar.tsx`;
+- in tldraw's context menu for shapes, via `overrides` / `components.ContextMenu` with `DefaultContextMenuContent` in `components/canvas/CanvasEditor.tsx`, when exactly one shape is selected. It uses the current `selectedPageId` and the shape's ID.
+
+Show brief confirmation (a toast if the app has one, otherwise the item's label changes to "Copied" for a moment, like the image editor's copy flash).
+
+Files: `components/sidebar/FolderItem.tsx`, `components/sidebar/NoteItem.tsx`, `components/sidebar/PageItem.tsx`, the notebook list component, `components/sticky/StickyNotesHome.tsx`, `components/editor/StickyNoteTopBar.tsx`, `components/canvas/CanvasEditor.tsx`, `src-tauri/capabilities/default.json`, `src-tauri/capabilities/sticky.json`
+
+Acceptance:
+- Every listed menu has "Copy reference", and it puts the correct token on the clipboard.
+- The canvas item appears only when exactly one shape is selected and includes the page ID.
+- Pasting the copied token into a text box produces the matching chip (T7).
+
+Test steps:
+1. Right-click a test note in the sidebar › Copy reference, then paste into a canvas text box: a "#<note>" chip appears.
+2. Right-click a page in the page sidebar › Copy reference and paste: a page chip appears.
+3. Right-click a canvas text box (not editing) › Copy reference and paste into another text box: a chip with the first text box's text appears.
+4. In Sticky notes, right-click a test sticky card › Copy reference and paste: a "%" chip appears.
+5. Delete everything you created.
+
+### T9 Following references and web links
+
+Status: todo
+Depends on: T7
+
+Add `lib/references/navigate.ts`, `followReference(ref)`, which runs in the main window:
+- notebook: `setSelectedNotebook`, `router.push("/")`
+- folder: the same, plus select and expand the folder
+- note: `/canvas?id=`
+- page: `/canvas?id=<noteId>&page=<pageId>`
+- shape: like page, plus `&shape=<shapeId>`
+- sticky: `openStickyNoteWindow`
+
+In `CanvasEditor.tsx`, read the `page` and `shape` query params: select that page instead of the first one, and after `loadSnapshot` in `handleMount`, `select` the shape and zoom to its bounds (respecting `applyPageCameraConstraints`). From a sticky window, emit a Tauri event `reference:follow` with the token; the main window listens for it in `AppShell`, shows and focuses itself (expose the existing `show_main_window` as a command, or use window permissions), then calls `followReference`. A missing target shows a brief "Not found" message instead of navigating.
+
+Click handling:
+- In a canvas text box that isn't being edited, give reference chips and links `pointer-events: auto` and follow them on a plain click, stopping tldraw from receiving that pointerdown.
+- While editing, and in the sticky and main editors, follow on Ctrl/Cmd+click.
+- Replace `lib/tiptap/stickyLinkClick.ts` with this.
+
+Web links: remove the duplicate Link by configuring the one bundled in StarterKit (`StarterKit.configure({ link: { openOnClick: false, ... } })`) in the factory, open http(s)/mailto links with the opener plugin's `openUrl` under the same click rules, add `opener:default` to `sticky.json`, and add a small "↗" after web links in `editor.css`.
+
+Files: `lib/references/navigate.ts` (new), `lib/tiptap/reference.ts`, `lib/tiptap/extensions.ts`, `lib/tiptap/stickyLinkClick.ts` (remove), `components/canvas/CanvasEditor.tsx`, `components/canvas/RichTextShape.tsx`, `components/AppShell.tsx`, `src-tauri/src/lib.rs`, `src-tauri/capabilities/sticky.json`, `components/editor/editor.css`
+
+Acceptance:
+- Each kind navigates as described, and a shape reference ends with that shape selected and in view on its page.
+- In a non-editing canvas text box a plain click follows; while editing it takes Ctrl/Cmd+click. Clicks elsewhere on the text box behave as before.
+- Following an in-app reference from a sticky window brings the main window forward and navigates it.
+- Only one `link` extension is registered, web links open in the default browser, and they show "↗".
+
+Test steps:
+1. Create test note A with two pages. On page 2, make a text box "target", and copy its reference. In note B, paste it into a text box and click away so it isn't being edited.
+2. Click the chip: note A opens on page 2 with "target" selected and in view.
+3. In note B, enter the text box and plain-click the chip: the cursor/selection moves and nothing navigates. Ctrl/Cmd+click it: it navigates.
+4. Paste a sticky note reference into a text box and click it (not editing): that sticky note's window opens.
+5. In a sticky note, paste note A's reference and Ctrl/Cmd+click it: the main window comes forward showing note A.
+6. Click a web link chip "↗" outside editing: the default browser opens (check the logs for the opener call, since the browser itself is out of reach).
+7. Delete the test notes, text boxes and sticky note.
+
+### T10 Hover previews
+
+Status: todo
+Depends on: T9
+
+Show a preview card when the pointer rests about 400ms on a reference chip or web link, in all three editors and in non-editing canvas text boxes (chips are hoverable there after T9). Use Base UI's `PreviewCard` from `@base-ui/react` (add a wrapper in `components/ui/preview-card.tsx` following `tooltip.tsx`), or a single floating card driven by the node view if that's simpler inside tldraw. Content, from `resolveReference`: a kind label (Notebook, Folder, Note, Page, Text box, Sticky note), the path, the title in bold, and up to 3 lines of `previewText` (or `previewImage` as a thumbnail if there's no text). For a missing target it shows "Not found". For web links it shows the full URL. Resolve lazily on open and cache per card. The card mustn't steal focus or end text editing.
+
+Files: `components/ui/preview-card.tsx` (new), `lib/tiptap/reference.ts`, `components/canvas/RichTextShape.tsx`, `components/editor/editor.css`
+
+Acceptance:
+- Hovering a chip or web link for about 400ms shows the card, and moving away hides it.
+- The card shows kind, path, title and up to 3 lines of preview (or an image), "Not found" for missing targets, and the URL for web links.
+- Showing the card doesn't change focus, selection or the tldraw tool.
+
+Test steps:
+1. In a test note, paste a reference to a text box that contains several lines, and click away.
+2. Hover the chip: after a moment a card shows "Text box", the note › page path, and the first lines of its text.
+3. Hover a web link: the card shows its URL.
+4. Hover a reference to a deleted item: the card says "Not found".
+5. While editing a text box, hover a chip, then keep typing: text still goes into the text box.
+6. Clean up.
+
+### T11 Insert link dialog: tree, paste box and references
+
+Status: todo
+Depends on: T6, T7
+
+Rebuild `LinkOrStickyDialog.tsx` (rename it to `InsertLinkDialog.tsx`) on top of T6's event and selection handling. Sections:
+1. URL field: Insert link, as today.
+2. "Paste a reference" field: accepts a `skylines://` token and inserts it as a chip on Enter or a button press. Invalid input shows an inline error.
+3. A searchable tree, in a new read-only component (for example `components/editor/ReferencePicker.tsx`; don't reuse the sidebar's `FolderTree`, which is tied to routing, drag and menus). It shows notebooks › folders › notes › pages › text boxes, built from the store's notebooks, folders and notes. It lazy-loads pages with `getPages(noteId)` and text boxes from each page's `canvasData` when expanded, uses the `FolderTree.tsx` sort and filter, and uses `components/ui/collapsible.tsx`. Search filters by title across loaded items. Picking any row inserts that reference.
+4. Sticky notes: the existing list with search and the preview toggle, inserting `sticky` references.
+5. Create new sticky note: create it, open its window, insert its reference.
+
+Inserting a reference replaces the saved selection with a `reference` node, using the selected text as `label` if there was any. Point the Ribbon Format tab's link action (`components/ribbon/Ribbon.tsx`, which uses `window.prompt` today) at this dialog, for example through a store flag that the active editor (`activeEditor`) listens to. Remove the dialog's dead `sticky:` href code.
+
+Files: `components/editor/InsertLinkDialog.tsx` (renamed), `components/editor/ReferencePicker.tsx` (new), `components/editor/RichTextEditor.tsx`, `components/canvas/RichTextShape.tsx`, `components/ribbon/Ribbon.tsx`, `stores/appStore.ts`
+
+Acceptance:
+- The dialog has the URL field, the paste-reference field, the tree, the sticky list and Create new sticky note, and each inserts the right thing at the saved selection.
+- The tree lazy-loads pages and text boxes, and search filters it.
+- The Ribbon's link button opens this dialog for the active editor; `window.prompt` is gone.
+- After any insert or cancel on the canvas, the canvas is still in the text tool (T6 still holds).
+
+Test steps:
+1. Create a test note with a page containing a text box "alpha". In another text box, press Ctrl/Cmd+K.
+2. In the tree, expand down to the "alpha" text box and pick it: a chip for it is inserted and the dialog closes.
+3. Reopen the dialog, type "alpha" in the search: the matching row shows.
+4. Copy a note's reference from the sidebar, open the dialog and paste it into the reference field: a chip is inserted.
+5. Type "nonsense" into the reference field and submit: an inline error shows and nothing is inserted.
+6. Select some text, open the dialog from the Ribbon's Format tab link button and pick a note: the chip shows the selected text as its label.
+7. Use Create new sticky note: a sticky window opens and a "%Untitled" chip is inserted. Close that window.
+8. Click empty canvas: a new text box is created. Delete everything you created.
 
 ## Progress
 
-<!-- /dev-loop adds one line here per finished task, in the same commit as the task. -->
-- [x] T1 Remove the white focus outline around the canvas
-- [x] T2 Drag pop-out windows by their title bars
-- [x] T3 Double-click restores a collapsed sticky note
-- [x] T4 Plain-language names and descriptions in the theme editor
-- [x] T6 Hovering a setting highlights it in the preview
-- [x] T7 Setting descriptions in an info tooltip
-- [x] T5 Preview elements for Text and Sidebar text
+<!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
