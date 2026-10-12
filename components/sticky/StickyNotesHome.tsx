@@ -33,6 +33,7 @@ import {
   createStickyNote,
   updateStickyNote,
   deleteStickyNote,
+  STICKY_NOTE_CHANGED_EVENT,
 } from "@/lib/db/stickyNotes";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
 import { extractPlainText } from "@/lib/tiptap/extractText";
@@ -55,20 +56,49 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
   // getStickyNotes already orders by updatedAt DESC.
   useEffect(() => {
     if (!open) return;
-    if (user) {
-      void getStickyNotes(user.uid).then(setStickyNotes);
-    } else {
-      setStickyNotes([]);
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    // Refreshes can overlap; only the newest one may set state.
+    let latestRefresh = 0;
+
+    function refresh() {
+      const refreshId = ++latestRefresh;
+      if (user) {
+        void getStickyNotes(user.uid).then((notes) => {
+          if (!cancelled && refreshId === latestRefresh) setStickyNotes(notes);
+        });
+      } else {
+        setStickyNotes([]);
+      }
+
+      // Pop-out windows are labeled "sticky-<id>" (see lib/stickyWindow.ts).
+      void import("@tauri-apps/api/window").then(async ({ getAllWindows }) => {
+        const windows = await getAllWindows();
+        if (cancelled || refreshId !== latestRefresh) return;
+        const ids = windows
+          .filter((w) => w.label.startsWith("sticky-"))
+          .map((w) => w.label.slice("sticky-".length));
+        setOpenNoteIds(new Set(ids));
+      });
     }
 
-    // Pop-out windows are labeled "sticky-<id>" (see lib/stickyWindow.ts).
-    void import("@tauri-apps/api/window").then(async ({ getAllWindows }) => {
-      const windows = await getAllWindows();
-      const ids = windows
-        .filter((w) => w.label.startsWith("sticky-"))
-        .map((w) => w.label.slice("sticky-".length));
-      setOpenNoteIds(new Set(ids));
-    });
+    refresh();
+
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const stop = await listen(STICKY_NOTE_CHANGED_EVENT, refresh);
+        if (cancelled) stop();
+        else unlisten = stop;
+      } catch {
+        // Without the event the list still loads once per open.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [open, user]);
 
   async function handleOpenNote(note: StickyNote) {
@@ -227,10 +257,11 @@ function StickyNoteCard({ note, isOpen, titleOnly, onOpen, onRename, onDelete, o
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(note.title || "Untitled");
   const inputRef = useRef<HTMLInputElement>(null);
-  const preview = extractPlainText(note.content);
+  const preview = extractPlainText(note.content, 300);
 
-  // Picks up renames from this note's other card (favorites vs. the main grid).
-  // Doesn't depend on renaming, so it can't overwrite an edit in progress.
+  // Picks up renames from this note's other card (favorites vs. the main grid)
+  // and from live refreshes. Doesn't depend on renaming, so it can't overwrite
+  // an edit in progress.
   useEffect(() => {
     if (!renaming) setTitle(note.title || "Untitled");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -304,7 +335,7 @@ function StickyNoteCard({ note, isOpen, titleOnly, onOpen, onRename, onDelete, o
               )}
             </div>
             {!titleOnly && (preview ? (
-              <span className="line-clamp-2 text-xs text-muted-foreground">{preview}</span>
+              <span className="line-clamp-3 text-xs text-muted-foreground">{preview}</span>
             ) : (
               <span className="flex items-center gap-1 text-xs text-muted-foreground/60">
                 <StickyNoteIcon className="h-3 w-3" />

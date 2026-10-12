@@ -6,6 +6,19 @@ import { notifyDataChange } from "./events";
 
 const TABLE = "sticky_notes";
 
+export const STICKY_NOTE_CHANGED_EVENT = "sticky-note:changed";
+
+// notifyDataChange stays inside one window; this tells the others (the main
+// window's sticky notes home) that a sticky note changed.
+async function emitStickyNoteChanged(id: string): Promise<void> {
+  try {
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit(STICKY_NOTE_CHANGED_EVENT, { id });
+  } catch {
+    // Best-effort: the write already succeeded.
+  }
+}
+
 type StickyNoteRow = {
   id: string;
   user_id: string;
@@ -179,6 +192,7 @@ export async function createStickyNote(
   );
 
   notifyDataChange("local");
+  void emitStickyNoteChanged(id);
   return id;
 }
 
@@ -225,6 +239,7 @@ export async function updateStickyNote(
     params,
   );
   notifyDataChange("local");
+  void emitStickyNoteChanged(id);
 }
 
 /**
@@ -241,4 +256,5 @@ export async function deleteStickyNote(id: string): Promise<void> {
     [now, now, id],
   );
   notifyDataChange("local");
+  void emitStickyNoteChanged(id);
 }

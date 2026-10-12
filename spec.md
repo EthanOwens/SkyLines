@@ -71,7 +71,7 @@ Test steps:
 
 ### T2 Live sticky note previews on the home page
 
-Status: todo
+Status: done
 Depends on: none
 
 `StickyNotesHome` (`components/sticky/StickyNotesHome.tsx`) loads notes once per open, so edits made in a sticky window don't show until it's reopened. In `lib/db/stickyNotes.ts`, after `createStickyNote`, `updateStickyNote` and `deleteStickyNote` write to SQLite, emit a Tauri event `sticky-note:changed` with `{ id }` (dynamic import of `@tauri-apps/api/event`, ignore failures). In `StickyNotesHome`, while `open`, `listen` for it and re-fetch with `getStickyNotes` (also refresh `openNoteIds`), unlistening on close. Make sure a rename being typed on a card isn't overwritten by a refresh (the card's local `title` state). For previews, call `extractPlainText(note.content, 300)` (`lib/tiptap/extractText.ts`) and change the preview span's `line-clamp-2` to `line-clamp-3`.
@@ -346,3 +346,4 @@ Test steps:
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Collapsed sticky notes keep their top bar buttons
+- [x] T2 Live sticky note previews on the home page
