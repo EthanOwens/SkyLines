@@ -1,9 +1,9 @@
 "use client";
 
 // Top bar for a sticky note window: Pin (OS-level always on top, over the whole
-// desktop), Exit, and a menu with Delete and the bar color. Buttons show only
-// while the window is focused; it slims down when unfocused, and
-// double-clicking it collapses the window.
+// desktop), Exit, and a menu with Delete and the bar color. Buttons show while
+// the window is focused or collapsed; an expanded, unfocused bar slims down to
+// just the title. Double-clicking the bar collapses or restores the window.
 //
 // Tauri APIs are imported dynamically because no Tauri runtime exists during
 // the static export build.
@@ -41,6 +41,8 @@ interface Props {
   collapsed: boolean;
   /** Toggles `collapsed`, resizing the actual OS window - owned by StickyNoteEditor.tsx. */
   onToggleCollapsed: () => void;
+  /** Awaited before the dot menu opens so a collapsed window can make room for it. */
+  onMenuOpenChange: (open: boolean) => Promise<void>;
   /** Flushes any unsaved title/content edits; awaited before the window closes. */
   onBeforeExit: () => Promise<void>;
 }
@@ -77,8 +79,17 @@ function TopBarBtn({
   );
 }
 
-export function StickyNoteTopBar({ note, title, focused, collapsed, onToggleCollapsed, onBeforeExit }: Props) {
+export function StickyNoteTopBar({
+  note,
+  title,
+  focused,
+  collapsed,
+  onToggleCollapsed,
+  onMenuOpenChange,
+  onBeforeExit,
+}: Props) {
   const [pinned, setPinned] = useState(note.pinned);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [topBarColor, setTopBarColor] = useState(note.topBarColor);
   // Resolved --primary, so the picker opens on the color the bar actually shows
   // when no custom color is set.
@@ -115,6 +126,28 @@ export function StickyNoteTopBar({ note, title, focused, collapsed, onToggleColl
     await getCurrentWindow().close();
   }
 
+  // Opening waits for the window to grow, so the menu is placed in the final
+  // viewport instead of being clamped to the collapsed one.
+  async function handleMenuOpenChange(open: boolean) {
+    if (open) {
+      try {
+        await onMenuOpenChange(true);
+      } finally {
+        setMenuOpen(true);
+      }
+    } else {
+      setMenuOpen(false);
+      void onMenuOpenChange(false);
+    }
+  }
+
+  // Losing focus closes the menu so a collapsed window shrinks back rather than
+  // staying tall behind other apps.
+  useEffect(() => {
+    if (!focused && menuOpen) void handleMenuOpenChange(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focused]);
+
   function handleColorChange(hex: string) {
     setTopBarColor(hex);
     void updateStickyNote(note.id, { topBarColor: hex });
@@ -133,13 +166,13 @@ export function StickyNoteTopBar({ note, title, focused, collapsed, onToggleColl
         {title || "Untitled"}
       </span>
 
-      {focused && !collapsed && (
+      {(focused || collapsed) && (
         <div className="flex shrink-0 items-center gap-0.5" onDoubleClick={(e) => e.stopPropagation()}>
           <TopBarBtn tip={pinned ? "Unpin" : "Pin on top"} active={pinned} onClick={togglePinned}>
             {pinned ? <Pin className="h-3.5 w-3.5 fill-current" /> : <PinOff className="h-3.5 w-3.5" />}
           </TopBarBtn>
 
-          <DropdownMenu>
+          <DropdownMenu open={menuOpen} onOpenChange={handleMenuOpenChange}>
             <DropdownMenuTrigger
               render={
                 <Button

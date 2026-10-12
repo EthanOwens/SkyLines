@@ -36,6 +36,10 @@ const SAVE_DELAY_MS = 800;
 // captured in originalSizeRef when collapsing, so restoring returns to it.
 const COLLAPSED_HEIGHT = 48;
 
+// The dot menu can't fit in a collapsed window, so the window grows to this
+// height while the menu is open (enough for the color picker submenu).
+const COLLAPSED_MENU_HEIGHT = 320;
+
 interface Props {
   note: StickyNote;
 }
@@ -50,6 +54,9 @@ export function StickyNoteEditor({ note }: Props) {
   // Set synchronously by toggleCollapsed rather than mirrored from state: the
   // collapse/restore resize events can arrive before React commits.
   const collapsedRef = useRef(false);
+  // Mirrors `collapsed` synchronously; collapsedRef can't tell a collapsed note
+  // from one mid-restore.
+  const isCollapsedRef = useRef(false);
 
   // Pending image-editor listeners, removed on unmount so a pop-out that never
   // saves can't leak one or patch a destroyed view.
@@ -193,6 +200,7 @@ export function StickyNoteEditor({ note }: Props) {
 
     if (collapsed) {
       collapsedRef.current = true;
+      isCollapsedRef.current = false;
       setCollapsed(false);
       try {
         if (originalSizeRef.current) {
@@ -205,9 +213,25 @@ export function StickyNoteEditor({ note }: Props) {
       const currentSize = (await win.outerSize()).toLogical(scaleFactor);
       originalSizeRef.current = currentSize;
       collapsedRef.current = true;
+      isCollapsedRef.current = true;
       setCollapsed(true);
       await win.setSize(new LogicalSize(currentSize.width, COLLAPSED_HEIGHT));
     }
+  }
+
+  // Grows a collapsed window while the top bar menu is open and shrinks it back
+  // after. collapsedRef stays true throughout, so the resize listener never
+  // records the temporary size into originalSizeRef.
+  async function handleMenuOpenChange(open: boolean) {
+    if (!isCollapsedRef.current) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const { LogicalSize } = await import("@tauri-apps/api/dpi");
+    const win = getCurrentWindow();
+    const scaleFactor = await win.scaleFactor();
+    const { width } = (await win.outerSize()).toLogical(scaleFactor);
+    // A restore may have started during the awaits; resizing now would undo it.
+    if (!isCollapsedRef.current) return;
+    await win.setSize(new LogicalSize(width, open ? COLLAPSED_MENU_HEIGHT : COLLAPSED_HEIGHT));
   }
 
   function handleTitleBlur() {
@@ -243,9 +267,10 @@ export function StickyNoteEditor({ note }: Props) {
         focused={focused}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
+        onMenuOpenChange={handleMenuOpenChange}
         onBeforeExit={flushPendingSave}
       />
-      <div className="flex flex-1 flex-col overflow-y-auto px-4 py-4">
+      <div className={`flex flex-1 flex-col overflow-y-auto px-4 py-4 ${collapsed ? "hidden" : ""}`}>
         <input
           className="mb-2 w-full bg-transparent text-lg font-bold text-foreground outline-none placeholder:text-muted-foreground"
           placeholder="Untitled"

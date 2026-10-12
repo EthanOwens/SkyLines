@@ -51,7 +51,7 @@ Three areas. Sticky notes get their own taskbar group and icon on Windows, keep 
 
 ### T1 Collapsed sticky notes keep their top bar buttons
 
-Status: todo
+Status: done
 Depends on: none
 
 In `components/editor/StickyNoteTopBar.tsx`, the controls block (Pin, the `MoreVertical` dot menu, Minimize, Close) renders only when `focused && !collapsed`. Change it to render when `focused || collapsed`. The collapsed bar is already the tall `h-10` variant and fits inside the 48px collapsed window (`COLLAPSED_HEIGHT` in `StickyNoteEditor.tsx`). Keep the button group's `onDoubleClick` stopPropagation so double-clicking a button doesn't toggle collapse. Update the file's header comment to describe the new rule.
@@ -345,3 +345,4 @@ Test steps:
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 Collapsed sticky notes keep their top bar buttons
