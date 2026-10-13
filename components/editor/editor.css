@@ -15,6 +15,52 @@
   height: 0;
 }
 
+/* Bullet and numbered lists. Tailwind's preflight strips list markers and
+   padding, and the prose classes have no stylesheet behind them. Markers cycle
+   disc, circle, square by depth; deeper selectors win on specificity. */
+.tiptap ul:not([data-type="taskList"]) {
+  list-style-type: disc;
+  padding-left: 1.25em;
+}
+
+.tiptap :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: circle;
+}
+
+.tiptap :is(ul, ol) :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: square;
+}
+
+.tiptap :is(ul, ol) :is(ul, ol) :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: disc;
+}
+
+.tiptap :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: circle;
+}
+
+.tiptap :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: square;
+}
+
+/* A little wider than bullets so two-digit numbers fit. */
+.tiptap ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+}
+
+.tiptap :is(ul:not([data-type="taskList"]), ol) {
+  margin: 0.25em 0;
+}
+
+.tiptap li > :is(ul:not([data-type="taskList"]), ol) {
+  margin: 0.125em 0 0;
+}
+
+.tiptap :is(ul:not([data-type="taskList"]), ol) > li + li {
+  margin-top: 0.125em;
+}
+
 /* Task list checkboxes */
 .tiptap ul[data-type="taskList"] {
   list-style: none;

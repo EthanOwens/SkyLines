@@ -140,7 +140,7 @@ Test steps:
 
 ### T4 Shared editor extensions and visible lists
 
-Status: todo
+Status: done
 Depends on: none
 
 Bullet lists already work underneath (typing "- " creates one), but nothing draws them. The editors use `prose` classes from `@tailwindcss/typography`, which isn't installed, and Tailwind's preflight strips list markers and padding. Create `lib/tiptap/extensions.ts` exporting a factory (for example `createEditorExtensions({ placeholder, highlight })`) that returns the extension list the three editors build today, and switch `RichTextEditor.tsx`, `StickyNoteEditor.tsx` and `RichTextShape.tsx` to it with no behaviour change (keep the duplicate Link for now; T9 cleans it up). In `components/editor/editor.css`, style `.tiptap ul:not([data-type="taskList"])` and `.tiptap ol`: markers disc → circle → square by nesting depth and decimal for `ol`, a left padding of about 1.25em per level, and small vertical spacing between items. Check that canvas text boxes still size sensibly.
@@ -373,3 +373,4 @@ Test steps:
 - [x] T2 Live sticky note previews on the home page
 - [x] T12 Deleted sticky note windows can be closed
 - [x] T3 Sticky windows get their own taskbar group, icon and title
+- [x] T4 Shared editor extensions and visible lists

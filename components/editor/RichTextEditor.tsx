@@ -6,17 +6,6 @@ import { useEffect, useCallback, useRef, useState } from "react";
 import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { isNodeSelection, isTextSelection } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
-import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
-import Placeholder from "@tiptap/extension-placeholder";
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
-import { createLowlight, common } from "lowlight";
-import { TextStyle, FontSize } from "@tiptap/extension-text-style";
-import FontFamily from "@tiptap/extension-font-family";
-import Color from "@tiptap/extension-color";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthContext } from "@/components/AuthProvider";
 import type { Note } from "@/types";
@@ -26,13 +15,12 @@ import { Link as LinkIcon } from "lucide-react";
 import { LinkOrStickyDialog } from "./LinkOrStickyDialog";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
+import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import "./editor.css";
 
 // Inline marks only: block-level actions don't fit a selection popover.
 const BUBBLE_MENU_ACTION_IDS = ["bold", "italic", "strike", "code"];
 const bubbleMenuActions = formatActions.filter((a) => BUBBLE_MENU_ACTION_IDS.includes(a.id));
-
-const lowlight = createLowlight(common);
 
 interface Props {
   note: Note;
@@ -57,22 +45,7 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
   }, []);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        codeBlock: false,
-      }),
-      Image.configure({ inline: false, allowBase64: true }),
-      Link.configure({ openOnClick: false }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Placeholder.configure({ placeholder: "Start writing…" }),
-      CodeBlockLowlight.configure({ lowlight }),
-      // FontFamily, FontSize and Color all need TextStyle registered first.
-      TextStyle,
-      FontFamily,
-      FontSize,
-      Color,
-    ],
+    extensions: createEditorExtensions(),
     content: note.content as object ?? "",
     editorProps: {
       attributes: {

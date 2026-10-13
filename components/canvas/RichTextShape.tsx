@@ -27,23 +27,12 @@ import {
 import { useEditor as useTiptapEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { isNodeSelection, isTextSelection } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
-import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
-import Placeholder from "@tiptap/extension-placeholder";
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
-import { createLowlight, common } from "lowlight";
-import { TextStyle, FontSize } from "@tiptap/extension-text-style";
-import FontFamily from "@tiptap/extension-font-family";
-import Color from "@tiptap/extension-color";
-import Highlight from "@tiptap/extension-highlight";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthContext } from "@/components/AuthProvider";
 import { LinkOrStickyDialog } from "@/components/editor/LinkOrStickyDialog";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
+import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import {
   suppressReenterEditAfterEndingSession,
   setReenterEditSuppressed,
@@ -65,8 +54,6 @@ import {
 import { cn } from "@/lib/utils";
 import { Link as LinkIcon, Highlighter } from "lucide-react";
 import "@/components/editor/editor.css";
-
-const lowlight = createLowlight(common);
 
 // One formatter so the date and time always share a consistent format.
 const shortTimestampFormatter = new Intl.DateTimeFormat(undefined, {
@@ -180,21 +167,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
 
   const tiptapEditor = useTiptapEditor(
     {
-      extensions: [
-        StarterKit.configure({ codeBlock: false }),
-        Image.configure({ inline: false, allowBase64: true }),
-        Link.configure({ openOnClick: false }),
-        TaskList,
-        TaskItem.configure({ nested: true }),
-        Placeholder.configure({ placeholder: "Start writing…" }),
-        CodeBlockLowlight.configure({ lowlight }),
-        TextStyle,
-        FontFamily,
-        FontSize,
-        Color,
-        // multicolor so highlights can use HIGHLIGHT_COLORS.
-        Highlight.configure({ multicolor: true }),
-      ],
+      extensions: createEditorExtensions({ highlight: true }),
       content: (shape.props.content as object) ?? "",
       editable: isEditing,
       editorProps: {

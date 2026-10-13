@@ -9,26 +9,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
-import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
-import Placeholder from "@tiptap/extension-placeholder";
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
-import { createLowlight, common } from "lowlight";
-import { TextStyle, FontSize } from "@tiptap/extension-text-style";
-import FontFamily from "@tiptap/extension-font-family";
-import Color from "@tiptap/extension-color";
 import { STICKY_NOTE_CHANGED_EVENT, getStickyNoteById, updateStickyNote } from "@/lib/db/stickyNotes";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
+import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import type { StickyNote } from "@/types";
 import { StickyNoteTopBar } from "./StickyNoteTopBar";
 import { StickyNoteBottomBar } from "./StickyNoteBottomBar";
 import "./editor.css";
-
-const lowlight = createLowlight(common);
 
 const SAVE_DELAY_MS = 800;
 
@@ -72,21 +60,7 @@ export function StickyNoteEditor({ note }: Props) {
   }, []);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        codeBlock: false,
-      }),
-      Image.configure({ inline: false, allowBase64: true }),
-      Link.configure({ openOnClick: false }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Placeholder.configure({ placeholder: "Start writing…" }),
-      CodeBlockLowlight.configure({ lowlight }),
-      TextStyle,
-      FontFamily,
-      FontSize,
-      Color,
-    ],
+    extensions: createEditorExtensions(),
     content: (note.content as object) ?? "",
     editorProps: {
       attributes: {
