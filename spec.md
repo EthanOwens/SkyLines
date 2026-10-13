@@ -161,7 +161,7 @@ Test steps:
 
 ### T5 Tab and Shift+Tab in lists
 
-Status: todo
+Status: done
 Depends on: T4
 
 Add a Tiptap extension in `lib/tiptap/listKeymap.ts` and include it in the factory. Its `addKeyboardShortcuts` handles `Tab` and `Shift-Tab` with high priority:
@@ -374,3 +374,4 @@ Test steps:
 - [x] T12 Deleted sticky note windows can be closed
 - [x] T3 Sticky windows get their own taskbar group, icon and title
 - [x] T4 Shared editor extensions and visible lists
+- [x] T5 Tab and Shift+Tab in lists
