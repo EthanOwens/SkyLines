@@ -15,6 +15,7 @@
     "sql:allow-select",
     "shell:allow-open",
     "core:webview:allow-create-webview-window",
+    "core:window:allow-set-focus",
     "deep-link:default",
     "global-shortcut:allow-register",
     "screenshots:default",

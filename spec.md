@@ -116,7 +116,7 @@ Test steps:
 
 ### T3 Sticky windows get their own taskbar group, icon and title
 
-Status: todo
+Status: done
 Depends on: none
 
 Add a Rust command `setup_sticky_window(label: String)` in `src-tauri/src/lib.rs` and register it in the invoke handler. It looks up the window and sets its icon from an embedded `src-tauri/icons/sticky.png` (`tauri::image::Image::from_bytes(include_bytes!(..))`; enable the `image-png` feature on `tauri` in `Cargo.toml`). Under `#[cfg(windows)]` only, it gets the window's `hwnd()` and sets `PKEY_AppUserModel_ID` to `SkyLines.StickyNotes` through `SHGetPropertyStoreForWindow`, using the `windows` crate as a Windows-only dependency with the needed Win32 features. That splits sticky notes into their own taskbar group. On other platforms that part is a no-op. Create `sticky.png` as a simple placeholder (a yellow square sticky note with a folded corner, 256×256) using whatever tooling is at hand.
@@ -372,3 +372,4 @@ Test steps:
 - [x] T1 Collapsed sticky notes keep their top bar buttons
 - [x] T2 Live sticky note previews on the home page
 - [x] T12 Deleted sticky note windows can be closed
+- [x] T3 Sticky windows get their own taskbar group, icon and title

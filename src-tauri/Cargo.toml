@@ -35,8 +35,19 @@ tauri-plugin-mcp-bridge = "=0.13.0"
 # builds, but on desktop it would expose the app's JS/IPC context to anyone
 # with local access.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-tauri = { version = "2", features = ["tray-icon", "devtools"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
 
+# Sets sticky note windows' AppUserModelID so they get their own taskbar group.
+# Same major version as Tauri's, so HWND types line up.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Storage_EnhancedStorage",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
+] }

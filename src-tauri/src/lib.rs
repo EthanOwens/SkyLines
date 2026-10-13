@@ -5,6 +5,71 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+// Sticky note windows are grouped separately from the main window on the
+// Windows taskbar, under their own AppUserModelID and icon.
+#[tauri::command]
+fn setup_sticky_window(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    use tauri::Manager;
+
+    if !label.starts_with("sticky-") {
+        return Err(format!("not a sticky note window: {label}"));
+    }
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("no window labelled {label}"))?;
+
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/sticky.png"))
+        .map_err(|e| e.to_string())?;
+    window.set_icon(icon).map_err(|e| e.to_string())?;
+
+    #[cfg(windows)]
+    set_sticky_app_user_model_id(&window)?;
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_sticky_app_user_model_id(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use std::mem::ManuallyDrop;
+    use windows::core::PWSTR;
+    use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
+    use windows::Win32::System::Com::StructuredStorage::{
+        PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
+    };
+    use windows::Win32::System::Variant::VT_LPWSTR;
+    use windows::Win32::UI::Shell::PropertiesSystem::{
+        IPropertyStore, SHGetPropertyStoreForWindow,
+    };
+
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let mut id: Vec<u16> = "SkyLines.StickyNotes"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // ManuallyDrop because PROPVARIANT's Drop would CoTaskMemFree the string,
+    // which is owned by `id` here. SetValue copies it.
+    let value = ManuallyDrop::new(PROPVARIANT {
+        Anonymous: PROPVARIANT_0 {
+            Anonymous: ManuallyDrop::new(PROPVARIANT_0_0 {
+                vt: VT_LPWSTR,
+                Anonymous: PROPVARIANT_0_0_0 {
+                    pwszVal: PWSTR(id.as_mut_ptr()),
+                },
+                ..Default::default()
+            }),
+        },
+    });
+
+    unsafe {
+        let store: IPropertyStore =
+            SHGetPropertyStoreForWindow(hwnd).map_err(|e| e.to_string())?;
+        store
+            .SetValue(&PKEY_AppUserModel_ID, &*value)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 // Tray icon and native menu. Closing the main window hides it to the tray
 // instead of exiting, so the tray's Quit and File > Quit are the only ways out.
 #[cfg(desktop)]
@@ -536,7 +601,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![greet, setup_sticky_window])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

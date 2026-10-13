@@ -283,6 +283,10 @@ export function StickyNoteEditor({ note }: Props) {
     if (trimmed !== note.title) {
       void updateStickyNote(note.id, { title: trimmed });
     }
+    void (async () => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().setTitle(trimmed);
+    })();
   }
 
   // Used by the Exit button so pending edits, including an unblurred title, are
