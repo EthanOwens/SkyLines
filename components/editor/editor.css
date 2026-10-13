@@ -102,34 +102,51 @@
   cursor: pointer;
 }
 
-/* sticky:<id> links render as chips. This selector outranks `.tiptap a`
-   regardless of source order. */
-.tiptap a[href^="sticky:"] {
+/* Reference chips. The node view renders one span; the text part truncates
+   so a long title can't stretch a canvas text box. */
+.tiptap .reference-chip {
   display: inline-flex;
-  align-items: center;
-  gap: 0.35em;
-  padding: 0.05em 0.5em;
-  border-radius: 999px;
+  align-items: baseline;
+  max-width: 100%;
+  padding: 0 0.4em;
+  border-radius: 0.375em;
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  color: var(--primary);
+  font-weight: 500;
+  line-height: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.tiptap .reference-chip[data-kind="sticky"] {
   background: var(--secondary);
   color: var(--secondary-foreground);
-  text-decoration: none;
-  font-weight: 500;
-  cursor: pointer;
 }
 
-.tiptap a[href^="sticky:"]::before {
-  content: "";
-  display: inline-block;
-  width: 0.55em;
-  height: 0.55em;
-  border-radius: 2px;
-  background: currentColor;
+.tiptap .reference-chip-prefix {
   opacity: 0.6;
+  margin-right: 0.1em;
 }
 
-.tiptap a[href^="sticky:"]:hover {
-  background: var(--accent);
-  color: var(--accent-foreground);
+.tiptap .reference-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 24em;
+}
+
+.tiptap .reference-chip[data-missing] {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.tiptap .reference-chip[data-missing] .reference-chip-text {
+  text-decoration: line-through;
+}
+
+.tiptap .reference-chip.ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }
 
 /* Images */

@@ -224,7 +224,7 @@ Test steps:
 
 ### T7 Reference chips
 
-Status: todo
+Status: done
 Depends on: T4
 
 Add `lib/references/`:
@@ -379,3 +379,4 @@ Test steps:
 - [x] T4 Shared editor extensions and visible lists
 - [x] T5 Tab and Shift+Tab in lists
 - [x] T6 Fix the Insert link dialog on the canvas
+- [x] T7 Reference chips
