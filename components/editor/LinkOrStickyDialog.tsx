@@ -4,7 +4,7 @@
 // URL, a new sticky note or an existing one; sticky notes are stored as
 // sticky:<id> hrefs on the normal Link mark.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import type { Editor } from "@tiptap/react";
 import { XIcon, List, LayoutGrid } from "lucide-react";
 import {
@@ -29,12 +29,63 @@ interface LinkOrStickyDialogProps {
   userId: string | null;
 }
 
-function applyLink(editor: Editor, href: string) {
+type SavedSelection = { from: number; to: number };
+
+// Actions apply to the selection captured when the dialog opened, which may
+// have moved since (for example through a content sync on the canvas).
+function restoreSelection(editor: Editor, saved: SavedSelection | null) {
+  if (saved) editor.commands.setTextSelection(saved);
+}
+
+function applyLink(editor: Editor, href: string, saved: SavedSelection | null) {
+  restoreSelection(editor, saved);
   if (href === "") {
     editor.chain().focus().extendMarkRange("link").unsetLink().run();
   } else {
     editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
   }
+}
+
+// isActive("link") can't be used here: the Link mark is inclusive, so it also
+// reports true at a link's edges, where the user is adding text rather than
+// editing that link.
+function isCursorStrictlyInsideLink(editor: Editor) {
+  const { selection, schema } = editor.state;
+  const linkType = schema.marks.link;
+  if (!selection.empty || !linkType) return false;
+  const { nodeBefore, nodeAfter } = selection.$from;
+  const before = nodeBefore && linkType.isInSet(nodeBefore.marks);
+  const after = nodeAfter && linkType.isInSet(nodeAfter.marks);
+  return !!before && !!after && before.eq(after);
+}
+
+// With nothing selected and the cursor not inside a link, there's no text to
+// link, so the URL itself goes in as new link text.
+function applyUrl(editor: Editor, href: string, saved: SavedSelection | null) {
+  restoreSelection(editor, saved);
+  if (
+    href !== "" &&
+    editor.state.selection.empty &&
+    !isCursorStrictlyInsideLink(editor) &&
+    editor.can().setLink({ href })
+  ) {
+    editor
+      .chain()
+      .focus()
+      .insertContent({ type: "text", text: href, marks: [{ type: "link", attrs: { href } }] })
+      // Typing straight after the inserted URL shouldn't extend the link.
+      .unsetMark("link")
+      .run();
+    return;
+  }
+  applyLink(editor, href, null);
+}
+
+// The dialog is portalled, but React events still bubble through the React
+// tree to its host. On the canvas that's tldraw's .tl-canvas handlers, which
+// would capture the pointer and end the text box's editing session.
+function stopReactPropagation(e: SyntheticEvent) {
+  e.stopPropagation();
 }
 
 export function LinkOrStickyDialog({
@@ -50,35 +101,25 @@ export function LinkOrStickyDialog({
   const [creating, setCreating] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
-  // Prevents running an action twice when a click fires both mousedown and
-  // click. Keyboard activation fires only click, so it still runs.
-  const handledByMouseDownRef = useRef(false);
-  function makeHandlers(action: () => void) {
-    return {
-      onMouseDown: () => {
-        handledByMouseDownRef.current = true;
-        action();
-      },
-      onClick: () => {
-        if (handledByMouseDownRef.current) {
-          handledByMouseDownRef.current = false;
-          return;
-        }
-        action();
-      },
-    };
-  }
+  const savedSelectionRef = useRef<SavedSelection | null>(null);
+  useEffect(() => {
+    if (!open || !editor) return;
+    const { from, to } = editor.state.selection;
+    savedSelectionRef.current = { from, to };
+  }, [open, editor]);
 
   useEffect(() => {
     if (!open) return;
-    setUrlInput(currentUrl ?? "");
+    const insertsNewLink =
+      !!editor && editor.state.selection.empty && !isCursorStrictlyInsideLink(editor);
+    setUrlInput(insertsNewLink ? "" : (currentUrl ?? ""));
     setSearch("");
     if (userId) {
       void getStickyNotes(userId).then(setStickyNotes);
     } else {
       setStickyNotes([]);
     }
-  }, [open, currentUrl, userId]);
+  }, [open, currentUrl, userId, editor]);
 
   const filteredStickyNotes = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -86,9 +127,22 @@ export function LinkOrStickyDialog({
     return stickyNotes.filter((n) => n.title.toLowerCase().includes(q));
   }, [stickyNotes, search]);
 
+  // Closing without inserting anything. Base UI's own focus return is off
+  // (finalFocus={false}) because the element focused before opening, such as
+  // a bubble menu button, may be gone by now.
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen && editor && editor.isEditable) {
+      const saved = savedSelectionRef.current;
+      const chain = editor.chain().focus();
+      if (saved) chain.setTextSelection(saved);
+      chain.run();
+    }
+    onOpenChange(nextOpen);
+  }
+
   function handleSubmitUrl() {
     if (!editor) return;
-    applyLink(editor, urlInput.trim());
+    applyUrl(editor, urlInput.trim(), savedSelectionRef.current);
     onOpenChange(false);
   }
 
@@ -98,7 +152,7 @@ export function LinkOrStickyDialog({
     try {
       const id = await createStickyNote(userId);
       await openStickyNoteWindow(id);
-      applyLink(editor, `sticky:${id}`);
+      applyLink(editor, `sticky:${id}`, savedSelectionRef.current);
       onOpenChange(false);
     } finally {
       setCreating(false);
@@ -107,133 +161,142 @@ export function LinkOrStickyDialog({
 
   function handlePickStickyNote(note: StickyNote) {
     if (!editor) return;
-    applyLink(editor, `sticky:${note.id}`);
+    applyLink(editor, `sticky:${note.id}`, savedSelectionRef.current);
     onOpenChange(false);
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle>Insert link</DialogTitle>
-        </DialogHeader>
+    <div
+      style={{ display: "contents" }}
+      onPointerDown={stopReactPropagation}
+      onPointerUp={stopReactPropagation}
+      onMouseDown={stopReactPropagation}
+      onMouseUp={stopReactPropagation}
+      onClick={stopReactPropagation}
+      onDoubleClick={stopReactPropagation}
+      onTouchStart={stopReactPropagation}
+      onTouchEnd={stopReactPropagation}
+      onKeyDown={stopReactPropagation}
+      onKeyUp={stopReactPropagation}
+    >
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-md" showCloseButton={false} finalFocus={false}>
+          <DialogHeader>
+            <DialogTitle>Insert link</DialogTitle>
+          </DialogHeader>
 
-        {/*
-          Actions run on mousedown because a tldraw shape's pointer capture can
-          swallow the mouseup, and with it the click. onClick stays wired for
-          keyboard Enter/Space.
-        */}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="absolute top-2 right-2"
-          {...makeHandlers(() => onOpenChange(false))}
-        >
-          <XIcon />
-          <span className="sr-only">Close</span>
-        </Button>
-
-        <div className="flex flex-col gap-2">
-          <label htmlFor="link-or-sticky-url" className="text-xs font-medium text-muted-foreground">
-            URL
-          </label>
-          <div className="flex gap-2">
-            <input
-              id="link-or-sticky-url"
-              type="text"
-              autoFocus
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleSubmitUrl();
-                }
-              }}
-              placeholder="https://"
-              className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-            />
-            <Button size="sm" {...makeHandlers(handleSubmitUrl)}>
-              Insert link
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
           <Button
-            variant="outline"
-            size="sm"
-            disabled={!userId || creating}
-            {...makeHandlers(() => void handleCreateNewStickyNote())}
+            variant="ghost"
+            size="icon-sm"
+            className="absolute top-2 right-2"
+            onClick={() => handleOpenChange(false)}
           >
-            Create new sticky note
+            <XIcon />
+            <span className="sr-only">Close</span>
           </Button>
-        </div>
 
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <div className="flex items-center justify-between">
-            <label htmlFor="link-or-sticky-search" className="text-xs font-medium text-muted-foreground">
-              Existing sticky notes
+          <div className="flex flex-col gap-2">
+            <label htmlFor="link-or-sticky-url" className="text-xs font-medium text-muted-foreground">
+              URL
             </label>
+            <div className="flex gap-2">
+              <input
+                id="link-or-sticky-url"
+                type="text"
+                autoFocus
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSubmitUrl();
+                  }
+                }}
+                placeholder="https://"
+                className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+              />
+              <Button size="sm" onClick={handleSubmitUrl}>
+                Insert link
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
             <Button
-              variant="ghost"
-              size="icon-sm"
-              title={showPreview ? "Show titles only" : "Show mini previews"}
-              {...makeHandlers(() => setShowPreview((v) => !v))}
+              variant="outline"
+              size="sm"
+              disabled={!userId || creating}
+              onClick={() => void handleCreateNewStickyNote()}
             >
-              {showPreview ? <List /> : <LayoutGrid />}
-              <span className="sr-only">Toggle preview</span>
+              Create new sticky note
             </Button>
           </div>
-          <input
-            id="link-or-sticky-search"
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search sticky notes..."
-            className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-          />
-          <div className="flex max-h-40 flex-col overflow-y-auto">
-            {filteredStickyNotes.length === 0 && (
-              <div className="px-1 py-2 text-xs text-muted-foreground">
-                {userId ? "No sticky notes found" : "Sign in to view sticky notes"}
-              </div>
-            )}
-            {filteredStickyNotes.map((note) => {
-              const rawPreview = showPreview ? extractPlainText(note.content) : "";
-              // Strip extractPlainText's "[Image]" placeholders from the
-              // preview.
-              const preview = rawPreview.replace(/\[Image\]\s*/g, "").trim();
-              const imageSrc = showPreview && !preview ? extractFirstImageSrc(note.content) : null;
-              return (
-                <button
-                  key={note.id}
-                  type="button"
-                  {...makeHandlers(() => handlePickStickyNote(note))}
-                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                >
-                  {imageSrc && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={imageSrc} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
-                  )}
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate">{note.title || "Untitled"}</span>
-                    {showPreview && preview && (
-                      <span className="line-clamp-2 text-xs text-muted-foreground">{preview}</span>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
 
-        <DialogFooter>
-          <Button variant="outline" {...makeHandlers(() => onOpenChange(false))}>
-            Cancel
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <div className="flex items-center justify-between">
+              <label htmlFor="link-or-sticky-search" className="text-xs font-medium text-muted-foreground">
+                Existing sticky notes
+              </label>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={showPreview ? "Show titles only" : "Show mini previews"}
+                onClick={() => setShowPreview((v) => !v)}
+              >
+                {showPreview ? <List /> : <LayoutGrid />}
+                <span className="sr-only">Toggle preview</span>
+              </Button>
+            </div>
+            <input
+              id="link-or-sticky-search"
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search sticky notes..."
+              className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+            />
+            <div className="flex max-h-40 flex-col overflow-y-auto">
+              {filteredStickyNotes.length === 0 && (
+                <div className="px-1 py-2 text-xs text-muted-foreground">
+                  {userId ? "No sticky notes found" : "Sign in to view sticky notes"}
+                </div>
+              )}
+              {filteredStickyNotes.map((note) => {
+                const rawPreview = showPreview ? extractPlainText(note.content) : "";
+                // Strip extractPlainText's "[Image]" placeholders from the
+                // preview.
+                const preview = rawPreview.replace(/\[Image\]\s*/g, "").trim();
+                const imageSrc = showPreview && !preview ? extractFirstImageSrc(note.content) : null;
+                return (
+                  <button
+                    key={note.id}
+                    type="button"
+                    onClick={() => handlePickStickyNote(note)}
+                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                  >
+                    {imageSrc && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={imageSrc} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
+                    )}
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{note.title || "Untitled"}</span>
+                      {showPreview && preview && (
+                        <span className="line-clamp-2 text-xs text-muted-foreground">{preview}</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleOpenChange(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

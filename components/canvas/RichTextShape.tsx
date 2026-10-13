@@ -37,6 +37,7 @@ import {
   suppressReenterEditAfterEndingSession,
   setReenterEditSuppressed,
   clearPendingReturnToRichText,
+  resumeEditingWithRichTextTool,
 } from "./RichTextTool";
 import {
   formatActions,
@@ -333,18 +334,24 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     setLinkDialogOpen(true);
   }, [tiptapEditor]);
 
-  // Closing the edit session while the link dialog is open (through focus loss)
-  // leaves RichTextTool's pending return/re-enter flags set, and a later
-  // unrelated click would act on them. Clear them when the dialog closes.
+  // The dialog keeps its events away from tldraw, so editing normally survives
+  // it. If the session ended anyway, RichTextTool's pending return flags are
+  // left set (a later unrelated click would act on them) and the canvas is
+  // left in Select, so on close clear them and resume editing this shape.
   const wasLinkDialogOpenRef = useRef(false);
   useEffect(() => {
     setReenterEditSuppressed(shape.id, linkDialogOpen);
-    // Only on a real open -> close: the flag is shared by every rich-text
+    // Only on a real open -> close: the flags are shared by every rich-text
     // shape.
-    if (wasLinkDialogOpenRef.current && !linkDialogOpen) clearPendingReturnToRichText();
+    if (wasLinkDialogOpenRef.current && !linkDialogOpen) {
+      clearPendingReturnToRichText();
+      if (tldrawEditor.getEditingShapeId() !== shape.id) {
+        resumeEditingWithRichTextTool(tldrawEditor, shape.id);
+      }
+    }
     wasLinkDialogOpenRef.current = linkDialogOpen;
     return () => setReenterEditSuppressed(shape.id, false);
-  }, [linkDialogOpen, shape.id]);
+  }, [linkDialogOpen, shape.id, tldrawEditor]);
 
   return (
     <HTMLContainer id={shape.id}>

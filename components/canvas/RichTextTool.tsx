@@ -82,20 +82,20 @@ export function suppressReenterEditAfterEndingSession() {
   pendingReturnMayReenterEdit = false;
 }
 
-// Clears a dangling pending return outright. Ending an edit through focus loss
-// (such as clicking a portaled dialog button) sets the flag without changing
-// any signal the watcher tracks, so it would otherwise fire on a later
-// unrelated click.
+// Clears a dangling pending return outright. An edit session that ends while a
+// shape's link dialog is open sets the flag without changing any signal the
+// watcher tracks, so it would otherwise fire on a later unrelated click.
 export function clearPendingReturnToRichText() {
   pendingReturnToRichText = false;
   pendingReturnMayReenterEdit = false;
   pendingReturnShapeId = undefined;
 }
 
-// Shapes whose link dialog is open. tldraw ends the edit session on any outside
-// mousedown, including the dialog's own buttons, and re-entering edit at that
-// point would look like a phantom text box. Per shape, so one dialog closing
-// can't clear another's suppression.
+// Shapes whose link dialog is open. If the edit session ends anyway, that isn't
+// a canvas interaction: re-entering edit then would look like a phantom text
+// box, and the dialog's close resumes editing through
+// resumeEditingWithRichTextTool instead. Per shape, so one dialog closing can't
+// clear another's suppression.
 const shapesWithSuppressedReenter = new Set<TLShapeId>();
 export function setReenterEditSuppressed(shapeId: TLShapeId, suppressed: boolean) {
   if (suppressed) {
@@ -127,6 +127,18 @@ export function switchToToolExplicitly(editor: Editor, toolId: string) {
   } finally {
     explicitToolSwitchInProgress = false;
   }
+}
+
+// Puts the canvas back in this tool and edits the shape again, with the session
+// owned by this tool so ending it later returns here. Falls back to just the
+// tool switch when the shape is gone or can't be edited.
+export function resumeEditingWithRichTextTool(editor: Editor, shapeId: TLShapeId) {
+  switchToToolExplicitly(editor, "rich-text");
+  const shape = editor.getShape(shapeId);
+  if (!shape || shape.type !== "rich-text" || !editor.canEditShape(shapeId)) return;
+  shapesWithEditSessionOwnedByThisTool.add(shapeId);
+  editor.select(shapeId);
+  editor.setEditingShape(shapeId);
 }
 
 // Installed once per editor. Acts only while a return is pending, and only once

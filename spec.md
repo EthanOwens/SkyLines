@@ -194,7 +194,7 @@ Test steps:
 
 ### T6 Fix the Insert link dialog on the canvas
 
-Status: todo
+Status: done
 Depends on: none
 
 On a canvas text box, the Insert link dialog (`components/editor/LinkOrStickyDialog.tsx`, rendered inside the shape at the bottom of `RichTextShape.tsx`) leaves tldraw stuck in its Select tool. React events from the portalled dialog still bubble through the shape's React tree into tldraw's canvas handlers (`useCanvasEvents` on `.tl-canvas`), so a pointerdown in the dialog captures the pointer and ends text editing. The auto-return then gets suppressed (`shapesWithSuppressedReenter` in `RichTextTool.tsx`) and nothing switches back to the text tool.
@@ -378,3 +378,4 @@ Test steps:
 - [x] T3 Sticky windows get their own taskbar group, icon and title
 - [x] T4 Shared editor extensions and visible lists
 - [x] T5 Tab and Shift+Tab in lists
+- [x] T6 Fix the Insert link dialog on the canvas
