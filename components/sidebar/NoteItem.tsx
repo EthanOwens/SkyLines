@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
 import { useAppStore } from "@/stores/appStore";
 import {
   isSidebarDragEvent,
@@ -28,7 +29,8 @@ import type { Note } from "@/types";
 // Moving a note into a folder happens by dropping it on the folder.
 //
 // The right-click menu repeats the "···" actions plus Cut and Copy. There's no
-// Paste on notes; only containers accept a paste.
+// Paste on notes; only containers accept a paste. Copy reference writes a
+// skylines:// token to the OS clipboard, unlike Copy, which stays in the app.
 
 interface Props {
   note: Note;
@@ -47,6 +49,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
   const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const setClipboard = useAppStore((s) => s.setClipboard);
+  const { actionsRef, contextActionsRef, closeMenus } = useMenuCloser();
 
   // Every note opens in the canvas editor, which migrates old Tiptap-only notes
   // on open.
@@ -136,6 +139,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
         <DropdownMenuItem onClick={handleCopy}>
           <Copy className="mr-2 h-4 w-4" /> Copy
         </DropdownMenuItem>
+        <CopyReferenceItem reference={{ kind: "note", id: note.id }} onDone={closeMenus} />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleDelete} className="text-destructive">
           <Trash2 className="mr-2 h-4 w-4" /> Delete
@@ -149,7 +153,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
       {dropPosition === "before" && (
         <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
       )}
-      <ContextMenu>
+      <ContextMenu actionsRef={contextActionsRef}>
         <ContextMenuTrigger
           render={
             <div
@@ -196,7 +200,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
                 </span>
               )}
 
-              <DropdownMenu>
+              <DropdownMenu actionsRef={actionsRef}>
                 <DropdownMenuTrigger
                   render={
                     <button

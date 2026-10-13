@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
 import { useAppStore } from "@/stores/appStore";
 import { pasteClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
 import {
@@ -80,6 +81,7 @@ export function FolderItem({
   const setClipboard = useAppStore((s) => s.setClipboard);
   const selectedFolderId = useAppStore((s) => s.selectedFolderId);
   const setSelectedFolder = useAppStore((s) => s.setSelectedFolder);
+  const { actionsRef, contextActionsRef, closeMenus } = useMenuCloser();
   const isSelected = selectedFolderId === folder.id;
 
   const childFolders = allFolders
@@ -258,6 +260,7 @@ export function FolderItem({
         <DropdownMenuItem onClick={handleCopy}>
           <Copy className="mr-2 h-4 w-4" /> Copy
         </DropdownMenuItem>
+        <CopyReferenceItem reference={{ kind: "folder", id: folder.id }} onDone={closeMenus} />
         {clipboard && clipboard.type !== "page" && (
           <DropdownMenuItem onClick={handlePaste}>
             <Clipboard className="mr-2 h-4 w-4" /> Paste
@@ -276,7 +279,7 @@ export function FolderItem({
       {dropPosition === "before" && (
         <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
       )}
-      <ContextMenu>
+      <ContextMenu actionsRef={contextActionsRef}>
         <ContextMenuTrigger
           render={
             <div
@@ -332,7 +335,7 @@ export function FolderItem({
                 </span>
               )}
 
-              <DropdownMenu>
+              <DropdownMenu actionsRef={actionsRef}>
                 <DropdownMenuTrigger
                   render={
                     <button

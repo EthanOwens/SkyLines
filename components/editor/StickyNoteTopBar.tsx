@@ -1,9 +1,9 @@
 "use client";
 
 // Top bar for a sticky note window: Pin (OS-level always on top, over the whole
-// desktop), Exit, and a menu with Delete and the bar color. Buttons show while
-// the window is focused or collapsed; an expanded, unfocused bar slims down to
-// just the title. Double-clicking the bar collapses or restores the window.
+// desktop), Exit, and a menu with the bar color, Copy reference and Delete.
+// Buttons show while the window is focused or collapsed; an expanded, unfocused
+// bar slims down to just the title. Double-clicking the bar collapses or restores the window.
 //
 // Tauri APIs are imported dynamically because no Tauri runtime exists during
 // the static export build.
@@ -26,6 +26,7 @@ import {
 import { updateStickyNote, deleteStickyNote } from "@/lib/db/stickyNotes";
 import { themeColorToPickerHex } from "@/lib/themes/color";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
+import { CopyReferenceItem } from "@/components/references/CopyReferenceItem";
 import type { StickyNote } from "@/types";
 
 // Shown only until the --primary lookup resolves.
@@ -213,6 +214,10 @@ export function StickyNoteTopBar({
                   />
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <CopyReferenceItem
+                reference={{ kind: "sticky", id: note.id }}
+                onDone={() => void handleMenuOpenChange(false)}
+              />
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleDelete} className="text-destructive">
                 <Trash2 className="mr-2 h-4 w-4" />

@@ -6,13 +6,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
+  DefaultContextMenu,
+  DefaultContextMenuContent,
   Tldraw,
+  TldrawUiMenuGroup,
+  TldrawUiMenuItem,
   react,
+  useEditor,
+  useToasts,
+  useValue,
   type Editor,
   type TLEditorSnapshot,
+  type TLUiContextMenuProps,
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
+import { copyReference } from "@/lib/references/copy";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 import { RichTextShapeUtil, type RichTextShape } from "./RichTextShape";
@@ -24,6 +33,46 @@ const shapeUtils = [RichTextShapeUtil];
 const tools = [RichTextTool];
 // Backstop so tldraw can never create its native text shape on double-click.
 const tldrawOptions = { createTextOnCanvasDoubleClick: false };
+
+function CanvasContextMenu(props: TLUiContextMenuProps) {
+  const editor = useEditor();
+  const { addToast } = useToasts();
+  const pageId = useAppStore((s) => s.selectedPageId);
+  const onlySelectedShapeId = useValue(
+    "only selected shape id",
+    () => {
+      const ids = editor.getSelectedShapeIds();
+      return ids.length === 1 ? ids[0] : null;
+    },
+    [editor],
+  );
+
+  async function handleCopyReference(shapeId: string, pageId: string) {
+    try {
+      await copyReference({ kind: "shape", id: shapeId, pageId, shapeId });
+      addToast({ title: "Reference copied", severity: "success" });
+    } catch (err) {
+      console.error("Copy reference failed", err);
+      addToast({ title: "Couldn't copy reference", severity: "error" });
+    }
+  }
+
+  return (
+    <DefaultContextMenu {...props}>
+      {onlySelectedShapeId && pageId && (
+        <TldrawUiMenuGroup id="reference">
+          <TldrawUiMenuItem
+            id="copy-reference"
+            label="Copy reference"
+            readonlyOk
+            onSelect={() => void handleCopyReference(onlySelectedShapeId, pageId)}
+          />
+        </TldrawUiMenuGroup>
+      )}
+      <DefaultContextMenuContent />
+    </DefaultContextMenu>
+  );
+}
 
 // Module-level guard so Strict Mode's double invoke can't create two default
 // pages for the same note.
@@ -320,6 +369,7 @@ export function CanvasEditor({ note }: Props) {
           QuickActions: null,
           StylePanel: null,
           LoadingScreen: null,
+          ContextMenu: CanvasContextMenu,
         }}
       />
       </div>

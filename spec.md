@@ -252,7 +252,7 @@ Test steps:
 
 ### T8 Copy reference from right-click menus
 
-Status: todo
+Status: done
 Depends on: T7
 
 Add a "Copy reference" item that writes the item's `formatReference` token to the OS clipboard with `writeText` from `@tauri-apps/plugin-clipboard-manager`. Add `clipboard-manager:allow-write-text` and `allow-read-text` to `default.json` and `sticky.json`. Put it:
@@ -275,6 +275,71 @@ Test steps:
 3. Right-click a canvas text box (not editing) › Copy reference and paste into another text box: a chip with the first text box's text appears.
 4. In Sticky notes, right-click a test sticky card › Copy reference and paste: a "%" chip appears.
 5. Delete everything you created.
+
+### T13 Reference chip cursor and double-click selection
+
+Status: todo
+Depends on: T7
+
+Added after T8 (user report). Two problems with the reference chip (`lib/tiptap/reference.ts`, `components/editor/ReferenceChip.tsx`, `.reference-chip` styles in `components/editor/editor.css`), in canvas text boxes and sticky notes:
+- When a chip is the first thing on a line, double-clicking it doesn't select it. With text before it on the line, a double-click selects that text. Double-clicking a chip anywhere should select the whole chip (a `NodeSelection` on it), and a single click should behave as it does now. Don't add click-to-follow; that's T9.
+- When a chip is the first thing on a line, the text cursor before it is drawn inside the chip's shaded background, just after its left edge, instead of just before the chip. This is a WebKit caret problem with `contenteditable="false"` inline nodes at a line's start. Fix it so the cursor before a chip is drawn outside the chip at every position: line start, mid-line and line end. Also check the cursor after a chip at the end of a line. Use the usual ProseMirror approaches, such as a zero-width spacer or separator before the chip in the node view, moving the chip's padding and background onto an inner element, or a `margin`-based layout, and pick whatever works in WebKit (macOS) without changing what's stored. The stored document and the chip's appearance must stay the same.
+
+Files: `components/editor/ReferenceChip.tsx`, `lib/tiptap/reference.ts`, `components/editor/editor.css`
+
+Acceptance:
+- Double-clicking a chip selects that chip, whether or not there is text before it on the line.
+- With a chip first on a line, the cursor placed before it (click to its left, Home, or arrow keys) is drawn outside the chip's background.
+- The cursor can move across a chip with the arrow keys in both directions, and Backspace/Delete next to a chip remove it.
+- Stored content for chips is unchanged (same `reference` node JSON), and chips look the same as before.
+
+Test steps:
+1. In a canvas text box, paste a reference token as the only thing on a line (copy one with right-click › Copy reference on a note in the sidebar). Double-click the chip: the whole chip is selected (selection outline).
+2. Press Home (or click to the left of the chip): the cursor is drawn just before the chip, not inside its shaded area. Screenshot it zoomed in.
+3. Type "x " before the chip, then double-click the chip: the chip is selected, not "x".
+4. With the cursor just after the chip, press Left twice: the cursor moves before the chip. Press Delete: the chip is removed. Undo.
+5. Repeat steps 1–2 in a sticky note.
+6. Delete the test text box/note and sticky note.
+
+### T14 Reliable Copy reference for text boxes
+
+Status: todo
+Depends on: T8
+
+Added after T8 (user report): right-clicking a canvas text box to get Copy reference is unreliable. T8 put "Copy reference" in tldraw's context menu (`CanvasContextMenu` in `components/canvas/CanvasEditor.tsx`). It only shows when exactly one shape is selected, and in the rich-text tool selection on right-click comes from the new `Idle.onRightClick` in `components/canvas/RichTextTool.tsx`. Right-clicking a text box that is being edited goes to the text instead (`RichTextShape.tsx` stops pointer events while editing).
+
+First, reproduce right-clicking text boxes in their different states and record what goes wrong:
+- not selected
+- selected
+- being edited
+- another shape selected
+- right-clicking the text itself versus the box's padding or edge
+- a right-click straight after editing ends
+
+Then make it work every time:
+- Right-clicking any part of a text box that isn't being edited always selects just that box and shows "Copy reference".
+- Right-clicking inside a text box that is being edited shows a menu with "Copy reference" for that box. This can be tldraw's menu, or a small custom menu if tldraw's can't open there. The editor's own selection and focus must stay as they are.
+
+Also add a "Copy reference" button (a link icon, with "Copy reference" as its tooltip) to the text box's formatting bubble menu in `RichTextShape.tsx`. That gives a way that doesn't depend on right-click at all. It copies `skylines://shape/<pageId>/<shapeId>` for the box being edited, via `copyReference` in `lib/references/copy.ts`, and confirms with tldraw's toast like the context menu does.
+
+Report the causes you found.
+
+Files: `components/canvas/CanvasEditor.tsx`, `components/canvas/RichTextTool.tsx`, `components/canvas/RichTextShape.tsx`, `lib/references/copy.ts`
+
+Acceptance:
+- Right-clicking a non-editing text box, anywhere on it, selects only that box and shows "Copy reference", whatever was selected before.
+- Right-clicking inside a text box being edited shows "Copy reference" for that box without ending editing or losing the text selection.
+- The bubble menu has a Copy reference button that copies the box's shape reference and shows a confirmation.
+- tldraw's other context menu behaviour (other shapes, multiple shapes, empty canvas) is unchanged.
+
+Test steps:
+1. Create two text boxes A and B with text. Select B. Right-click A on its text: only A is selected and the menu shows Copy reference. Use it and paste into B: a chip for A appears.
+2. Right-click A near its edge or padding (not on text): same result.
+3. Click into A to edit it, then right-click its text: a menu with Copy reference appears, A stays in editing, and the text selection is kept. Copy and paste into B: a chip for A appears.
+4. While editing A, select some text so the bubble menu appears, and click its Copy reference button: a confirmation shows, and pasting into B gives a chip for A.
+5. Finish editing A, then immediately right-click it: Copy reference shows.
+6. Right-click empty canvas and a non-text shape: menus behave as before.
+7. Delete the test text boxes and note.
 
 ### T9 Following references and web links
 
@@ -337,6 +402,44 @@ Test steps:
 5. While editing a text box, hover a chip, then keep typing: text still goes into the text box.
 6. Clean up.
 
+### T15 References to images
+
+Status: todo
+Depends on: T9, T10
+
+Added after T8 (user request). There are two kinds of pasted image:
+- **Canvas image shapes.** Pasting an image onto the canvas while not editing goes through tldraw's default paste and makes an `image` shape with an asset record in the page snapshot. These can already be copied as a `shape` reference (T8), but `resolveReference` (`lib/references/resolve.ts`) titles them with the raw shape type and gives no `previewImage`.
+- **Images inside text.** Images pasted into a text box or sticky note while editing, or inserted with the Ribbon's image button (`Ribbon.tsx`, `setImage`), are Tiptap `image` nodes with a base64 `src` and no id, so they can't be referenced.
+
+Make both work:
+1. **Canvas image shapes.** For a `shape` reference to an `image` shape, resolve the title as "Image" (or the asset's `name` if it has a meaningful one), and set `previewImage` from the asset's `src` (look up the shape's `props.assetId` in the snapshot's asset records). The chip, hover card (T10) and following (T9, select and zoom) then work as for other shapes.
+2. **Images inside text.**
+   - **Ids:** give the Tiptap image node a stable `id` attribute, kept in the HTML as `data-image-id`, through the shared factory (`lib/tiptap/extensions.ts`, by extending `Image`). An `appendTransaction` plugin assigns `crypto.randomUUID()` to any image node without one, including existing images the next time that editor changes. A pasted image whose id already exists in the same document gets a new one.
+   - **Reference kind:** add a reference kind `image` to `lib/references/format.ts`: `skylines://image/shape/<pageId>/<shapeId>/<imageId>` for an image in a canvas text box, and `skylines://image/sticky/<stickyId>/<imageId>` for one in a sticky note. Keep `parseReference` strict and update the round-trip check.
+   - **Resolving:** `resolveReference` finds the image inside its container's content. Title "Image", path = the container's path plus its title, `previewImage` = the image `src`. If the image is gone, `exists` is false.
+   - **Chip prefix:** "#" when the container is in the notebook, "%" when it's a sticky note.
+   - **Following** (`lib/references/navigate.ts`): follow the container (open the note on its page and select and zoom to the text box, or open the sticky window), then scroll the image into view and briefly highlight it.
+   - **Copying:** right-clicking an image inside a text box or sticky note while editing shows a small menu with "Copy reference". Also add a Copy reference button to the bubble menu when an image node is selected. Both use `copyReference` (`lib/references/copy.ts`) and confirm like T8/T14 do.
+3. **Picker.** If T11 is already done, list images under their text box in its tree. Otherwise T11 picks this up.
+
+Files: `lib/references/format.ts`, `lib/references/resolve.ts`, `lib/references/navigate.ts`, `lib/tiptap/extensions.ts`, `lib/tiptap/imageId.ts` (new), `components/editor/ReferenceChip.tsx`, `components/canvas/RichTextShape.tsx`, `components/editor/StickyNoteEditor.tsx`
+
+Acceptance:
+- A reference to a canvas image shape shows a chip titled "Image" (or the asset name), its hover card shows the picture, and following it selects and zooms to the image.
+- Every image node inside text has a unique `id`, assigned automatically, and stored in the content.
+- Images inside canvas text boxes and sticky notes can be copied as `image` references from a right-click menu and from the bubble menu. Pasting one gives a chip, hovering shows the picture, and clicking opens the container and scrolls to and highlights the image.
+- `parseReference(formatReference(r))` round-trips both `image` forms, and malformed image tokens return null.
+- A deleted image's chip shows as missing.
+
+Test steps:
+1. Paste an image onto empty canvas (not editing) so it becomes an image shape. Right-click it › Copy reference, and paste into a text box: a chip "#… › Image" appears. Hover it: the card shows the picture. Click it from another page: you land on the image, selected.
+2. Edit a text box, paste an image into its text, right-click the image › Copy reference. Paste into another text box: a chip appears. Hover it: the picture shows.
+3. Click that chip (not editing): the note opens on that page, the text box is selected, and the image is scrolled into view and highlighted.
+4. Select the image in the text so the bubble menu shows its Copy reference button. Use it and paste: the same chip.
+5. In a sticky note, paste an image and copy its reference. Paste it into a canvas text box: a "%… › Image" chip. Click it: the sticky window opens with the image in view.
+6. Delete the image from the text box: its chip shows as missing.
+7. Delete all test notes, text boxes, images and the sticky note.
+
 ### T11 Insert link dialog: tree, paste box and references
 
 Status: todo
@@ -380,3 +483,4 @@ Test steps:
 - [x] T5 Tab and Shift+Tab in lists
 - [x] T6 Fix the Insert link dialog on the canvas
 - [x] T7 Reference chips
+- [x] T8 Copy reference from right-click menus

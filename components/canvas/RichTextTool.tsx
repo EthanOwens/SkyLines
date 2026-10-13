@@ -377,6 +377,19 @@ class Idle extends StateNode {
     this.parent.transition("pointing_canvas", info);
   }
 
+  // Mirrors select: right-clicking a shape selects it (keeping a selection it's
+  // part of) so the context menu can act on it; empty canvas clears selection.
+  override onRightClick() {
+    const { editor } = this;
+    const hitShape = getHitShapeOnCanvasPointerDown(editor);
+    if (!hitShape) {
+      editor.selectNone();
+      return;
+    }
+    const target = editor.getOutermostSelectableShape(hitShape);
+    if (!editor.getSelectedShapeIds().includes(target.id)) editor.select(target.id);
+  }
+
   override onCancel() {
     // Escape forces select; queue the return to rich-text.
     requestReturnToRichText();

@@ -27,6 +27,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
 import { useAuthContext } from "@/components/AuthProvider";
 import {
   getStickyNotes,
@@ -258,6 +259,7 @@ function StickyNoteCard({ note, isOpen, titleOnly, onOpen, onRename, onDelete, o
   const [title, setTitle] = useState(note.title || "Untitled");
   const inputRef = useRef<HTMLInputElement>(null);
   const preview = extractPlainText(note.content, 300);
+  const { contextActionsRef, closeMenus } = useMenuCloser();
 
   // Picks up renames from this note's other card (favorites vs. the main grid)
   // and from live refreshes. Doesn't depend on renaming, so it can't overwrite
@@ -280,7 +282,7 @@ function StickyNoteCard({ note, isOpen, titleOnly, onOpen, onRename, onDelete, o
   }
 
   return (
-    <ContextMenu>
+    <ContextMenu actionsRef={contextActionsRef}>
       <ContextMenuTrigger
         render={
           <div
@@ -371,6 +373,7 @@ function StickyNoteCard({ note, isOpen, titleOnly, onOpen, onRename, onDelete, o
           <Star className={`mr-2 h-4 w-4 ${note.favorite ? "fill-current" : ""}`} />
           {note.favorite ? "Unfavorite" : "Favorite"}
         </DropdownMenuItem>
+        <CopyReferenceItem reference={{ kind: "sticky", id: note.id }} onDone={closeMenus} />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onDelete} className="text-destructive">
           <Trash2 className="mr-2 h-4 w-4" /> Delete

@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
 import { useAppStore } from "@/stores/appStore";
 import {
   isSidebarDragEvent,
@@ -44,6 +45,7 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
   const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const setClipboard = useAppStore((s) => s.setClipboard);
+  const { actionsRef, contextActionsRef, closeMenus } = useMenuCloser();
 
   // Picks up renames made elsewhere (such as the canvas title). Doesn't depend
   // on renaming, so it can't overwrite an edit in progress.
@@ -130,6 +132,7 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
         <DropdownMenuItem onClick={handleCopy}>
           <Copy className="mr-2 h-4 w-4" /> Copy
         </DropdownMenuItem>
+        <CopyReferenceItem reference={{ kind: "page", id: page.id }} onDone={closeMenus} />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleDelete} className="text-destructive">
           <Trash2 className="mr-2 h-4 w-4" /> Delete
@@ -143,7 +146,7 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
       {dropPosition === "before" && (
         <div className="mx-2 h-0.5 rounded-full bg-primary" />
       )}
-      <ContextMenu>
+      <ContextMenu actionsRef={contextActionsRef}>
         <ContextMenuTrigger
           render={
             <div
@@ -180,7 +183,7 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
                 </span>
               )}
 
-              <DropdownMenu>
+              <DropdownMenu actionsRef={actionsRef}>
                 <DropdownMenuTrigger
                   render={
                     <button

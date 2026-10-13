@@ -7,6 +7,10 @@ import { createNotebook } from "@/lib/db/notebooks";
 import { setLastOpenNotebook } from "@/lib/lastOpen";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DropdownMenuContent } from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
+import type { Notebook } from "@/types";
 
 // Notebook picker, shown when there's no valid last-open note.
 export default function Home() {
@@ -85,13 +89,7 @@ export default function Home() {
           <ul className="flex flex-col gap-1">
             {notebooks.map((notebook) => (
               <li key={notebook.id}>
-                <button
-                  type="button"
-                  onClick={() => openNotebook(notebook.id)}
-                  className="w-full rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-muted"
-                >
-                  {notebook.name}
-                </button>
+                <NotebookRow notebook={notebook} onOpen={() => openNotebook(notebook.id)} />
               </li>
             ))}
           </ul>
@@ -118,5 +116,27 @@ export default function Home() {
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>
     </div>
+  );
+}
+
+function NotebookRow({ notebook, onOpen }: { notebook: Notebook; onOpen: () => void }) {
+  const { contextActionsRef, closeMenus } = useMenuCloser();
+  return (
+    <ContextMenu actionsRef={contextActionsRef}>
+      <ContextMenuTrigger
+        render={
+          <button
+            type="button"
+            onClick={onOpen}
+            className="w-full rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-muted"
+          >
+            {notebook.name}
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-44">
+        <CopyReferenceItem reference={{ kind: "notebook", id: notebook.id }} onDone={closeMenus} />
+      </DropdownMenuContent>
+    </ContextMenu>
   );
 }
