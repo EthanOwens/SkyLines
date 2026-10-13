@@ -11,7 +11,7 @@ import { TextStyle, FontSize } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
-import { ListTabKeymap } from "./listKeymap";
+import { ListTabKeymap, ShortOrderedListInputRule } from "./listKeymap";
 
 const lowlight = createLowlight(common);
 
@@ -40,6 +40,7 @@ export function createEditorExtensions({
     FontSize,
     Color,
     ListTabKeymap,
+    ShortOrderedListInputRule,
   ];
   if (highlight) {
     // multicolor so highlights can use HIGHLIGHT_COLORS.

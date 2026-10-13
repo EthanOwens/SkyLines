@@ -28,6 +28,7 @@ Three areas. Sticky notes get their own taskbar group and icon on Windows, keep 
 - **Sticky home previews** refresh live through a Tauri event emitted whenever a sticky note is created, updated or deleted, and show up to 3 lines of text.
 - **Taskbar:** on Windows, sticky windows get their own taskbar group (a separate AppUserModelID, `SkyLines.StickyNotes`) and a sticky-note icon. macOS shows one Dock icon per app, so there (and on Windows too) each sticky window's title is the note's title instead of "Sticky note", which names it in the Dock's right-click list, the Window menu and Alt-Tab. The implementer makes a simple placeholder icon (`src-tauri/icons/sticky.png`) that the user can replace.
 - **Bullets:** "- " (dash then space) at the start of a line starts a bullet list; a dash alone stays a dash. Enter adds a bullet at the same level; Enter on an empty nested bullet moves it out one level, and on an empty top-level bullet ends the list (stock behaviour). Tab indents and Shift+Tab outdents the bullet(s) the cursor or selection touches. Where there's nothing to indent or outdent (plain text, the first bullet of a list, Shift+Tab on a top-level bullet, a selection crossing the list's edge), Tab and Shift+Tab do nothing and focus stays in the editor. Backspace at the start of a bullet removes it (stock). The same applies to numbered and task lists.
+- **Numbered lists** start from "1. " (stock) and also from "1 " (a 1 then a space, user's request after T5's first pass). Only the digit 1 triggers the short form, so lines like "3 apples" or "2024 recap" stay as text.
 - **List styling:** markers by depth (disc, circle, square, then repeat) and a left indent per level, in `editor.css`, scoped to `.tiptap` and excluding task lists. Don't install `@tailwindcss/typography`; it would restyle headings and paragraphs everywhere.
 - **The three editors share one extension factory** in `lib/tiptap/extensions.ts`.
 - **Reference format:** the clipboard text is `skylines://<kind>/<id>` with kind `notebook`, `folder`, `note`, `page` or `sticky`, and `skylines://shape/<pageId>/<shapeId>` for a canvas shape. It reuses the app's registered deep-link scheme, though opening these from outside the app is out of scope.
@@ -178,6 +179,7 @@ Acceptance:
 - Tab and Shift+Tab never move focus out of the editor and never insert a tab character.
 - Shift+Tab on a top-level list item leaves it unchanged.
 - A dash alone at the start of a line doesn't start a list; "- " does.
+- "1 " at the start of a line starts a numbered list, the same as "1. "; other numbers followed by a space (for example "3 ") don't.
 
 Test steps:
 1. In a canvas text box, type "- one", Enter, "two", Enter. On the new empty bullet press Tab: it becomes a sub-bullet. Type "three".
@@ -187,6 +189,7 @@ Test steps:
 5. Press Shift+Tab on "one": nothing changes and focus stays.
 6. Press Enter on an empty nested bullet: it moves out one level. Press Enter on an empty top-level bullet: the list ends.
 7. On a plain line, type "-x": it stays as text.
+7a. On a plain line, type "1 " then "first": a numbered list starting at 1 appears. On another plain line, type "3 apples": it stays as text.
 8. Repeat steps 1–4 in a sticky note. Delete all test text and close any sticky note you created.
 
 ### T6 Fix the Insert link dialog on the canvas

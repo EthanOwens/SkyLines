@@ -1,4 +1,4 @@
-import { Extension } from "@tiptap/core";
+import { Extension, wrappingInputRule } from "@tiptap/core";
 import type { Editor } from "@tiptap/core";
 import type { NodeType } from "@tiptap/pm/model";
 
@@ -47,5 +47,26 @@ export const ListTabKeymap = Extension.create({
         return true;
       },
     };
+  },
+});
+
+// "1 " starts a numbered list like the stock "1. " rule. Only the digit 1, so
+// lines such as "3 apples" or "2024 recap" stay as text.
+export const ShortOrderedListInputRule = Extension.create({
+  name: "shortOrderedListInputRule",
+
+  addInputRules() {
+    const type = this.editor.schema.nodes.orderedList;
+    if (!type) return [];
+    return [
+      wrappingInputRule({
+        find: /^1\s$/,
+        type,
+        getAttributes: { start: 1 },
+        // Same join test as the stock "1. " rule.
+        joinPredicate: (_match, node) =>
+          (!node.attrs.type || node.attrs.type === "1") && node.childCount + node.attrs.start === 1,
+      }),
+    ];
   },
 });
