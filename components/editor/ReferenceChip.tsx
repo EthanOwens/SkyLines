@@ -51,16 +51,22 @@ export function ReferenceChipView({ node, editor, getPos }: ReactNodeViewProps) 
   } else if (lastTitle) text = lastTitle;
   else text = missing ? "Not found" : "…";
 
+  // WebKit draws a caret before an uneditable inline at a line's start inside
+  // that element's box. A zero-width text leaf ahead of the chip gives the
+  // caret somewhere to sit outside it.
   return (
-    <NodeViewWrapper
-      as="span"
-      className="reference-chip"
-      data-kind={kind}
-      data-missing={missing ? "" : undefined}
-      contentEditable={false}
-    >
-      <span className="reference-chip-prefix">{referencePrefix(kind)}</span>
-      <span className="reference-chip-text">{text}</span>
-    </NodeViewWrapper>
+    <>
+      {"\u200B"}
+      <NodeViewWrapper
+        as="span"
+        className="reference-chip"
+        data-kind={kind}
+        data-missing={missing ? "" : undefined}
+        contentEditable={false}
+      >
+        <span className="reference-chip-prefix">{referencePrefix(kind)}</span>
+        <span className="reference-chip-text">{text}</span>
+      </NodeViewWrapper>
+    </>
   );
 }

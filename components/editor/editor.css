@@ -104,10 +104,13 @@
 
 /* Reference chips. The node view renders one span; the text part truncates
    so a long title can't stretch a canvas text box. */
+/* The left margin is the gap the caret before a chip is drawn in; with the
+   shading flush against it, WebKit's caret overlaps the chip's first pixels. */
 .tiptap .reference-chip {
   display: inline-flex;
   align-items: baseline;
   max-width: 100%;
+  margin-left: 3px;
   padding: 0 0.4em;
   border-radius: 0.375em;
   background: color-mix(in oklab, var(--primary) 12%, transparent);
@@ -144,7 +147,8 @@
   text-decoration: line-through;
 }
 
-.tiptap .reference-chip.ProseMirror-selectednode {
+/* ProseMirror puts the class on the node view's outer element. */
+.tiptap .ProseMirror-selectednode > .reference-chip {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }

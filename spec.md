@@ -278,7 +278,7 @@ Test steps:
 
 ### T13 Reference chip cursor and double-click selection
 
-Status: todo
+Status: done
 Depends on: T7
 
 Added after T8 (user report). Two problems with the reference chip (`lib/tiptap/reference.ts`, `components/editor/ReferenceChip.tsx`, `.reference-chip` styles in `components/editor/editor.css`), in canvas text boxes and sticky notes:
@@ -484,3 +484,4 @@ Test steps:
 - [x] T6 Fix the Insert link dialog on the canvas
 - [x] T7 Reference chips
 - [x] T8 Copy reference from right-click menus
+- [x] T13 Reference chip cursor and double-click selection

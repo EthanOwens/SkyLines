@@ -1,6 +1,6 @@
 import { Extension, Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import { parseReference, type Reference, type ReferenceKind } from "@/lib/references/format";
 import { ReferenceChipView } from "@/components/editor/ReferenceChip";
@@ -112,6 +112,24 @@ export const ReferenceNode = Node.create({
 
   addNodeView() {
     return ReactNodeViewRenderer(ReferenceChipView);
+  },
+
+  addProseMirrorPlugins() {
+    const type = this.type;
+    return [
+      new Plugin({
+        key: new PluginKey("referenceDoubleClick"),
+        props: {
+          // The browser's default word selection skips the uneditable chip and
+          // picks the text beside it, or nothing at a line's start.
+          handleDoubleClickOn: (view, _pos, node, nodePos, _event, direct) => {
+            if (!direct || node.type !== type) return false;
+            view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, nodePos)));
+            return true;
+          },
+        },
+      }),
+    ];
   },
 
   addCommands() {
