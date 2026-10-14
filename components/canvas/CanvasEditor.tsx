@@ -13,7 +13,6 @@ import {
   TldrawUiMenuItem,
   react,
   useEditor,
-  useToasts,
   useValue,
   type Editor,
   type TLEditorSnapshot,
@@ -21,10 +20,9 @@ import {
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
-import { copyReference } from "@/lib/references/copy";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
-import { RichTextShapeUtil, type RichTextShape } from "./RichTextShape";
+import { RichTextShapeUtil, useCopyShapeReference, type RichTextShape } from "./RichTextShape";
 import { RichTextTool, installRichTextToolAutoReturn } from "./RichTextTool";
 
 // Module-level so <Tldraw> sees stable identities; it rebuilds internal
@@ -36,7 +34,7 @@ const tldrawOptions = { createTextOnCanvasDoubleClick: false };
 
 function CanvasContextMenu(props: TLUiContextMenuProps) {
   const editor = useEditor();
-  const { addToast } = useToasts();
+  const copyShapeReference = useCopyShapeReference();
   const pageId = useAppStore((s) => s.selectedPageId);
   const onlySelectedShapeId = useValue(
     "only selected shape id",
@@ -47,16 +45,6 @@ function CanvasContextMenu(props: TLUiContextMenuProps) {
     [editor],
   );
 
-  async function handleCopyReference(shapeId: string, pageId: string) {
-    try {
-      await copyReference({ kind: "shape", id: shapeId, pageId, shapeId });
-      addToast({ title: "Reference copied", severity: "success" });
-    } catch (err) {
-      console.error("Copy reference failed", err);
-      addToast({ title: "Couldn't copy reference", severity: "error" });
-    }
-  }
-
   return (
     <DefaultContextMenu {...props}>
       {onlySelectedShapeId && pageId && (
@@ -65,7 +53,7 @@ function CanvasContextMenu(props: TLUiContextMenuProps) {
             id="copy-reference"
             label="Copy reference"
             readonlyOk
-            onSelect={() => void handleCopyReference(onlySelectedShapeId, pageId)}
+            onSelect={() => void copyShapeReference(onlySelectedShapeId)}
           />
         </TldrawUiMenuGroup>
       )}

@@ -427,7 +427,27 @@ export function installRichTextToolAutoReturn(editor: Editor): () => void {
 
   const stopWatcher = installReturnToRichTextWatcher(editor);
 
+  // Mid-edit, a right-click elsewhere on the canvas reaches select.editing_shape,
+  // which ignores it. Opening the context menu then ends the session through
+  // editor.complete(), the watcher re-enters it (shape still selected) and the
+  // refocus dismisses the menu. Ending the session first, without re-entry, lets
+  // the tool that started it select whatever was right-clicked.
+  function endEditingOnRightClickElsewhere(event: PointerEvent) {
+    if (event.button !== 2) return;
+    const editingShapeId = editor.getEditingShapeId();
+    if (!editingShapeId) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest(".tl-canvas")) return;
+    // The text box being edited opens its own menu (RichTextShape.tsx).
+    if (target.closest(`[data-shape-id="${editingShapeId}"]`)) return;
+    const sessionOwnedByThisTool = shapesWithEditSessionOwnedByThisTool.has(editingShapeId);
+    switchToToolExplicitly(editor, sessionOwnedByThisTool ? "rich-text" : "select");
+  }
+  const container = editor.getContainer();
+  container.addEventListener("pointerdown", endEditingOnRightClickElsewhere, true);
+
   return () => {
+    container.removeEventListener("pointerdown", endEditingOnRightClickElsewhere, true);
     unregister();
     stopWatcher();
     pendingReturnToRichText = false;

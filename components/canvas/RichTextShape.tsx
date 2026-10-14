@@ -9,7 +9,16 @@
 // back in only while editing. While editing, pointer-down capture stops
 // propagation so text-selection drags aren't read as shape drags.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type SyntheticEvent,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   BaseBoxShapeUtil,
   createShapePropsMigrationIds,
@@ -19,6 +28,7 @@ import {
   stopEventPropagation,
   useEditor as useTldrawEditor,
   useIsEditing,
+  useToasts,
   useValue,
   type RecordProps,
   type TLBaseShape,
@@ -33,6 +43,7 @@ import { LinkOrStickyDialog } from "@/components/editor/LinkOrStickyDialog";
 import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
+import { copyReference } from "@/lib/references/copy";
 import {
   suppressReenterEditAfterEndingSession,
   setReenterEditSuppressed,
@@ -53,7 +64,7 @@ import {
   toggleHighlight,
 } from "@/components/ribbon/formatActions";
 import { cn } from "@/lib/utils";
-import { Link as LinkIcon, Highlighter } from "lucide-react";
+import { Link as LinkIcon, Link2, Highlighter } from "lucide-react";
 import "@/components/editor/editor.css";
 
 // One formatter so the date and time always share a consistent format.
@@ -155,6 +166,121 @@ export class RichTextShapeUtil extends BaseBoxShapeUtil<RichTextShape> {
   }
 }
 
+// Needs tldraw's UI context (for toasts), which the canvas and so every shape
+// render inside.
+export function useCopyShapeReference() {
+  const { addToast } = useToasts();
+  const pageId = useAppStore((s) => s.selectedPageId);
+  return useCallback(
+    async (shapeId: string) => {
+      if (!pageId) return;
+      try {
+        await copyReference({ kind: "shape", id: shapeId, pageId, shapeId });
+        addToast({ title: "Reference copied", severity: "success" });
+      } catch (err) {
+        console.error("Copy reference failed", err);
+        addToast({ title: "Couldn't copy reference", severity: "error" });
+      }
+    },
+    [addToast, pageId],
+  );
+}
+
+// The menu is portalled, but React events still bubble through the React tree
+// to tldraw's .tl-canvas handlers, which would end the edit session.
+function stopReactPropagation(e: SyntheticEvent) {
+  e.stopPropagation();
+}
+
+// Preventing mousedown keeps DOM focus, and so the text selection, in the
+// editor.
+function keepEditorFocus(e: ReactMouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+// Stands in for tldraw's context menu while a box is being edited: opening
+// tldraw's calls editor.complete(), which ends the edit session.
+function EditingContextMenu({
+  x,
+  y,
+  onCopyReference,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  onCopyReference: () => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Keep the menu inside the viewport.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const { width, height } = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - width - 4))}px`;
+    menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - height - 4))}px`;
+  }, [x, y]);
+
+  useEffect(() => {
+    function closeOnOutsidePointerDown(e: PointerEvent) {
+      if (e.target instanceof Node && menuRef.current?.contains(e.target)) return;
+      onClose();
+    }
+    function closeOnKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        // Otherwise Escape also reaches tldraw and ends the edit session.
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      onClose();
+    }
+    window.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
+    window.addEventListener("keydown", closeOnKeyDown, true);
+    window.addEventListener("wheel", onClose, true);
+    window.addEventListener("blur", onClose);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutsidePointerDown, true);
+      window.removeEventListener("keydown", closeOnKeyDown, true);
+      window.removeEventListener("wheel", onClose, true);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      role="menu"
+      style={{ position: "fixed", left: x, top: y }}
+      className="z-50 min-w-32 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
+      onPointerDown={stopReactPropagation}
+      onPointerUp={stopReactPropagation}
+      onMouseDown={keepEditorFocus}
+      onMouseUp={stopReactPropagation}
+      onClick={stopReactPropagation}
+      onDoubleClick={stopReactPropagation}
+      onContextMenu={keepEditorFocus}
+      onTouchStart={stopReactPropagation}
+      onTouchEnd={stopReactPropagation}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          onClose();
+          onCopyReference();
+        }}
+        className="flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm select-none hover:bg-accent hover:text-accent-foreground"
+      >
+        <Link2 className="size-4 shrink-0" />
+        Copy reference
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
 function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   const tldrawEditor = useTldrawEditor();
   const isEditing = useIsEditing(shape.id);
@@ -165,6 +291,13 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   const setPendingEditClickPoint = useAppStore((s) => s.setPendingEditClickPoint);
   const { user } = useAuthContext();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [editingMenuAt, setEditingMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const closeEditingMenu = useCallback(() => setEditingMenuAt(null), []);
+  const copyShapeReference = useCopyShapeReference();
+
+  useEffect(() => {
+    if (!isEditing) setEditingMenuAt(null);
+  }, [isEditing]);
 
   const tiptapEditor = useTiptapEditor(
     {
@@ -373,6 +506,20 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           border: showChrome ? "1px dashed var(--border)" : "1px solid transparent",
           borderRadius: 4,
         }}
+        onContextMenu={
+          isEditing
+            ? (e) => {
+                e.preventDefault();
+                // Keeps tldraw's menu (which would end editing) from opening.
+                e.stopPropagation();
+                // WebKit selects the word under a right-click before this
+                // event, and ProseMirror only reads it on the later
+                // selectionchange; focus() writes the editor's selection back.
+                tiptapEditor?.view.focus();
+                setEditingMenuAt({ x: e.clientX, y: e.clientY });
+              }
+            : undefined
+        }
       >
         {showChrome && (
           // Drag handle. A sibling of the content wrapper (not a child), so the
@@ -393,8 +540,8 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
             }}
             // End editing first so the drag reaches tldraw's real
             // translate handling instead of EditingShape's no-op.
-            onPointerDown={() => {
-              if (isEditing) {
+            onPointerDown={(e) => {
+              if (isEditing && e.button === 0) {
                 suppressEmptyDeleteRef.current = true;
                 tldrawEditor.setEditingShape(null);
                 suppressReenterEditAfterEndingSession();
@@ -469,6 +616,14 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
                   )}
                 >
                   <LinkIcon className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  title="Copy reference"
+                  onClick={() => void copyShapeReference(shape.id)}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  <Link2 className="h-3 w-3" />
                 </button>
                 <button
                   type="button"
@@ -570,6 +725,14 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           </div>
         )}
       </div>
+      {isEditing && editingMenuAt && (
+        <EditingContextMenu
+          x={editingMenuAt.x}
+          y={editingMenuAt.y}
+          onCopyReference={() => void copyShapeReference(shape.id)}
+          onClose={closeEditingMenu}
+        />
+      )}
       <LinkOrStickyDialog
         open={linkDialogOpen}
         onOpenChange={setLinkDialogOpen}

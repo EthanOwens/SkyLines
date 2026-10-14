@@ -303,7 +303,7 @@ Test steps:
 
 ### T14 Reliable Copy reference for text boxes
 
-Status: todo
+Status: done
 Depends on: T8
 
 Added after T8 (user report): right-clicking a canvas text box to get Copy reference is unreliable. T8 put "Copy reference" in tldraw's context menu (`CanvasContextMenu` in `components/canvas/CanvasEditor.tsx`). It only shows when exactly one shape is selected, and in the rich-text tool selection on right-click comes from the new `Idle.onRightClick` in `components/canvas/RichTextTool.tsx`. Right-clicking a text box that is being edited goes to the text instead (`RichTextShape.tsx` stops pointer events while editing).
@@ -485,3 +485,4 @@ Test steps:
 - [x] T7 Reference chips
 - [x] T8 Copy reference from right-click menus
 - [x] T13 Reference chip cursor and double-click selection
+- [x] T14 Reliable Copy reference for text boxes
