@@ -26,6 +26,15 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 - **Clean up** notes, sticky notes and windows you created. Never edit or delete anything you didn't create, and never quit the app.
 - **Out of reach:** the system tray, the native menu bar, the global shortcut, OS dialogs and other apps. Those steps stay manual.
 
+### Precondition
+
+`node -e "require('net').connect(9223,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"`
+
+### Lessons
+
+- When the app window is hidden, screenshots come back stale. Use page-structure and computed-style evidence instead of retrying focus.
+- Simulated events can't start a native window drag or trigger real keyboard focus, so mark those steps for the user.
+
 ## Gotchas
 
 - SQL migrations in `src-tauri/src/lib.rs` are checksummed by tauri-plugin-sql. Never edit an existing migration; add a new version.
