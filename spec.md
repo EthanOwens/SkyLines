@@ -41,6 +41,7 @@ Three areas. Sticky notes get their own taskbar group and icon on Windows, keep 
 - **Double-click on chips (T16):** double-clicking a chip follows it in every editor and mode. Double-clicking anywhere else on its line, including the small gap just before it, selects a word as normal and never selects the chip. This replaces T13's "double-click selects the chip", which recorded the user's report wrongly. A single click while editing still selects the chip. Web links don't follow on double-click while editing, and no double-click ever follows twice.
 - **Retargeting a chip (T18):** with a chip selected, the Insert link dialog edits it. Picking a target replaces the chip in place and clears any custom label, and a URL replaces it with a web link. The dialog opens on a chip from Ctrl/Cmd+K, the floating toolbar's link button (which now shows for a selected chip) and the Ribbon link button. There is no right-click "Edit reference".
 - **Sticky notes get the Insert link dialog** through Ctrl/Cmd+K (T17). They keep their bottom bar, with no floating toolbar.
+- **Rich web link previews (T19):** like Discord's link embeds, the hover card for a web link shows the site's own preview: the site name, title, description and picture from the page's Open Graph / Twitter Card meta tags. The page is fetched by a Rust command, only when the link is hovered (never on paste), so the site sees a request from this computer only when the user points at its link. The picture is downloaded by Rust and handed to the page as a `data:` URL, so the CSP's `img-src` stays as it is. If anything fails, the card shows the URL as it does after T10.
 
 ## Out of scope
 
@@ -50,6 +51,7 @@ Three areas. Sticky notes get their own taskbar group and icon on Windows, keep 
 - Backlinks ("what references this?") and updating references when items are copied.
 - Per-window Dock icons on macOS (not possible).
 - Changing the sticky note bottom bar or the image editor.
+- Embedded players (YouTube, Spotify) and oEmbed in web link previews; a setting to turn previews off.
 
 ## Tasks
 
@@ -451,6 +453,7 @@ Test steps:
 
 Status: todo
 Depends on: T9, T10
+Tester: yes, chips, hover cards, missing states and navigation are visible in the DOM; seed images and text boxes through the app or JS, since simulated input can't create a canvas text box
 
 Added after T8 (user request). There are two kinds of pasted image:
 - **Canvas image shapes.** Pasting an image onto the canvas while not editing goes through tldraw's default paste and makes an `image` shape with an asset record in the page snapshot. These can already be copied as a `shape` reference (T8), but `resolveReference` (`lib/references/resolve.ts`) titles them with the raw shape type and gives no `previewImage`.
@@ -489,6 +492,7 @@ Test steps:
 
 Status: todo
 Depends on: T6, T7
+Tester: yes, the dialog's sections, tree, search, errors and inserted chips can all be driven and checked through the webview tools
 
 Rebuild `LinkOrStickyDialog.tsx` (rename it to `InsertLinkDialog.tsx`) on top of T6's event and selection handling. Sections:
 1. URL field: Insert link, as today.
@@ -584,6 +588,49 @@ Test steps:
 6. Select the chip, press Cmd+K, enter "https://example.com" in the URL field and insert it: the chip is replaced by a web link with "↗".
 7. In a test sticky note with a chip, click the chip, press Cmd+K and pick note C: the chip now points to C.
 8. Delete the test notes, text boxes and sticky note.
+
+### T19 Rich previews for web links
+
+Status: todo
+Depends on: T10
+Tester: yes, hovering a web link and checking the card's title, description and image is observable in the DOM (needs network access)
+
+Added after T10 (user request). T10's hover card (`lib/tiptap/hoverPreview.ts`) shows only the URL for web links. Make it show the site's own preview, as Discord does: sites choose their preview through `<meta>` tags in the page header.
+
+1. **Rust commands** in `src-tauri/src/lib.rs` (or a new `link_preview.rs` module), registered in `generate_handler!` next to the existing commands. Add `reqwest` with `default-features = false` and the `rustls-tls` feature, so neither platform needs OpenSSL.
+   - `fetch_page_head(url)`: returns `{ contentType, html }`. Read the body only until `</head>` or 512 KB, whichever comes first.
+   - `fetch_image(url)`: returns a `data:` URL. It accepts only `image/*` responses up to 2 MB.
+   - Both accept only `http` and `https`, time out after 5 seconds, and refuse `localhost` and literal loopback or private IP hosts. Every failure is returned as an `Err` string. Nothing panics.
+2. **Parsing** in a new `lib/linkPreview.ts`.
+   - Read the head with the webview's `DOMParser`, which never runs scripts.
+   - Take `og:title` (else `<title>`), `og:description` (else `meta name="description"`), `og:site_name` (else the host), `og:image` (else `twitter:image`), `twitter:card` and `theme-color`.
+   - Resolve a relative image URL against the page URL, then load it through `fetch_image`.
+   - If `contentType` is `image/*`, the link is the image itself: fetch it the same way and show it.
+   - Cache results per URL in memory for the session, failures included, so hovering again doesn't re-fetch. Import Tauri's `invoke` dynamically, as elsewhere.
+3. **Card** (`hoverPreview.ts`, `editor.css`).
+   - For a web link, show the URL straight away, then fill in the site name, the bold title, up to 3 lines of description and the picture when the fetch finishes.
+   - The picture goes full width under the text when `twitter:card` is `summary_large_image`, and is a small thumbnail beside the text otherwise.
+   - If there's a `theme-color`, show it as a left border.
+   - Set every fetched string with `textContent`, never as HTML.
+   - If the pointer has left before the fetch finishes, don't show the card (the result is still cached). On any failure, keep the URL-only card.
+   - Fetch only from a hover, never on paste or render. Reference chips are unchanged.
+
+Files: `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `lib/linkPreview.ts` (new), `lib/tiptap/hoverPreview.ts`, `components/editor/editor.css`
+
+Acceptance:
+- Hovering a web link to a page with Open Graph tags shows its site name, title, up to 3 lines of description and its image (large or thumbnail per `twitter:card`), with the URL still shown.
+- A link straight to an image shows that image.
+- A page with no tags, a timeout, a non-http(s) URL, `localhost` or a private IP falls back to the URL-only card without errors in the console.
+- Hovering the same link twice fetches it once.
+- The CSP in `tauri.conf.json` is unchanged, and no page fetch happens on paste or render.
+
+Test steps:
+1. In a test note's text box (create it by hand or seed it, per the Testing lessons), add web links to https://github.com, to an image URL such as https://github.githubassets.com/favicons/favicon.png, and to http://localhost:1, then click away.
+2. Hover the github.com link: after a moment the card shows "GitHub", a title, a description and an image, with the URL.
+3. Hover the image link: the card shows the image.
+4. Hover the localhost link: the card shows only the URL, with no console errors.
+5. Hover github.com again: the card fills in immediately, with no new `fetch_page_head` call (check with `ipc_monitor`).
+6. Delete the test note.
 
 ## Progress
 
