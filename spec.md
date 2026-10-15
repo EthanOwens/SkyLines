@@ -527,7 +527,7 @@ Test steps:
 
 ### T17 Sticky notes get the Insert link dialog
 
-Status: todo
+Status: done
 Depends on: T11
 Tester: yes, Cmd/Ctrl+K, the dialog's tree and what gets inserted can be driven and checked in the sticky window
 
@@ -805,3 +805,4 @@ Test steps:
 - [x] T10 Hover previews
 - [x] T15 References to images
 - [x] T11 Insert link dialog: tree, paste box and references
+- [x] T17 Sticky notes get the Insert link dialog

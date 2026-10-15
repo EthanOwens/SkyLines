@@ -196,7 +196,7 @@ export function InsertLinkDialog({
       onKeyUp={stopReactPropagation}
     >
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md" showCloseButton={false} finalFocus={false}>
+        <DialogContent className="max-h-[90vh] max-w-[calc(100%-1rem)] overflow-y-auto sm:max-w-md" showCloseButton={false} finalFocus={false}>
           <DialogHeader>
             <DialogTitle>Insert link</DialogTitle>
           </DialogHeader>
@@ -282,7 +282,7 @@ export function InsertLinkDialog({
               placeholder="Search..."
               className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
             />
-            <ReferencePicker search={treeSearch} onPick={insertReference} />
+            <ReferencePicker search={treeSearch} onPick={insertReference} userId={userId} />
           </div>
 
           <div className="flex flex-col gap-2 border-t border-border pt-3">

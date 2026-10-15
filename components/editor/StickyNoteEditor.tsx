@@ -15,6 +15,8 @@ import { copyReference } from "@/lib/references/copy";
 import { STICKY_REVEAL_IMAGE_EVENT } from "@/lib/stickyWindow";
 import { revealImage } from "@/lib/tiptap/imageId";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
+import { useAuthContext } from "@/components/AuthProvider";
+import { InsertLinkDialog } from "./InsertLinkDialog";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import type { StickyNote } from "@/types";
 import { StickyNoteTopBar } from "./StickyNoteTopBar";
@@ -39,6 +41,8 @@ export function StickyNoteEditor({ note }: Props) {
   const [title, setTitle] = useState(note.title || "Untitled");
   const [focused, setFocused] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
+  const { user } = useAuthContext();
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContentRef = useRef<object | null>(null);
   const originalSizeRef = useRef<import("@tauri-apps/api/dpi").LogicalSize | null>(null);
@@ -94,6 +98,14 @@ export function StickyNoteEditor({ note }: Props) {
     editorProps: {
       attributes: {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[80vh] px-1",
+      },
+      handleKeyDown(_view, event) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+          event.preventDefault();
+          setLinkDialogOpen(true);
+          return true;
+        }
+        return false;
       },
       handleDOMEvents: {
         contextmenu(_view, event) {
@@ -356,6 +368,13 @@ export function StickyNoteEditor({ note }: Props) {
           onClose={closeImageMenu}
         />
       )}
+      <InsertLinkDialog
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        editor={editor}
+        currentUrl={null}
+        userId={user?.uid ?? null}
+      />
       <StickyNoteBottomBar editor={editor} focused={focused} collapsed={collapsed} />
     </div>
   );

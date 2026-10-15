@@ -7,10 +7,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { useAppStore } from "@/stores/appStore";
 import { getPages } from "@/lib/db/pages";
+import { getNotebooks } from "@/lib/db/notebooks";
+import { getFolders } from "@/lib/db/folders";
+import { getNotes } from "@/lib/db/notes";
 import { extractPlainText } from "@/lib/tiptap/extractText";
 import { Collapsible, CollapsiblePanel } from "@/components/ui/collapsible";
 import type { Reference } from "@/lib/references/format";
-import type { Folder, Note, Page } from "@/types";
+import type { Folder, Note, Notebook, Page } from "@/types";
 
 interface TreeNode {
   key: string;
@@ -100,12 +103,25 @@ function levelNodes(
 interface Props {
   search: string;
   onPick: (ref: Reference) => void;
+  // Sticky windows have no loaded store; with this set and an empty store, the tree reads SQLite.
+  userId?: string | null;
 }
 
-export function ReferencePicker({ search, onPick }: Props) {
-  const notebooks = useAppStore((s) => s.notebooks);
-  const folders = useAppStore((s) => s.folders);
-  const notes = useAppStore((s) => s.notes);
+export function ReferencePicker({ search, onPick, userId }: Props) {
+  const storeNotebooks = useAppStore((s) => s.notebooks);
+  const storeFolders = useAppStore((s) => s.folders);
+  const storeNotes = useAppStore((s) => s.notes);
+  const [db, setDb] = useState<{ notebooks: Notebook[]; folders: Folder[]; notes: Note[] } | null>(null);
+  const storeEmpty = storeNotebooks.length === 0;
+  useEffect(() => {
+    if (!storeEmpty || !userId) return;
+    void Promise.all([getNotebooks(userId), getFolders(userId), getNotes(userId)])
+      .then(([notebooks, folders, notes]) => setDb({ notebooks, folders, notes }))
+      .catch((err) => console.error("Reference tree load failed", err));
+  }, [storeEmpty, userId]);
+  const notebooks = storeEmpty && db ? db.notebooks : storeNotebooks;
+  const folders = storeEmpty && db ? db.folders : storeFolders;
+  const notes = storeEmpty && db ? db.notes : storeNotes;
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [loaded, setLoaded] = useState<Record<string, TreeNode[]>>({});
   const q = search.trim().toLowerCase();
