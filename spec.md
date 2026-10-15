@@ -1,6 +1,6 @@
 # Sticky note polish, working bullet lists, references to anything
 
-Source: planning.md, 2026-10-12; planning-chips.md, 2026-10-15
+Source: planning.md, 2026-10-12; planning-chips.md, 2026-10-15; planning.md (embed menu), 2026-10-15
 
 ## Goal
 
@@ -42,6 +42,9 @@ Three areas. Sticky notes get their own taskbar group and icon on Windows, keep 
 - **Retargeting a chip (T18):** with a chip selected, the Insert link dialog edits it. Picking a target replaces the chip in place and clears any custom label, and a URL replaces it with a web link. The dialog opens on a chip from Ctrl/Cmd+K, the floating toolbar's link button (which now shows for a selected chip) and the Ribbon link button. There is no right-click "Edit reference".
 - **Sticky notes get the Insert link dialog** through Ctrl/Cmd+K (T17). They keep their bottom bar, with no floating toolbar.
 - **Rich web link previews (T19):** like Discord's link embeds, the hover card for a web link shows the site's own preview: the site name, title, description and picture from the page's Open Graph / Twitter Card meta tags. The page is fetched by a Rust command, only when the link is hovered (never on paste), so the site sees a request from this computer only when the user points at its link. The picture is downloaded by Rust and handed to the page as a `data:` URL, so the CSP's `img-src` stays as it is. If anything fails, the card shows the URL as it does after T10.
+- **Reference tree (T20, T21):** each row shows its kind in faded text. Sticky notes are a "Sticky notes" group at the end of the tree, which replaces the separate sticky list and its preview toggle. Untitled sticky notes are labelled by their first line of text. Search takes `is:<kind>` (kinds OR'd) and `has:"text"` (full text of text boxes and sticky notes), ANDed with plain title text. Plain words still match titles only.
+- **Dialog layout (T22):** two bordered panels, "Web link" and "In SkyLines", with "Currently: …" above them when editing a chip.
+- **Removing (T23):** "Remove link" in the dialog (on a chip or in a web link) and in the canvas text box's right-click menu. A labelled chip becomes its label as plain text, an unlabelled chip is deleted, and a web link keeps its text. The note editor and sticky notes have no right-click item.
 
 ## Out of scope
 
@@ -52,6 +55,7 @@ Three areas. Sticky notes get their own taskbar group and icon on Windows, keep 
 - Per-window Dock icons on macOS (not possible).
 - Changing the sticky note bottom bar or the image editor.
 - Embedded players (YouTube, Spotify) and oEmbed in web link previews; a setting to turn previews off.
+- Autocomplete for search filters, and plain search over text content (use `has:`).
 
 ## Tasks
 
@@ -631,6 +635,156 @@ Test steps:
 4. Hover the localhost link: the card shows only the URL, with no console errors.
 5. Hover github.com again: the card fills in immediately, with no new `fetch_page_head` call (check with `ipc_monitor`).
 6. Delete the test note.
+
+### T20 Kind labels and sticky notes in the reference tree
+
+Status: todo
+Depends on: T11
+Tester: yes, the kind labels, the Sticky notes group, its rows and the removed sticky list are all visible in the DOM
+
+Added after T11 (user request, planning.md 2026-10-15). Two changes to the reference tree in `components/editor/ReferencePicker.tsx`, and the dialog's separate sticky list goes away.
+
+1. **Kind labels.** Every pickable row shows what it is in faded text after its label: `text-xs text-muted-foreground`, `shrink-0`, right-aligned in the row so the label still truncates first. The text comes from `ref.kind`: "notebook", "folder", "note", "page", "text box" (for `shape`), "image" and "sticky note".
+2. **Sticky notes group.** Add a root-level "Sticky notes" row after the notebooks.
+   - It isn't pickable: clicking its label toggles it, like the chevron. It has no kind label. `TreeNode.ref` becomes optional for this row; check every place that reads `ref`.
+   - Its children load lazily with `getStickyNotes(userId)` (`lib/db/stickyNotes.ts`) through the same `load` path notes use, so the first search loads them too (T11's load-all).
+   - Each sticky row's label is its title, else the first 60 characters of `extractPlainText(content)` with `[Image]` removed, else "Untitled". Picking it inserts a `sticky` reference.
+   - `ReferencePicker` gets a `userId` prop. With no user, the group isn't shown.
+3. **Remove the "Existing sticky notes" section** from `components/editor/InsertLinkDialog.tsx`: its label, search box, list/preview toggle and list. Keep the "Create new sticky note" button.
+
+Files: `components/editor/ReferencePicker.tsx`, `components/editor/InsertLinkDialog.tsx`
+
+Acceptance:
+- Every pickable row in the tree shows its kind in faded text after its label; the Sticky notes row has none.
+- The tree ends with a collapsed "Sticky notes" row whose children are the user's sticky notes, loaded only on expand or search, and picking one inserts a `%` chip.
+- Typing in the tree search finds sticky notes by title without expanding anything.
+- The dialog no longer has the "Existing sticky notes" section or its preview toggle; Create new sticky note still works.
+
+Test steps:
+1. Create a test note "gamma" with a text box, and a test sticky note titled "delta".
+2. In another text box, press Ctrl/Cmd+K: the tree's last row is "Sticky notes", and there's no separate sticky list or preview toggle.
+3. Expand the notebook down to "gamma" and its text box: the rows read "notebook", "note", "page" and "text box" in faded text.
+4. Expand "Sticky notes": "delta" is listed with "sticky note". Pick it: a "%delta" chip is inserted.
+5. Reopen the dialog and search "delta": the Sticky notes group opens on its own and shows "delta".
+6. Delete the test note and sticky note.
+
+### T21 Search filters in the reference tree
+
+Status: todo
+Depends on: T20
+Tester: yes, typing filter queries and checking which rows show is all observable in the DOM
+
+Added after T11 (user request, planning.md 2026-10-15). The tree search in `ReferencePicker.tsx` gains `is:` and `has:` filters.
+
+1. **Parser** in a new `lib/references/searchQuery.ts`: a pure function, for example `parseSearchQuery(q)`, returning the kinds, the `has:` phrases, the remaining title text and any unknown kinds.
+   - Split on whitespace, keeping quoted phrases (`"…"` or `'…'`) together.
+   - `is:<kind>` with `notebook`, `folder`, `note`, `page`, `text_box` (also `textbox`, `text-box`), `image` and `sticky` (also `sticky_note`), case-insensitive. Several `is:` filters mean any of those kinds.
+   - `has:<word>`, `has:"two words"` or `has:'two words'`: the row's full text contains the phrase, case-insensitive. Several `has:` filters must all match.
+   - The other words, joined with single spaces, match the row's label as today (case-insensitive substring).
+   - All parts combine with AND. Only text boxes and sticky notes have text, so any other row fails a `has:` filter.
+2. **Matching.**
+   - Text boxes keep their full text alongside the 60-character label: `extractPlainText` of the shape's doc with no length cap, as `textBoxNodes` already has the doc. Sticky rows keep `extractPlainText(content)`.
+   - Rows that don't match still show when a descendant matches, and auto-expand, as today.
+   - Any non-empty query, filters included, triggers T11's load-all.
+3. **Hints.**
+   - The search placeholder becomes `Search, or is:note has:"text"`.
+   - An unknown `is:` value shows a faded line under the search, "Unknown type 'xyz'. Try notebook, folder, note, page, text_box, image or sticky", and nothing matches.
+
+Files: `lib/references/searchQuery.ts` (new), `components/editor/ReferencePicker.tsx`
+
+Acceptance:
+- `is:note` shows only notes, with their notebook and folder ancestors; `is:text_box` only text boxes; `is:note is:page` both.
+- `has:"exact phrase"` shows text boxes and sticky notes whose full text contains the phrase, including text past the first 60 characters, and no other kinds.
+- `is:text_box has:foo bar` shows text boxes whose label contains "bar" and whose text contains "foo".
+- An unknown `is:` value shows the hint and no rows; a plain query behaves as in T11.
+
+Test steps:
+1. Create a test note "epsilon" with a page holding two text boxes. Make one's text over 60 characters, ending in "zebra crossing". Make the other's text "other box".
+2. Press Ctrl/Cmd+K in another text box and search `is:note epsilon`: only "epsilon" shows, under its notebook, with no pages or text boxes.
+3. Search `has:"zebra crossing"`: only the first text box shows, with its ancestors.
+4. Search `is:text_box other`: only the "other box" text box shows.
+5. Search `is:xyz`: the unknown-type hint shows and no rows.
+6. Search `is:sticky`: only sticky notes show.
+7. Delete the test note.
+
+### T22 Split the Insert link dialog into two panels
+
+Status: todo
+Depends on: T18, T20
+Tester: yes, the panel structure and that each control still inserts are checkable in the DOM; how quiet it looks is for the user
+
+Added after T11 (user request, planning.md 2026-10-15): the dialog looks loud and its parts aren't clearly divided. Restructure `components/editor/InsertLinkDialog.tsx` into two panels.
+
+1. **"Currently: …"** (T18's edit mode, when the dialog opens on a chip) sits at the top, under the title, outside both panels.
+2. **"Web link" panel:** the URL field and its Insert link button.
+3. **"In SkyLines" panel**, in this order:
+   - the tree search and `ReferencePicker`
+   - the paste-reference field with its Insert button and inline error, with no separate label (its placeholder becomes "Paste a reference (skylines://…)")
+   - "+ New sticky note" (the Create new sticky note action) as a small ghost button
+4. **Styling.**
+   - Each panel is a `rounded-lg border bg-muted/30 p-3` block with a `text-sm font-medium` heading, and the panels are separated by a gap.
+   - Remove the `border-t` separators and the per-field labels inside the panels.
+   - Use `components/ui/input.tsx` for the inputs instead of the repeated raw `<input>` class string.
+   - Keep the footer's Cancel and the close button.
+5. **Keep the behaviour.** T6's event-stopping wrapper, the saved selection, autofocus on the URL field (the tree search when T18 opens on a chip) and T17's size cap in sticky windows all stay. This is a layout change only: every action inserts exactly as before.
+
+Files: `components/editor/InsertLinkDialog.tsx`
+
+Acceptance:
+- The dialog shows two bordered panels headed "Web link" and "In SkyLines", with the controls listed above in that order, and no `border-t` section separators.
+- With a chip selected, "Currently: …" shows above the panels.
+- The URL insert, tree pick, paste-reference insert and error, and New sticky note all work as before.
+- In a sticky window, the dialog still fits the window and scrolls.
+
+Test steps:
+1. Create a test note "zeta" with a text box. In another text box, press Ctrl/Cmd+K: the dialog has a "Web link" panel and an "In SkyLines" panel, and there's no border-top separator between sections.
+2. Insert https://example.com from the Web link panel: a web link appears.
+3. Reopen, pick "zeta" in the tree: a chip appears. Reopen, paste "nonsense" in the reference field: the inline error shows.
+4. Click the chip while editing and press Cmd+K: "Currently: …zeta" shows above the panels.
+5. Press Escape. Reopen and use "+ New sticky note": a sticky window opens and a chip is inserted. Close that window.
+6. Delete the test note and the sticky note.
+
+### T23 Remove a link or chip
+
+Status: todo
+Depends on: T18, T22
+Tester: yes, the dialog and right-click removals and the resulting text are observable in the DOM; a real right-click may need the user
+
+Added after T11 (user request, planning.md 2026-10-15).
+
+1. **Removing.**
+   - A chip with a `label` becomes that label as plain text, keeping the chip's marks. A chip without a label is deleted.
+   - A web link loses its Link mark and keeps its text (`extendMarkRange("link").unsetLink()`).
+   - Each removal is one undo step.
+   - Add the chip case as a command in `lib/tiptap/reference.ts` (for example `removeReference(pos)`). It checks `doc.nodeAt(pos)?.type.name === "reference"` first, because the canvas can re-sync content.
+2. **In the dialog** (`InsertLinkDialog.tsx`):
+   - A "Remove link" button (ghost, small, `text-destructive`) sits beside "Currently: …" when the dialog opens on a chip (T18). It also sits in the Web link panel when the cursor or selection is in a web link (`currentUrl` is set).
+   - Clicking it removes the link, closes the dialog and puts the cursor where the link was.
+   - This covers all three editors, including sticky notes through Cmd+K (T17).
+3. **In the canvas text box right-click menu** (`EditingContextMenu`, `components/canvas/RichTextShape.tsx`):
+   - When the right-click hits a chip (`[data-reference-token]`) or a web link (`a[href]`) while editing, add "Remove link" (lucide `Unlink` icon) below Copy reference.
+   - Find the position with `view.posAtDOM` on the hit element.
+   - The note editor and sticky notes get no right-click item.
+4. On the canvas, the text tool still holds after a removal (T6).
+
+Files: `lib/tiptap/reference.ts`, `components/editor/InsertLinkDialog.tsx`, `components/canvas/RichTextShape.tsx`
+
+Acceptance:
+- Removing a chip that has a label leaves the label as plain text with the same marks; removing one without a label leaves nothing; removing a web link leaves its text unlinked.
+- Each removal undoes in one step back to the original chip or link.
+- "Remove link" shows in the dialog only when it opened on a chip or with the cursor in a web link, and in the canvas right-click menu only when the click hit a chip or a web link.
+- After removing on the canvas, the box is still being edited and the text tool still holds.
+
+Test steps:
+1. Create test notes A and B. In a text box in B, add:
+   - a chip to A with the label "my label" (select the text, then insert A's reference)
+   - a chip to A with no label
+   - a web link to https://example.com
+2. Click the labelled chip and press Cmd+K: "Remove link" shows beside "Currently". Click it: the chip is gone and "my label" is plain text. Press Cmd+Z: the chip is back.
+3. Right-click the unlabelled chip while editing: the menu has Copy reference and Remove link. Click Remove link: the chip disappears.
+4. Put the cursor inside the web link and press Cmd+K: Remove link shows in the Web link panel. Click it: the text stays, unlinked, with no "↗".
+5. Right-click plain text while editing: the menu has no Remove link.
+6. Delete the test notes.
 
 ## Progress
 

@@ -1,14 +1,6 @@
-- Sticky notes
-  - Sticky notes are hard to re-focus when in the back because it uses the same taskbar icon. It would be nice if the sticky notes used their own taskbar icon.
-  - sticky notes should have the top bar options still visible when colapsed (dot drop down menu, pin, minimize, close)
-  - The sticky note previews in the sticky note home page don't update until you close and reopen it, it should be able to update when there are changes made to the sticky note
-    - The preview should hold up to 3 lines(rows) of text for the preview
-- The auto bullet point in text boxes (page text boxes and sticky notes) is a bit buggy. What it should do is go into bullet point mode when a "-" is put at the start of a line. In bullet point mode it should have the following functonality (essentially the default bullet point functionality like in the .md extension I am currently using)
-  - Going to a new line with Enter should make another bullet point in the same tier (same tab indent).
-  - Pressing tab with the empty line will indent to a sub-bullet. Shift + tab will go back an indent. This should also work when those buttons are pressed with any part of the line highlighted
-- Embedding sticky notes is buggy, when I try to embed a sticky note it goes through, but doesn't embed anything and turns the canvas mode weird so I can't create new text boxes or enter ones (I think it's just the base functionality ofthe modules we're using. Idk which one is doing it, but I'm gonna call this "cursor mode").
-  - While we're at it I'd like to add more functionality to the embed:
-    - I want to be able to embed other items like text boxes, pages, notes, etc. What this means is each item has some sort of id to reference them wherever they are. I'd like the embed to jump/open that item wherever it is in the notebook. Because of this I'd like the embed to either let me follow a navigation tree or anything embeddable should let you copy it's ID when you right click on it and you can paste that in the embed menu. 
-      - With the ID of a sticky note or location in the app you should be able to past that into any text box and it will turn it into it's own shorthand reference with the specified prefix
-    - hovering over the embed should show a preview of where it's leading you to.
-    - There should be some prefix to indicate where the embed leads you to. One for external link, one for location in the notebook (page, text box, notesheet, etc), and one for sticky notes. Something like "#" for notebook location, "%" sticky notes, and "&" for external link? Feel free to give your own opinions if there are standardized references for these things
+I'd like to have the functionality added to the embed menu: 
+- it should say in faded text next to each thing in the reference drop down tree saying what it is (notebook, folder, note, page, etc)
+- combine sticky note and reference together, so the sticky notes have a drop down in the notebook section
+- I want to have some search filters. Like searching for just notes or text_boxes. Something like "is:text_box" or "has:'search text for text_box'"
+- The embed menu should be more properly split between the 2 sections, it looks loud right now, it should be more notably divided 
+- It shoudld be able to remove an embed too. If the embed had text it should just revert to plain text.
