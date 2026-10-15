@@ -451,7 +451,7 @@ Test steps:
 
 ### T15 References to images
 
-Status: todo
+Status: done
 Depends on: T9, T10
 Tester: yes, chips, hover cards, missing states and navigation are visible in the DOM; seed images and text boxes through the app or JS, since simulated input can't create a canvas text box
 
@@ -649,3 +649,4 @@ Test steps:
 - [x] T9 Following references and web links
 - [x] T16 Double-clicking a chip follows it
 - [x] T10 Hover previews
+- [x] T15 References to images

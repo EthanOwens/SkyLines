@@ -4,7 +4,7 @@ import { getFolderById } from "@/lib/db/folders";
 import { getNoteById } from "@/lib/db/notes";
 import { getPageById, getPages } from "@/lib/db/pages";
 import { getStickyNoteById } from "@/lib/db/stickyNotes";
-import { extractFirstImageSrc, extractPlainText } from "@/lib/tiptap/extractText";
+import { extractFirstImageSrc, extractPlainText, findImageSrc } from "@/lib/tiptap/extractText";
 import type { Folder } from "@/types";
 
 export interface ResolvedReference {
@@ -36,7 +36,7 @@ type ShapeRecord = {
   props?: { content?: object | null; richText?: object | null; assetId?: string | null };
 };
 
-type AssetRecord = { id: string; typeName: "asset"; props?: { src?: string | null } };
+type AssetRecord = { id: string; typeName: "asset"; props?: { src?: string | null; name?: string | null } };
 
 type StoreRecord = ShapeRecord | AssetRecord | { typeName: string; id: string };
 
@@ -59,19 +59,21 @@ function shapeDoc(shape: ShapeRecord): object | null {
   return shape.props?.content ?? shape.props?.richText ?? null;
 }
 
+function imageAsset(shape: ShapeRecord, records: StoreRecord[]): AssetRecord | undefined {
+  const assetId = shape.props?.assetId;
+  if (shape.type !== "image" || !assetId) return undefined;
+  return records.find((r) => r.id === assetId && r.typeName === "asset") as AssetRecord | undefined;
+}
+
 function shapeImage(shape: ShapeRecord, records: StoreRecord[]): string | null {
   const doc = shapeDoc(shape);
   const inline = doc ? extractFirstImageSrc(doc) : null;
   if (inline) return inline;
-  const assetId = shape.props?.assetId;
-  if (shape.type !== "image" || !assetId) return null;
-  const asset = records.find((r) => r.id === assetId && r.typeName === "asset") as
-    | AssetRecord
-    | undefined;
-  return asset?.props?.src ?? null;
+  return imageAsset(shape, records)?.props?.src ?? null;
 }
 
-function shapeTitle(shape: ShapeRecord): string {
+function shapeTitle(shape: ShapeRecord, records: StoreRecord[]): string {
+  if (shape.type === "image") return imageAsset(shape, records)?.props?.name?.trim() || "Image";
   const text = extractPlainText(shapeDoc(shape), TITLE_LENGTH);
   if (text) return text;
   return shape.type === "rich-text" ? "Text box" : shape.type;
@@ -191,10 +193,41 @@ export async function resolveReference(ref: Reference): Promise<ResolvedReferenc
       const doc = shapeDoc(shape);
       return {
         exists: true,
-        title: shapeTitle(shape),
+        title: shapeTitle(shape, records),
         path: [...found.path, found.note.title, page.title],
         previewText: doc ? extractPlainText(doc, PREVIEW_LENGTH) : "",
         previewImage: shapeImage(shape, records),
+      };
+    }
+    case "image": {
+      if (ref.stickyId !== undefined) {
+        const sticky = await getStickyNoteById(ref.stickyId);
+        const src = sticky ? findImageSrc(sticky.content, ref.id) : null;
+        if (!sticky || src === null) return NOT_FOUND;
+        return {
+          exists: true,
+          title: "Image",
+          path: [sticky.title || "Untitled"],
+          previewText: "",
+          previewImage: src || null,
+        };
+      }
+      const page = await getPageById(ref.pageId);
+      if (!page) return NOT_FOUND;
+      const records = snapshotRecords(page.canvasData);
+      const shape = records.find((r) => r.id === ref.shapeId && isShape(r)) as
+        | ShapeRecord
+        | undefined;
+      const src = findImageSrc(shape ? shapeDoc(shape) : null, ref.id);
+      if (!shape || src === null) return NOT_FOUND;
+      const found = await notePath(page.noteId);
+      if (!found) return NOT_FOUND;
+      return {
+        exists: true,
+        title: "Image",
+        path: [...found.path, found.note.title, page.title, shapeTitle(shape, records)],
+        previewText: "",
+        previewImage: src || null,
       };
     }
     case "sticky": {

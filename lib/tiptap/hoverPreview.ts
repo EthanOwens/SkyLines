@@ -12,6 +12,7 @@ const KIND_LABELS: Record<ReferenceKind, string> = {
   page: "Page",
   shape: "Text box",
   sticky: "Sticky note",
+  image: "Image",
 };
 
 function line(card: HTMLElement, className: string, text: string) {

@@ -4,7 +4,7 @@ type TiptapNode = {
   type?: string;
   text?: string;
   content?: TiptapNode[];
-  attrs?: { src?: string };
+  attrs?: { src?: string; id?: string };
 };
 
 const DEFAULT_MAX_LENGTH = 80;
@@ -34,6 +34,20 @@ export function extractFirstImageSrc(doc: object | null | undefined): string | n
     for (const child of node.content ?? []) {
       const found = walk(child);
       if (found) return found;
+    }
+    return null;
+  }
+  return walk(doc as TiptapNode);
+}
+
+export function findImageSrc(doc: object | null | undefined, imageId: string): string | null {
+  if (!doc) return null;
+
+  function walk(node: TiptapNode): string | null {
+    if (node.type === "image" && node.attrs?.id === imageId) return node.attrs.src ?? "";
+    for (const child of node.content ?? []) {
+      const found = walk(child);
+      if (found !== null) return found;
     }
     return null;
   }

@@ -13,6 +13,7 @@ export interface ReferenceAttrs {
   id: string;
   pageId: string | null;
   shapeId: string | null;
+  stickyId: string | null;
   // Fixed text chosen at insert time; shown instead of the live title.
   label: string | null;
   // Shown, struck through, once the target is gone.
@@ -26,14 +27,21 @@ const KINDS: ReadonlySet<string> = new Set<ReferenceKind>([
   "page",
   "shape",
   "sticky",
+  "image",
 ]);
 
-export function referencePrefix(kind: ReferenceKind): string {
-  return kind === "sticky" ? "%" : "#";
+// An image is "%" when it sits in a sticky note.
+export function referencePrefix(attrs: Pick<ReferenceAttrs, "kind" | "stickyId">): string {
+  return attrs.kind === "sticky" || attrs.stickyId ? "%" : "#";
 }
 
 export function referenceFromAttrs(attrs: ReferenceAttrs): Reference | null {
   if (!KINDS.has(attrs.kind) || !attrs.id) return null;
+  if (attrs.kind === "image") {
+    if (attrs.stickyId) return { kind: "image", id: attrs.id, stickyId: attrs.stickyId };
+    if (!attrs.pageId || !attrs.shapeId) return null;
+    return { kind: "image", id: attrs.id, pageId: attrs.pageId, shapeId: attrs.shapeId };
+  }
   if (attrs.kind === "shape") {
     if (!attrs.pageId || !attrs.shapeId) return null;
     return { kind: "shape", id: attrs.shapeId, pageId: attrs.pageId, shapeId: attrs.shapeId };
@@ -45,8 +53,9 @@ function attrsFromReference(ref: Reference, label: string | null): ReferenceAttr
   return {
     kind: ref.kind,
     id: ref.id,
-    pageId: ref.kind === "shape" ? ref.pageId : null,
-    shapeId: ref.kind === "shape" ? ref.shapeId : null,
+    pageId: ref.kind === "shape" || ref.kind === "image" ? (ref.pageId ?? null) : null,
+    shapeId: ref.kind === "shape" || ref.kind === "image" ? (ref.shapeId ?? null) : null,
+    stickyId: ref.kind === "image" ? (ref.stickyId ?? null) : null,
     label,
     lastTitle: null,
   };
@@ -54,7 +63,7 @@ function attrsFromReference(ref: Reference, label: string | null): ReferenceAttr
 
 function fallbackText(node: PMNode): string {
   const attrs = node.attrs as ReferenceAttrs;
-  return `${referencePrefix(attrs.kind)}${attrs.label || attrs.lastTitle || ""}`;
+  return `${referencePrefix(attrs)}${attrs.label || attrs.lastTitle || ""}`;
 }
 
 declare module "@tiptap/core" {
@@ -91,6 +100,7 @@ export const ReferenceNode = Node.create({
       id: dataAttribute("data-id", "id"),
       pageId: dataAttribute("data-page-id", "pageId"),
       shapeId: dataAttribute("data-shape-id", "shapeId"),
+      stickyId: dataAttribute("data-sticky-id", "stickyId"),
       label: dataAttribute("data-label", "label"),
       lastTitle: dataAttribute("data-last-title", "lastTitle"),
     };

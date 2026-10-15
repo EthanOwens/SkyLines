@@ -22,6 +22,7 @@ import {
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
+import { revealImage } from "@/lib/tiptap/imageId";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 import { RichTextShapeUtil, useCopyShapeReference, type RichTextShape } from "./RichTextShape";
@@ -93,7 +94,7 @@ function applyPageCameraConstraints(editor: Editor, bounds: Box) {
 
 // Selected in the select tool, which shows the selection; RichTextTool's
 // watcher hands back to the rich-text tool once the selection is cleared.
-function revealShape(editor: Editor, shapeId: string) {
+function revealShape(editor: Editor, shapeId: string, imageId?: string | null) {
   const id = shapeId as TLShapeId;
   const bounds = editor.getShapePageBounds(id);
   if (!bounds) return;
@@ -104,12 +105,15 @@ function revealShape(editor: Editor, shapeId: string) {
   // Never past 100%, so a small box isn't blown up. setCamera keeps the page
   // camera constraints.
   editor.zoomToBounds(bounds, { targetZoom: 1, animation: { duration: 200 } });
+  // After the zoom animation, so the highlight is seen.
+  if (imageId) setTimeout(() => revealImage(imageId), 300);
 }
 
 // A page (and optionally a shape on it) to show, from a followed reference.
 interface RevealTarget {
   pageId: string;
   shapeId: string | null;
+  imageId: string | null;
 }
 
 interface Props {
@@ -144,6 +148,7 @@ export function CanvasEditor({ note }: Props) {
   const idParam = searchParams.get("id");
   const pageParam = searchParams.get("page");
   const shapeParam = searchParams.get("shape");
+  const imageParam = searchParams.get("image");
   const revealTargetRef = useRef<RevealTarget | null>(null);
   const editorRef = useRef<Editor | null>(null);
 
@@ -206,7 +211,7 @@ export function CanvasEditor({ note }: Props) {
     // While the URL already names another note, this editor is about to
     // unmount; that note's editor mounts with the params still in place.
     if (!pageParam || idParam !== note.id) return;
-    revealTargetRef.current = { pageId: pageParam, shapeId: shapeParam };
+    revealTargetRef.current = { pageId: pageParam, shapeId: shapeParam, imageId: imageParam };
     router.replace(`/canvas?id=${note.id}`);
 
     // While this note's pages are still loading, the load picks the page.
@@ -221,8 +226,8 @@ export function CanvasEditor({ note }: Props) {
     const editor = editorRef.current;
     if (!editor) return;
     revealTargetRef.current = null;
-    if (shapeParam) revealShape(editor, shapeParam);
-  }, [idParam, pageParam, shapeParam, note.id, router, setSelectedPageId]);
+    if (shapeParam) revealShape(editor, shapeParam, imageParam);
+  }, [idParam, pageParam, shapeParam, imageParam, note.id, router, setSelectedPageId]);
 
   const selectedPage =
     pages.find((p) => p.id === selectedPageId) ?? pages[0] ?? null;
@@ -319,7 +324,7 @@ export function CanvasEditor({ note }: Props) {
 
       const target = revealTargetRef.current;
       if (target?.pageId === page.id) {
-        const { shapeId } = target;
+        const { shapeId, imageId } = target;
         if (!shapeId) {
           revealTargetRef.current = null;
         } else {
@@ -329,7 +334,7 @@ export function CanvasEditor({ note }: Props) {
           editor.timers.requestAnimationFrame(() => {
             if (revealTargetRef.current !== target) return;
             revealTargetRef.current = null;
-            revealShape(editor, shapeId);
+            revealShape(editor, shapeId, imageId);
           });
         }
       }

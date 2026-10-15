@@ -20,10 +20,10 @@ function pathSegmentsShown(kind: ReferenceKind): number {
 
 export function ReferenceChipView({ node, editor, getPos }: ReactNodeViewProps) {
   const attrs = node.attrs as ReferenceAttrs;
-  const { kind, id, pageId, shapeId, label, lastTitle } = attrs;
+  const { kind, id, pageId, shapeId, stickyId, label, lastTitle } = attrs;
   const ref = useMemo(
-    () => referenceFromAttrs({ kind, id, pageId, shapeId, label: null, lastTitle: null }),
-    [kind, id, pageId, shapeId],
+    () => referenceFromAttrs({ kind, id, pageId, shapeId, stickyId, label: null, lastTitle: null }),
+    [kind, id, pageId, shapeId, stickyId],
   );
   const resolved = useResolvedReference(ref);
   const missing = !ref || resolved?.exists === false;
@@ -65,7 +65,7 @@ export function ReferenceChipView({ node, editor, getPos }: ReactNodeViewProps) 
         data-missing={missing ? "" : undefined}
         contentEditable={false}
       >
-        <span className="reference-chip-prefix">{referencePrefix(kind)}</span>
+        <span className="reference-chip-prefix">{referencePrefix({ kind, stickyId })}</span>
         <span className="reference-chip-text">{text}</span>
       </NodeViewWrapper>
     </>

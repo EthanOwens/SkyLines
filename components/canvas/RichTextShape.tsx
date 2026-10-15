@@ -174,10 +174,14 @@ export function useCopyShapeReference() {
   const { addToast } = useToasts();
   const pageId = useAppStore((s) => s.selectedPageId);
   return useCallback(
-    async (shapeId: string) => {
+    async (shapeId: string, imageId?: string) => {
       if (!pageId) return;
       try {
-        await copyReference({ kind: "shape", id: shapeId, pageId, shapeId });
+        await copyReference(
+          imageId
+            ? { kind: "image", id: imageId, pageId, shapeId }
+            : { kind: "shape", id: shapeId, pageId, shapeId },
+        );
         addToast({ title: "Reference copied", severity: "success" });
       } catch (err) {
         console.error("Copy reference failed", err);
@@ -212,7 +216,7 @@ function keepEditorFocus(e: ReactMouseEvent) {
 
 // Stands in for tldraw's context menu while a box is being edited: opening
 // tldraw's calls editor.complete(), which ends the edit session.
-function EditingContextMenu({
+export function EditingContextMenu({
   x,
   y,
   onCopyReference,
@@ -302,7 +306,11 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   const setPendingEditClickPoint = useAppStore((s) => s.setPendingEditClickPoint);
   const { user } = useAuthContext();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
-  const [editingMenuAt, setEditingMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const [editingMenuAt, setEditingMenuAt] = useState<{
+    x: number;
+    y: number;
+    imageId?: string;
+  } | null>(null);
   const closeEditingMenu = useCallback(() => setEditingMenuAt(null), []);
   const copyShapeReference = useCopyShapeReference();
 
@@ -472,6 +480,16 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
   });
 
+  const selectedImageId = useEditorState({
+    editor: tiptapEditor,
+    selector: ({ editor }) => {
+      if (!editor) return null;
+      const { selection } = editor.state;
+      const node = isNodeSelection(selection) ? selection.node : null;
+      return node?.type.name === "image" ? ((node.attrs.id as string | null) ?? null) : null;
+    },
+  });
+
   const setLink = useCallback(() => {
     if (!tiptapEditor) return;
     setLinkDialogOpen(true);
@@ -526,7 +544,12 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
                 // event, and ProseMirror only reads it on the later
                 // selectionchange; focus() writes the editor's selection back.
                 tiptapEditor?.view.focus();
-                setEditingMenuAt({ x: e.clientX, y: e.clientY });
+                const img = e.target instanceof Element ? e.target.closest("img[data-image-id]") : null;
+                setEditingMenuAt({
+                  x: e.clientX,
+                  y: e.clientY,
+                  imageId: img?.getAttribute("data-image-id") ?? undefined,
+                });
               }
             : undefined
         }
@@ -580,7 +603,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
             appendTo={() => document.body}
             shouldShow={({ editor: shouldShowEditor, view, state, from, to }) => {
               // Hide when unfocused, the selection is empty or an empty block,
-              // or it's a node selection such as an image.
+              // or it's a node selection other than an image (which offers Copy reference).
               const { doc, selection } = state;
               const { empty } = selection;
               const isEmptyTextBlock = !doc.textBetween(from, to).length && isTextSelection(selection);
@@ -589,14 +612,24 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
                 return false;
               }
               if (isNodeSelection(selection)) {
-                return false;
+                return selection.node.type.name === "image" && !!selection.node.attrs.id;
               }
               return true;
             }}
             // Compact and wrapping, so it fits near a 320x200 shape.
             className="flex max-w-[220px] flex-wrap items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
           >
-            {bubbleMenuState && (
+            {selectedImageId ? (
+              <button
+                type="button"
+                title="Copy reference"
+                onClick={() => void copyShapeReference(shape.id, selectedImageId)}
+                className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <Link2 className="h-3 w-3" />
+                Copy reference
+              </button>
+            ) : bubbleMenuState && (
               <>
                 {bubbleMenuActions.map((action) => (
                   <button
@@ -740,7 +773,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
         <EditingContextMenu
           x={editingMenuAt.x}
           y={editingMenuAt.y}
-          onCopyReference={() => void copyShapeReference(shape.id)}
+          onCopyReference={() => void copyShapeReference(shape.id, editingMenuAt.imageId)}
           onClose={closeEditingMenu}
         />
       )}

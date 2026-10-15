@@ -35,6 +35,8 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 - When the app window is hidden, screenshots come back stale. Use page-structure and computed-style evidence instead of retrying focus.
 - Simulated events can't start a native window drag or trigger real keyboard focus, so mark those steps for the user.
 - Simulated 't' + canvas click doesn't create a tldraw text box; hover/chip tests need a text box made by hand or test data seeded first.
+- Seed canvas data through the tldraw editor, reached by a React fiber walk from `.tl-container` (`memoizedState.memoizedState.current.createShape`). Use a fresh shape id after one hits an error boundary, and keep `webview_execute_js` scripts synchronous (`await` times out).
+- After code changes to modules with module-level state (e.g. `mainWindowRouter` in `lib/references/navigate.ts`), run `location.reload()` and re-enter a notebook before testing; hot reload leaves that state stale.
 
 ## Gotchas
 

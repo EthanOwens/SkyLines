@@ -18,10 +18,10 @@ export interface ReferenceRouter {
 // Set only in the main window, by listenForReferenceFollows.
 let mainWindowRouter: ReferenceRouter | null = null;
 
-async function openStickyReference(id: string): Promise<boolean> {
+async function openStickyReference(id: string, imageId?: string): Promise<boolean> {
   const sticky = await getStickyNoteById(id);
   if (!sticky) return false;
-  await openStickyNoteWindow(id, sticky.title);
+  await openStickyNoteWindow(id, sticky.title, imageId);
   return true;
 }
 
@@ -62,6 +62,15 @@ export async function followReference(ref: Reference, router: ReferenceRouter): 
       const page = await getPageById(ref.id);
       if (!page) return false;
       router.push(`/canvas?id=${page.noteId}&page=${page.id}`);
+      return true;
+    }
+    case "image": {
+      if (ref.stickyId !== undefined) return openStickyReference(ref.stickyId, ref.id);
+      const page = await getPageById(ref.pageId);
+      if (!page) return false;
+      router.push(
+        `/canvas?id=${page.noteId}&page=${page.id}&shape=${encodeURIComponent(ref.shapeId)}&image=${encodeURIComponent(ref.id)}`,
+      );
       return true;
     }
     case "shape": {

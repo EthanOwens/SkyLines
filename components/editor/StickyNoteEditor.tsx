@@ -7,9 +7,13 @@
 // cover single elements) for both bars. Losing focus only fades the bars;
 // collapsing the window is a separate manual toggle.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import { STICKY_NOTE_CHANGED_EVENT, getStickyNoteById, updateStickyNote } from "@/lib/db/stickyNotes";
+import { EditingContextMenu } from "@/components/canvas/RichTextShape";
+import { copyReference } from "@/lib/references/copy";
+import { STICKY_REVEAL_IMAGE_EVENT } from "@/lib/stickyWindow";
+import { revealImage } from "@/lib/tiptap/imageId";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import type { StickyNote } from "@/types";
@@ -58,12 +62,51 @@ export function StickyNoteEditor({ note }: Props) {
     };
   }, []);
 
+  const [imageMenu, setImageMenu] = useState<{ x: number; y: number; imageId: string } | null>(
+    null,
+  );
+  const closeImageMenu = useCallback(() => setImageMenu(null), []);
+
+  // A followed image reference opens this window with ?image=, or messages it
+  // when it's already open.
+  useEffect(() => {
+    const initial = new URLSearchParams(window.location.search).get("image");
+    const timer = initial ? setTimeout(() => revealImage(initial), 300) : null;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const fn = await listen<{ id: string; imageId: string }>(STICKY_REVEAL_IMAGE_EVENT, (e) => {
+        if (e.payload.id === note.id) revealImage(e.payload.imageId);
+      });
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      unlisten?.();
+    };
+  }, [note.id]);
+
   const editor = useEditor({
     extensions: createEditorExtensions(),
     content: (note.content as object) ?? "",
     editorProps: {
       attributes: {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[80vh] px-1",
+      },
+      handleDOMEvents: {
+        contextmenu(_view, event) {
+          const img = (event.target as Element).closest?.("img[data-image-id]");
+          if (!img) return false;
+          event.preventDefault();
+          setImageMenu({
+            x: event.clientX,
+            y: event.clientY,
+            imageId: img.getAttribute("data-image-id") ?? "",
+          });
+          return true;
+        },
       },
       // Double-clicking an image opens it in the image editor window. On save,
       // a one-shot listener scoped to this edit session patches the node at its
@@ -301,6 +344,18 @@ export function StickyNoteEditor({ note }: Props) {
         />
         <EditorContent editor={editor} className="flex-1" />
       </div>
+      {imageMenu && (
+        <EditingContextMenu
+          x={imageMenu.x}
+          y={imageMenu.y}
+          onCopyReference={() =>
+            void copyReference({ kind: "image", id: imageMenu.imageId, stickyId: note.id }).catch(
+              (err) => console.error("Copy reference failed", err),
+            )
+          }
+          onClose={closeImageMenu}
+        />
+      )}
       <StickyNoteBottomBar editor={editor} focused={focused} collapsed={collapsed} />
     </div>
   );

@@ -9,7 +9,14 @@ import { getStickyNoteById } from "@/lib/db/stickyNotes";
 // The window title is the note's title so sticky windows can be told apart in
 // the macOS Dock menu, the Window menu and Alt-Tab. Pass `title` when the
 // caller already has it; otherwise it's looked up.
-export async function openStickyNoteWindow(id: string, title?: string): Promise<void> {
+export const STICKY_REVEAL_IMAGE_EVENT = "sticky:reveal-image";
+
+// `imageId` scrolls that image into view and highlights it.
+export async function openStickyNoteWindow(
+  id: string,
+  title?: string,
+  imageId?: string,
+): Promise<void> {
   const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
 
   const label = `sticky-${id}`;
@@ -17,6 +24,10 @@ export async function openStickyNoteWindow(id: string, title?: string): Promise<
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
     await existing.setFocus();
+    if (imageId) {
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit(STICKY_REVEAL_IMAGE_EVENT, { id, imageId });
+    }
     return;
   }
 
@@ -24,7 +35,7 @@ export async function openStickyNoteWindow(id: string, title?: string): Promise<
     title ?? (await getStickyNoteById(id).catch(() => null))?.title ?? "Untitled";
 
   const win = new WebviewWindow(label, {
-    url: `/sticky/?id=${id}`,
+    url: `/sticky/?id=${id}${imageId ? `&image=${encodeURIComponent(imageId)}` : ""}`,
     title: windowTitle || "Untitled",
     width: 360,
     height: 640,
