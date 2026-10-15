@@ -5,6 +5,7 @@ import type { Node as PMNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import { parseReference, type Reference, type ReferenceKind } from "@/lib/references/format";
 import { openReference, openWebLink } from "@/lib/references/navigate";
+import { hoverPreviewPlugin } from "@/lib/tiptap/hoverPreview";
 import { ReferenceChipView } from "@/components/editor/ReferenceChip";
 
 export interface ReferenceAttrs {
@@ -209,6 +210,7 @@ export const FollowOnClick = Extension.create({
 
   addProseMirrorPlugins() {
     return [
+      hoverPreviewPlugin(),
       new Plugin({
         key: new PluginKey("followOnClick"),
         props: {

@@ -427,7 +427,7 @@ Test steps:
 
 ### T10 Hover previews
 
-Status: todo
+Status: done
 Depends on: T9
 
 Show a preview card when the pointer rests about 400ms on a reference chip or web link, in all three editors and in non-editing canvas text boxes (chips are hoverable there after T9). Use Base UI's `PreviewCard` from `@base-ui/react` (add a wrapper in `components/ui/preview-card.tsx` following `tooltip.tsx`), or a single floating card driven by the node view if that's simpler inside tldraw. Content, from `resolveReference`: a kind label (Notebook, Folder, Note, Page, Text box, Sticky note), the path, the title in bold, and up to 3 lines of `previewText` (or `previewImage` as a thumbnail if there's no text). For a missing target it shows "Not found". For web links it shows the full URL. Resolve lazily on open and cache per card. The card mustn't steal focus or end text editing.
@@ -601,3 +601,4 @@ Test steps:
 - [x] T14 Reliable Copy reference for text boxes
 - [x] T9 Following references and web links
 - [x] T16 Double-clicking a chip follows it
+- [x] T10 Hover previews

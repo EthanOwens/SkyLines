@@ -190,3 +190,44 @@
   border-top: 1px solid var(--border);
   margin: 1.5rem 0;
 }
+
+/* Hover preview card for chips and links; lives in <body>, outside .tiptap. */
+.hover-preview-card {
+  position: fixed;
+  z-index: 10000;
+  width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+  font-size: 12px;
+  pointer-events: none;
+}
+.hover-preview-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+.hover-preview-path {
+  opacity: 0.7;
+}
+.hover-preview-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.hover-preview-text {
+  margin-top: 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+}
+.hover-preview-image {
+  margin-top: 4px;
+  max-height: 120px;
+  border-radius: 4px;
+}

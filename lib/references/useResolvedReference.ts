@@ -39,7 +39,7 @@ function subscribe(listener: () => void) {
 
 const getVersion = () => version;
 
-function cachedResolve(token: string, ref: Reference): Promise<ResolvedReference> {
+export function cachedResolve(token: string, ref: Reference): Promise<ResolvedReference> {
   let pending = cache.get(token);
   if (!pending) {
     pending = resolveReference(ref);

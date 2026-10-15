@@ -34,6 +34,7 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 
 - When the app window is hidden, screenshots come back stale. Use page-structure and computed-style evidence instead of retrying focus.
 - Simulated events can't start a native window drag or trigger real keyboard focus, so mark those steps for the user.
+- Simulated 't' + canvas click doesn't create a tldraw text box; hover/chip tests need a text box made by hand or test data seeded first.
 
 ## Gotchas
 
