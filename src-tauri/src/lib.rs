@@ -192,6 +192,16 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+// Lets a pop-out window hand off to the main window, for example when a
+// reference followed in a sticky note opens a note.
+#[tauri::command]
+fn focus_main_window(app: tauri::AppHandle) {
+    #[cfg(desktop)]
+    show_main_window(&app);
+    #[cfg(not(desktop))]
+    let _ = app;
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // tauri-plugin-sql checksums every migration. Never edit one that has
@@ -601,7 +611,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, setup_sticky_window])
+        .invoke_handler(tauri::generate_handler![greet, setup_sticky_window, focus_main_window])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

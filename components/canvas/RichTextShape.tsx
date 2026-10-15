@@ -6,8 +6,9 @@
 //
 // Pointer handling follows tldraw's embed/video shapes: the container is
 // pointer-events: none (tldraw hit-tests by geometry), and the content opts
-// back in only while editing. While editing, pointer-down capture stops
-// propagation so text-selection drags aren't read as shape drags.
+// back in only while editing (reference chips and links always opt in, so they
+// can be clicked). While editing, pointer-down capture stops propagation so
+// text-selection drags aren't read as shape drags.
 
 import {
   useCallback,
@@ -16,6 +17,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type SyntheticEvent,
 } from "react";
 import { createPortal } from "react-dom";
@@ -40,10 +42,10 @@ import { isNodeSelection, isTextSelection } from "@tiptap/core";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthContext } from "@/components/AuthProvider";
 import { LinkOrStickyDialog } from "@/components/editor/LinkOrStickyDialog";
-import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import { copyReference } from "@/lib/references/copy";
+import { FOLLOWABLE_SELECTOR } from "@/lib/tiptap/reference";
 import {
   suppressReenterEditAfterEndingSession,
   setReenterEditSuppressed,
@@ -192,6 +194,15 @@ function stopReactPropagation(e: SyntheticEvent) {
   e.stopPropagation();
 }
 
+// While not editing, chips and links take plain clicks (FollowOnClick in
+// lib/tiptap/reference.ts). tldraw mustn't see them, or it would edit the box.
+function keepFollowClickFromTldraw(e: ReactPointerEvent) {
+  if (e.button !== 0) return;
+  if (e.target instanceof Element && e.target.closest(FOLLOWABLE_SELECTOR)) {
+    stopEventPropagation(e);
+  }
+}
+
 // Preventing mousedown keeps DOM focus, and so the text selection, in the
 // editor.
 function keepEditorFocus(e: ReactMouseEvent) {
@@ -308,7 +319,6 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
         attributes: {
           class: "tiptap prose prose-sm dark:prose-invert max-w-none focus:outline-none h-full",
         },
-        ...stickyLinkClickEditorProps(),
         // Ctrl+K / Cmd+K opens the link dialog; only while this shape is
         // editing.
         handleKeyDown(_view, event) {
@@ -558,7 +568,8 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
             background: "transparent",
             cursor: isEditing ? "text" : "inherit",
           }}
-          onPointerDownCapture={isEditing ? stopEventPropagation : undefined}
+          onPointerDownCapture={isEditing ? stopEventPropagation : keepFollowClickFromTldraw}
+          onPointerUpCapture={isEditing ? undefined : keepFollowClickFromTldraw}
           onTouchEndCapture={isEditing ? stopEventPropagation : undefined}
         >
         {tiptapEditor && (

@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react";
 import { useResolvedReference } from "@/lib/references/useResolvedReference";
-import type { ReferenceKind } from "@/lib/references/format";
+import { formatReference, type ReferenceKind } from "@/lib/references/format";
 import {
   referenceFromAttrs,
   referencePrefix,
@@ -61,6 +61,7 @@ export function ReferenceChipView({ node, editor, getPos }: ReactNodeViewProps) 
         as="span"
         className="reference-chip"
         data-kind={kind}
+        data-reference-token={ref ? formatReference(ref) : undefined}
         data-missing={missing ? "" : undefined}
         contentEditable={false}
       >

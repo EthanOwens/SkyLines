@@ -13,7 +13,6 @@ import { formatActions, selectFormatActionState } from "@/components/ribbon/form
 import { cn } from "@/lib/utils";
 import { Link as LinkIcon } from "lucide-react";
 import { LinkOrStickyDialog } from "./LinkOrStickyDialog";
-import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import "./editor.css";
@@ -51,7 +50,6 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
       attributes: {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[60vh] px-1",
       },
-      ...stickyLinkClickEditorProps(),
       // Ctrl+K / Cmd+K opens the link dialog.
       handleKeyDown(_view, event) {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {

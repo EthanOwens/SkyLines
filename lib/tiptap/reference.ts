@@ -2,7 +2,9 @@ import { Extension, Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Node as PMNode } from "@tiptap/pm/model";
+import type { EditorView } from "@tiptap/pm/view";
 import { parseReference, type Reference, type ReferenceKind } from "@/lib/references/format";
+import { openReference, openWebLink } from "@/lib/references/navigate";
 import { ReferenceChipView } from "@/components/editor/ReferenceChip";
 
 export interface ReferenceAttrs {
@@ -166,6 +168,77 @@ export const ReferencePaste = Extension.create({
             if (!ref) return false;
             return editor.commands.insertReference(ref);
           },
+        },
+      }),
+    ];
+  },
+});
+
+// Elements a click can follow: reference chips (ReferenceChip.tsx) and links.
+export const FOLLOWABLE_SELECTOR = ".reference-chip, a[href]";
+
+// An uneditable view (a canvas text box not being edited) follows on a plain
+// click. Where the text is editable, a plain click places the cursor and
+// Ctrl/Cmd+click follows.
+function followTarget(view: EditorView, event: MouseEvent): Element | null {
+  if (event.button !== 0 || !(event.target instanceof Element)) return null;
+  const element = event.target.closest(FOLLOWABLE_SELECTOR);
+  if (!element || !view.dom.contains(element)) return null;
+  if (view.editable && !(event.metaKey || event.ctrlKey)) return null;
+  return element;
+}
+
+function follow(element: Element) {
+  if (element.matches(".reference-chip")) {
+    const ref = parseReference(element.getAttribute("data-reference-token") ?? "");
+    if (ref) void openReference(ref);
+    return;
+  }
+  void openWebLink(element.getAttribute("href") ?? "");
+}
+
+export const FollowOnClick = Extension.create({
+  name: "followOnClick",
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("followOnClick"),
+        props: {
+          handleDOMEvents: {
+            // Keeps the selection (and focus) where it was instead of moving
+            // onto the chip or link being followed.
+            mousedown: (view, event) => {
+              if (!followTarget(view, event)) return false;
+              event.preventDefault();
+              return true;
+            },
+          },
+        },
+        // A native capture listener on the editor root. ProseMirror ignores
+        // clicks inside node views, and a chip's node view is a React portal
+        // whose synthetic handlers (tldraw's canvas onClick) stop the click
+        // before it bubbles back up to the root.
+        view: (view) => {
+          const onClick = (event: MouseEvent) => {
+            const target = event.target instanceof Element ? event.target : null;
+            const link = target?.closest("a[href]");
+            if (link && view.dom.contains(link)) {
+              // Only this extension opens links. Otherwise the webview would
+              // navigate, and tauri-plugin-shell's script (a <body> click
+              // listener for target="_blank" links, which ignores
+              // defaultPrevented) would open the browser on any plain click.
+              event.preventDefault();
+              event.stopPropagation();
+            }
+            const element = followTarget(view, event);
+            if (!element) return;
+            event.preventDefault();
+            event.stopPropagation();
+            follow(element);
+          };
+          view.dom.addEventListener("click", onClick, true);
+          return { destroy: () => view.dom.removeEventListener("click", onClick, true) };
         },
       }),
     ];

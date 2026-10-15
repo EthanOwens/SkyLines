@@ -1,7 +1,6 @@
 import type { Extensions } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -12,7 +11,7 @@ import FontFamily from "@tiptap/extension-font-family";
 import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import { ListTabKeymap, ShortOrderedListInputRule } from "./listKeymap";
-import { ReferenceNode, ReferencePaste } from "./reference";
+import { FollowOnClick, ReferenceNode, ReferencePaste } from "./reference";
 
 const lowlight = createLowlight(common);
 
@@ -28,9 +27,9 @@ export function createEditorExtensions({
   highlight = false,
 }: EditorExtensionOptions = {}): Extensions {
   const extensions: Extensions = [
-    StarterKit.configure({ codeBlock: false }),
+    // StarterKit bundles Link; clicks on links are handled by FollowOnClick.
+    StarterKit.configure({ codeBlock: false, link: { openOnClick: false } }),
     Image.configure({ inline: false, allowBase64: true }),
-    Link.configure({ openOnClick: false }),
     TaskList,
     TaskItem.configure({ nested: true }),
     Placeholder.configure({ placeholder }),
@@ -44,6 +43,7 @@ export function createEditorExtensions({
     ShortOrderedListInputRule,
     ReferenceNode,
     ReferencePaste,
+    FollowOnClick,
   ];
   if (highlight) {
     // multicolor so highlights can use HIGHLIGHT_COLORS.

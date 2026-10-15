@@ -10,7 +10,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import { STICKY_NOTE_CHANGED_EVENT, getStickyNoteById, updateStickyNote } from "@/lib/db/stickyNotes";
-import { stickyLinkClickEditorProps } from "@/lib/tiptap/stickyLinkClick";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import type { StickyNote } from "@/types";
@@ -66,7 +65,6 @@ export function StickyNoteEditor({ note }: Props) {
       attributes: {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[80vh] px-1",
       },
-      ...stickyLinkClickEditorProps(),
       // Double-clicking an image opens it in the image editor window. On save,
       // a one-shot listener scoped to this edit session patches the node at its
       // exact pos (matching by src breaks with duplicate images); the change

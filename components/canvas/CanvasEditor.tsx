@@ -4,6 +4,7 @@
 // sync status to manage here.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Box,
   DefaultContextMenu,
@@ -16,6 +17,7 @@ import {
   useValue,
   type Editor,
   type TLEditorSnapshot,
+  type TLShapeId,
   type TLUiContextMenuProps,
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
@@ -23,7 +25,11 @@ import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { useAppStore } from "@/stores/appStore";
 import type { Note } from "@/types";
 import { RichTextShapeUtil, useCopyShapeReference, type RichTextShape } from "./RichTextShape";
-import { RichTextTool, installRichTextToolAutoReturn } from "./RichTextTool";
+import {
+  RichTextTool,
+  installRichTextToolAutoReturn,
+  switchToToolExplicitly,
+} from "./RichTextTool";
 
 // Module-level so <Tldraw> sees stable identities; it rebuilds internal
 // registries otherwise.
@@ -85,6 +91,27 @@ function applyPageCameraConstraints(editor: Editor, bounds: Box) {
   });
 }
 
+// Selected in the select tool, which shows the selection; RichTextTool's
+// watcher hands back to the rich-text tool once the selection is cleared.
+function revealShape(editor: Editor, shapeId: string) {
+  const id = shapeId as TLShapeId;
+  const bounds = editor.getShapePageBounds(id);
+  if (!bounds) return;
+  // Ends any edit session without the auto-return re-entering it.
+  switchToToolExplicitly(editor, "rich-text");
+  editor.select(id);
+  editor.setCurrentTool("select");
+  // Never past 100%, so a small box isn't blown up. setCamera keeps the page
+  // camera constraints.
+  editor.zoomToBounds(bounds, { targetZoom: 1, animation: { duration: 200 } });
+}
+
+// A page (and optionally a shape on it) to show, from a followed reference.
+interface RevealTarget {
+  pageId: string;
+  shapeId: string | null;
+}
+
 interface Props {
   note: Note;
 }
@@ -112,6 +139,13 @@ export function CanvasEditor({ note }: Props) {
   // note id).
   const pendingSaveRef = useRef(false);
   const setActiveCanvasEditor = useAppStore((s) => s.setActiveCanvasEditor);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const idParam = searchParams.get("id");
+  const pageParam = searchParams.get("page");
+  const shapeParam = searchParams.get("shape");
+  const revealTargetRef = useRef<RevealTarget | null>(null);
+  const editorRef = useRef<Editor | null>(null);
 
   const pages = useAppStore((s) => s.pages);
   const setPages = useAppStore((s) => s.setPages);
@@ -152,8 +186,11 @@ export function CanvasEditor({ note }: Props) {
       }
 
       if (cancelled) return;
+      const target = revealTargetRef.current;
+      const targetPage = target && notePages.find((p) => p.id === target.pageId);
+      if (target && !targetPage) revealTargetRef.current = null;
       setPages(notePages);
-      setSelectedPageId(notePages[0]?.id ?? null);
+      setSelectedPageId(targetPage?.id ?? notePages[0]?.id ?? null);
       setPagesLoading(false);
     })();
 
@@ -161,6 +198,31 @@ export function CanvasEditor({ note }: Props) {
       cancelled = true;
     };
   }, [note.id, note.userId]);
+
+  // Followed references ask for a page and shape through the URL
+  // (lib/references/navigate.ts). The request moves into a ref and the params
+  // are dropped, so following the same reference again changes the URL again.
+  useEffect(() => {
+    // While the URL already names another note, this editor is about to
+    // unmount; that note's editor mounts with the params still in place.
+    if (!pageParam || idParam !== note.id) return;
+    revealTargetRef.current = { pageId: pageParam, shapeId: shapeParam };
+    router.replace(`/canvas?id=${note.id}`);
+
+    // While this note's pages are still loading, the load picks the page.
+    const { pages: currentPages, selectedPageId: currentPageId } = useAppStore.getState();
+    if (!currentPages.some((p) => p.id === pageParam && p.noteId === note.id)) return;
+    // Another page: handleMount reveals the shape once that page's editor
+    // mounts.
+    if (currentPageId !== pageParam) {
+      setSelectedPageId(pageParam);
+      return;
+    }
+    const editor = editorRef.current;
+    if (!editor) return;
+    revealTargetRef.current = null;
+    if (shapeParam) revealShape(editor, shapeParam);
+  }, [idParam, pageParam, shapeParam, note.id, router, setSelectedPageId]);
 
   const selectedPage =
     pages.find((p) => p.id === selectedPageId) ?? pages[0] ?? null;
@@ -199,6 +261,7 @@ export function CanvasEditor({ note }: Props) {
 
       // Exposes the live editor to TopBar's Undo/Redo.
       setActiveCanvasEditor(editor);
+      editorRef.current = editor;
 
       // Fresh per mount (the editor remounts on page switch); only ever grows.
       let confinedBounds = Box.From(DEFAULT_PAGE_BOUNDS);
@@ -254,6 +317,23 @@ export function CanvasEditor({ note }: Props) {
         void updatePage(page.id, { canvasData: snapshot as unknown as object });
       }
 
+      const target = revealTargetRef.current;
+      if (target?.pageId === page.id) {
+        const { shapeId } = target;
+        if (!shapeId) {
+          revealTargetRef.current = null;
+        } else {
+          // After layout, so the zoom fits the measured viewport. Cleared only
+          // once it runs: Strict Mode disposes the first editor, and its
+          // timers with it, before mounting again.
+          editor.timers.requestAnimationFrame(() => {
+            if (revealTargetRef.current !== target) return;
+            revealTargetRef.current = null;
+            revealShape(editor, shapeId);
+          });
+        }
+      }
+
       const unlisten = editor.store.listen(
         () => {
           if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -278,6 +358,7 @@ export function CanvasEditor({ note }: Props) {
 
       return () => {
         setActiveCanvasEditor(null);
+        if (editorRef.current === editor) editorRef.current = null;
         if (saveTimer.current) clearTimeout(saveTimer.current);
         unlisten();
         stopConfinementWatcher();

@@ -9,6 +9,7 @@ import { useFolders } from "@/hooks/useFolders";
 import { useNotebooks } from "@/hooks/useNotebooks";
 import { getLastOpen } from "@/lib/lastOpen";
 import { getNoteById } from "@/lib/db/notes";
+import { listenForReferenceFollows } from "@/lib/references/navigate";
 import { useAppStore } from "@/stores/appStore";
 import { AppLayout } from "@/components/shell/AppLayout";
 import { getSelectedThemeId } from "@/lib/themes/selection";
@@ -39,6 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
+  const setSelectedFolder = useAppStore((s) => s.setSelectedFolder);
   const notebooks = useAppStore((s) => s.notebooks);
   const notebooksLoaded = useAppStore((s) => s.notebooksLoaded);
   const setAvailableThemes = useAppStore((s) => s.setAvailableThemes);
@@ -73,6 +75,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useNotebooks(syncUserId);
 
   const shouldRedirect = !loading && !user && !publicRoute;
+
+  // Only the main window has the app's routes, so it follows references for
+  // every window, including ones clicked in sticky notes.
+  const followsReferences = !!user && !publicRoute && !isStickyRoute && !isImageEditorRoute;
+  useEffect(() => {
+    if (!followsReferences) return;
+    return listenForReferenceFollows(router);
+  }, [followsReferences, router]);
 
   useEffect(() => {
     if (shouldRedirect) router.replace("/login");
@@ -148,7 +158,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!lastOpen) return;
 
     if (!lastOpen.noteId) {
-      if (lastOpen.notebookId) setSelectedNotebook(lastOpen.notebookId);
+      if (lastOpen.notebookId) {
+        setSelectedNotebook(lastOpen.notebookId);
+        // Only set when a folder reference was followed.
+        if (lastOpen.folderId) setSelectedFolder(lastOpen.folderId);
+      }
       return;
     }
 
@@ -175,6 +189,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     isRootRoute,
     router,
     setSelectedNotebook,
+    setSelectedFolder,
     notebooks,
     notebooksLoaded,
   ]);

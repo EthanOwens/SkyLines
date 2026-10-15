@@ -26,6 +26,9 @@ interface AppState {
   selectedFolderId: string | null;
   // The open notebook.
   selectedNotebookId: string | null;
+  // A folder the sidebar should expand down to, set when a folder reference is
+  // followed. `at` makes a repeat follow count as a new request.
+  revealedFolder: { id: string; at: number } | null;
   sidebarOpen: boolean;
   syncStatus: SyncStatus;
   // The Ribbon is a sibling of the editor, so it reaches the Tiptap editor
@@ -72,6 +75,7 @@ interface AppState {
   setSelectedNote: (id: string | null) => void;
   setSelectedFolder: (id: string | null) => void;
   setSelectedNotebook: (id: string | null) => void;
+  revealFolder: (id: string) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSyncStatus: (status: SyncStatus) => void;
@@ -102,6 +106,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedNoteId: null,
   selectedFolderId: null,
   selectedNotebookId: null,
+  revealedFolder: null,
   sidebarOpen: true,
   syncStatus: "saved",
   activeEditor: null,
@@ -125,6 +130,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedNote: (id) => set({ selectedNoteId: id }),
   setSelectedFolder: (id) => set({ selectedFolderId: id }),
   setSelectedNotebook: (id) => set({ selectedNotebookId: id, selectedFolderId: null }),
+  revealFolder: (id) => set({ revealedFolder: { id, at: Date.now() } }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),

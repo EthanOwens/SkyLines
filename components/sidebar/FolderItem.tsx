@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -81,8 +81,17 @@ export function FolderItem({
   const setClipboard = useAppStore((s) => s.setClipboard);
   const selectedFolderId = useAppStore((s) => s.selectedFolderId);
   const setSelectedFolder = useAppStore((s) => s.setSelectedFolder);
+  const revealedFolder = useAppStore((s) => s.revealedFolder);
   const { actionsRef, contextActionsRef, closeMenus } = useMenuCloser();
   const isSelected = selectedFolderId === folder.id;
+
+  // Only on a new reveal request, so a folder the user collapses afterwards
+  // stays collapsed when the folder list changes.
+  useEffect(() => {
+    if (!revealedFolder) return;
+    const folders = useAppStore.getState().folders;
+    if (isFolderOrDescendant(folders, folder.id, revealedFolder.id)) setOpen(true);
+  }, [revealedFolder, folder.id]);
 
   const childFolders = allFolders
     .filter((f) => f.parentId === folder.id)

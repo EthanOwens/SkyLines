@@ -102,6 +102,23 @@
   cursor: pointer;
 }
 
+/* Web links open in the browser. inline-block keeps the link's underline off
+   the arrow. */
+.tiptap a:is([href^="http:"], [href^="https:"], [href^="mailto:"])::after {
+  content: "\2197";
+  display: inline-block;
+  margin-left: 0.1em;
+  font-size: 0.8em;
+  text-decoration: none;
+}
+
+/* A canvas text box that isn't being edited is pointer-events: none so tldraw
+   gets its clicks; chips and links opt back in so a plain click follows them. */
+.tiptap[contenteditable="false"] :is(.reference-chip, a[href]) {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 /* Reference chips. The node view renders one span; the text part truncates
    so a long title can't stretch a canvas text box. */
 /* The left margin is the gap the caret before a chip is drawn in; with the
