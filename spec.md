@@ -1,6 +1,6 @@
 # Sticky note polish, working bullet lists, references to anything
 
-Source: planning.md, 2026-10-12
+Source: planning.md, 2026-10-12; planning-chips.md, 2026-10-15
 
 ## Goal
 
@@ -38,6 +38,9 @@ Three areas. Sticky notes get their own taskbar group and icon on Windows, keep 
 - **Following references:** in a canvas text box that isn't being edited, a single click on a chip or web link follows it. While editing, and in the always-editable sticky and main editors, Ctrl/Cmd+click follows it. Notebook: show it in the sidebar on the home page. Folder: same, with the folder selected and expanded. Note: open it. Page: open its note on that page. Shape: open the note on that page, then select the shape and zoom to it. Sticky: open its window. From a sticky window, in-app references bring the main window forward and navigate there. Web links open in the default browser.
 - **Hover preview:** hovering a chip or web link for about 400ms shows a card with the kind, the path, the title, and up to 3 lines of text (or the first image if there's no text). For web links it shows the full URL.
 - The ID uniqueness rule means a copied page's shapes keep their IDs. A shape reference always includes its page, so it still resolves to the original page.
+- **Double-click on chips (T16):** double-clicking a chip follows it in every editor and mode. Double-clicking anywhere else on its line, including the small gap just before it, selects a word as normal and never selects the chip. This replaces T13's "double-click selects the chip", which recorded the user's report wrongly. A single click while editing still selects the chip. Web links don't follow on double-click while editing, and no double-click ever follows twice.
+- **Retargeting a chip (T18):** with a chip selected, the Insert link dialog edits it. Picking a target replaces the chip in place and clears any custom label, and a URL replaces it with a web link. The dialog opens on a chip from Ctrl/Cmd+K, the floating toolbar's link button (which now shows for a selected chip) and the Ribbon link button. There is no right-click "Edit reference".
+- **Sticky notes get the Insert link dialog** through Ctrl/Cmd+K (T17). They keep their bottom bar, with no floating toolbar.
 
 ## Out of scope
 
@@ -343,7 +346,7 @@ Test steps:
 
 ### T9 Following references and web links
 
-Status: todo
+Status: done
 Depends on: T7
 
 Add `lib/references/navigate.ts`, `followReference(ref)`, which runs in the main window:
@@ -379,6 +382,48 @@ Test steps:
 5. In a sticky note, paste note A's reference and Ctrl/Cmd+click it: the main window comes forward showing note A.
 6. Click a web link chip "↗" outside editing: the default browser opens (check the logs for the opener call, since the browser itself is out of reach).
 7. Delete the test notes, text boxes and sticky note.
+
+### T16 Double-clicking a chip follows it
+
+Status: todo
+Depends on: T9
+Tester: yes, double-clicks, the resulting navigation, the selection and opener calls can all be observed through the webview tools
+
+Added after T9 (user report). T13 recorded the double-click rule wrongly: it made double-clicking a chip select the chip. The intended rule is that double-clicking a chip follows it, in every editor and mode, and double-clicking anywhere else on that line selects the word under the pointer as normal and never selects the chip.
+
+All the click logic is in `lib/tiptap/reference.ts`, which the three editors get from the shared factory:
+- **`referenceDoubleClick` plugin** (T13, `handleDoubleClickOn`, around lines 119-135). It currently sets a `NodeSelection` whenever `direct` is true. That also catches the zero-width space and the 3px margin in front of the chip, which sit inside the node view's `contenteditable=false` wrapper (`components/editor/ReferenceChip.tsx` around 55-72, `.reference-chip` styles in `components/editor/editor.css`).
+  - Decide on `event.target.closest(".reference-chip")`, not on `direct`.
+  - On the chip itself, return true so the browser doesn't select a word, and let the click listener follow.
+  - Anywhere else, return false.
+- **`FollowOnClick` capture `click` listener** (around 222-241). Use `event.detail`:
+  - `detail === 1`: follow under the T9 rules (plain click when not editable, Cmd/Ctrl+click when editable).
+  - `detail === 2` on a chip, in an editable view, with no modifier: follow.
+  - `detail >= 2` on a chip or link whose first click already followed (a view that isn't editable, or a modifier held): `preventDefault` and `stopPropagation` without following again. Today a double-click in those cases follows twice: two `router.push` calls, or two `openStickyNoteWindow` calls racing to create the same window label, or the browser opened twice.
+- **Web links don't follow on double-click while editing.** They're editable text, so double-click keeps selecting a word inside them.
+- **A single plain click while editing still selects the chip** (a `NodeSelection`), which T18 relies on.
+- **Watch WebKit word selection next to a chip.** With no real space between a word and the chip, double-clicking the word must select only that word, never into or across the chip. If WebKit extends it, clamp the selection, for example in the editors' `handleDoubleClick` or in the plugin.
+
+In a canvas text box that isn't being edited, tldraw already never sees pointer events on chips (`keepFollowClickFromTldraw` in `components/canvas/RichTextShape.tsx`), so double-clicking a chip there doesn't enter edit mode. Double-clicking elsewhere on the box still enters editing as before.
+
+Files: `lib/tiptap/reference.ts`, possibly `components/editor/ReferenceChip.tsx` and `components/editor/editor.css`
+
+Acceptance:
+- Double-clicking a chip follows it exactly once: in a canvas text box (editing or not), in a sticky note and in the note editor.
+- Double-clicking outside the `.reference-chip` element on a chip's line, including the gap just before the chip, never selects the chip or navigates. Double-clicking a word selects only that word.
+- A single plain click on a chip while editing selects it without navigating, and Cmd/Ctrl+click follows once.
+- A double-click on a web link opens the browser at most once. While editing, a plain double-click on a link selects a word and opens nothing.
+
+Test steps:
+1. Create test notes A and B. In a text box in B, type "alpha", paste note A's reference right after it (no space), then type " omega". Click away so the box isn't being edited.
+2. Note `history.length` (via `webview_execute_js`), then double-click the chip. Note A opens, and `history.length` grew by exactly 1.
+3. Go back to B and enter the text box. Double-click the chip: note A opens.
+4. In B, editing, double-click "alpha": the selection text is exactly "alpha", the URL is unchanged and the chip has no `ProseMirror-selectednode`. Repeat for "omega", and for the point 1-2px left of the chip's background.
+5. Single-click the chip: it gets `ProseMirror-selectednode` and nothing navigates. Cmd+click it: note A opens once.
+6. Add a web link "https://example.com" to the box. While editing, double-click a word in it: a word is selected and there's no `plugin:opener|open_url` call. Click away, then double-click the link: exactly one `plugin:opener|open_url` call (watch with `ipc_monitor`).
+7. Open a test sticky note, paste note A's reference in it and double-click the chip: the main window comes forward showing note A.
+8. In a canvas text box, paste that sticky note's reference, close the sticky window, click away and double-click the chip: exactly one `sticky-<id>` window opens.
+9. Delete the test notes, text boxes and sticky note, and close the sticky window.
 
 ### T10 Hover previews
 
@@ -472,6 +517,74 @@ Test steps:
 7. Use Create new sticky note: a sticky window opens and a "%Untitled" chip is inserted. Close that window.
 8. Click empty canvas: a new text box is created. Delete everything you created.
 
+### T17 Sticky notes get the Insert link dialog
+
+Status: todo
+Depends on: T11
+Tester: yes, Cmd/Ctrl+K, the dialog's tree and what gets inserted can be driven and checked in the sticky window
+
+`components/editor/StickyNoteEditor.tsx` has no link dialog today: no Ctrl/Cmd+K, no bubble menu, no link button. Add a Ctrl/Cmd+K `handleKeyDown` that opens T11's `InsertLinkDialog`, following the pattern in `RichTextEditor.tsx`. Sticky notes stay without a bubble menu; the bottom bar is unchanged.
+
+Sticky windows have no shell and no loaded store, but T11's `ReferencePicker` tree is built from the store's notebooks, folders and notes. When the store is empty (in a sticky window), load them from SQLite through `lib/db/*` instead. Pages and text boxes already lazy-load from the database.
+
+**Create new sticky note** must work from a sticky window. It opens another `sticky-*` window, so check that `src-tauri/capabilities/sticky.json` grants window creation, and add the permission if it doesn't. The dialog has to fit the small sticky window: cap it to the window's size and let it scroll.
+
+Files: `components/editor/StickyNoteEditor.tsx`, `components/editor/InsertLinkDialog.tsx`, `components/editor/ReferencePicker.tsx`, `src-tauri/capabilities/sticky.json`
+
+Acceptance:
+- In a sticky note, Ctrl/Cmd+K opens the Insert link dialog, and each section inserts the right thing at the cursor or selection.
+- In a sticky window, the tree lists notebooks, folders and notes, loaded from the database.
+- Create new sticky note works from a sticky window.
+- The dialog stays within the sticky window, and Escape closes it with the cursor back in the editor.
+
+Test steps:
+1. Create a test note "beta" and a test sticky note, and open the sticky note's window.
+2. In the sticky note, press Cmd+K: the dialog opens inside the window, with no part outside the viewport.
+3. In the tree, expand down to "beta" and pick it: a "#…beta" chip is inserted in the sticky note.
+4. Press Cmd+K, enter "https://example.com" in the URL field and insert it: a web link with "↗" appears.
+5. Press Cmd+K, then Escape: the dialog closes and typing goes into the sticky note.
+6. Press Cmd+K and use Create new sticky note: a second sticky window opens and a "%Untitled" chip is inserted. Close that window.
+7. Delete the test note and both sticky notes.
+
+### T18 Edit a selected chip through the Insert link dialog
+
+Status: todo
+Depends on: T11, T17
+Tester: yes, selecting a chip, opening the dialog and checking the replaced chip and undo are all observable
+
+With a chip selected (a `NodeSelection` on a `reference` node; a single click selects one while editing), opening `InsertLinkDialog` opens it on that chip, and picking a new target replaces the chip instead of inserting a second one.
+
+- **Detect the chip** when the dialog opens. T6's saved selection is a plain `{from, to}` restored with `setTextSelection`. Also record whether it was a `NodeSelection`, and restore it with `setNodeSelection` on cancel, so the chip keeps its selection outline.
+- **Show the current target** at the top of the dialog ("Currently: <chip text>"), using `useResolvedReference` (`lib/references/useResolvedReference.ts`). Build the text the chip shows from a small helper factored out of `ReferenceChip.tsx`. Prefill the paste-reference field with `formatReference` of the chip's reference.
+- **Replace in place.** Picking any reference (tree, paste field, sticky list, Create new sticky note) changes that chip's attrs with `setNodeMarkup` at the saved position, as one undo step.
+  - Check `doc.nodeAt(pos)?.type.name === "reference"` first, because the canvas can re-sync content while the dialog is open.
+  - Clear `label` and `lastTitle`, so the chip shows the new target's live title.
+  - The chip keeps its marks.
+  - Export `attrsFromReference` from `lib/tiptap/reference.ts` if needed.
+- **A URL replaces the chip** with the URL as linked text. Never put a Link mark on the chip itself.
+- **Floating toolbar.** Its `shouldShow` hides it for every `NodeSelection` (`components/canvas/RichTextShape.tsx` around 581-595, `components/editor/RichTextEditor.tsx` around 133-147). Let it show for a selected `reference` node with only the link button, which opens the dialog on the chip.
+  - Sticky notes use Ctrl/Cmd+K only (T17).
+  - The Ribbon's link button opens the same dialog after T11, so it gets edit mode without extra work.
+
+Files: `components/editor/InsertLinkDialog.tsx`, `components/editor/ReferenceChip.tsx`, `lib/tiptap/reference.ts`, `components/canvas/RichTextShape.tsx`, `components/editor/RichTextEditor.tsx`
+
+Acceptance:
+- With a chip selected, Ctrl/Cmd+K (all three editors), the floating toolbar's link button (canvas and note editor) and the Ribbon link button open the dialog showing the chip's current target, with its token in the paste field.
+- Picking a new target changes that chip in place: the text box still has exactly one chip, it points to the new target, it shows the live title (any custom label is gone), and a single undo restores the old chip.
+- Entering a URL with a chip selected replaces the chip with a web link; the chip never ends up with a Link mark.
+- Cancelling leaves the chip selected (`NodeSelection`) and unchanged.
+- With no chip selected, the dialog inserts exactly as in T11.
+
+Test steps:
+1. Create test notes A and C. In a text box in note B, type "my label", select it, and paste note A's reference: a chip labelled "my label" appears.
+2. Click the chip while editing to select it. Press Cmd+K: the dialog shows "Currently: …my label" (or A's path), and the paste field holds A's token.
+3. In the tree, pick note C: the box has one chip, it shows C's title, and following it opens C.
+4. Press Cmd+Z: the chip is back, pointing to A and labelled "my label".
+5. Select the chip: the floating toolbar shows a link button. Click it: the dialog opens on the chip. Press Escape: the chip still has `ProseMirror-selectednode` and is unchanged.
+6. Select the chip, press Cmd+K, enter "https://example.com" in the URL field and insert it: the chip is replaced by a web link with "↗".
+7. In a test sticky note with a chip, click the chip, press Cmd+K and pick note C: the chip now points to C.
+8. Delete the test notes, text boxes and sticky note.
+
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
@@ -486,3 +599,4 @@ Test steps:
 - [x] T8 Copy reference from right-click menus
 - [x] T13 Reference chip cursor and double-click selection
 - [x] T14 Reliable Copy reference for text boxes
+- [x] T9 Following references and web links
