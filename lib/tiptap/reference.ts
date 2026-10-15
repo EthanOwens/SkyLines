@@ -1,6 +1,6 @@
 import { Extension, Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import { parseReference, type Reference, type ReferenceKind } from "@/lib/references/format";
@@ -117,18 +117,16 @@ export const ReferenceNode = Node.create({
   },
 
   addProseMirrorPlugins() {
-    const type = this.type;
     return [
       new Plugin({
         key: new PluginKey("referenceDoubleClick"),
         props: {
-          // The browser's default word selection skips the uneditable chip and
-          // picks the text beside it, or nothing at a line's start.
-          handleDoubleClickOn: (view, _pos, node, nodePos, _event, direct) => {
-            if (!direct || node.type !== type) return false;
-            view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, nodePos)));
-            return true;
-          },
+          // Swallows the browser's word selection on the chip itself; the click
+          // listener in FollowOnClick does the following. Anywhere else on the
+          // line (including the zero-width space and margin inside the node
+          // view's wrapper) the default word selection runs.
+          handleDoubleClickOn: (_view, _pos, _node, _nodePos, event) =>
+            event.target instanceof Element && event.target.closest(".reference-chip") !== null,
         },
       }),
     ];
@@ -188,6 +186,15 @@ function followTarget(view: EditorView, event: MouseEvent): Element | null {
   return element;
 }
 
+// A double-click on an editable view's chip follows it: the first click only
+// selected the chip. Links stay editable text there.
+function isEditableChipDoubleClick(view: EditorView, event: MouseEvent): boolean {
+  if (event.detail !== 2 || event.button !== 0 || !view.editable) return false;
+  if (event.metaKey || event.ctrlKey || !(event.target instanceof Element)) return false;
+  const chip = event.target.closest(".reference-chip");
+  return !!chip && view.dom.contains(chip);
+}
+
 function follow(element: Element) {
   if (element.matches(".reference-chip")) {
     const ref = parseReference(element.getAttribute("data-reference-token") ?? "");
@@ -232,10 +239,19 @@ export const FollowOnClick = Extension.create({
               event.stopPropagation();
             }
             const element = followTarget(view, event);
-            if (!element) return;
-            event.preventDefault();
-            event.stopPropagation();
-            follow(element);
+            if (element) {
+              event.preventDefault();
+              event.stopPropagation();
+              // The first click of a double-click already followed.
+              if (event.detail <= 1) follow(element);
+              return;
+            }
+            if (isEditableChipDoubleClick(view, event)) {
+              event.preventDefault();
+              event.stopPropagation();
+              const chip = target?.closest(".reference-chip");
+              if (chip) follow(chip);
+            }
           };
           view.dom.addEventListener("click", onClick, true);
           return { destroy: () => view.dom.removeEventListener("click", onClick, true) };

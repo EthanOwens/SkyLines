@@ -385,7 +385,7 @@ Test steps:
 
 ### T16 Double-clicking a chip follows it
 
-Status: todo
+Status: done
 Depends on: T9
 Tester: yes, double-clicks, the resulting navigation, the selection and opener calls can all be observed through the webview tools
 
@@ -600,3 +600,4 @@ Test steps:
 - [x] T13 Reference chip cursor and double-click selection
 - [x] T14 Reliable Copy reference for text boxes
 - [x] T9 Following references and web links
+- [x] T16 Double-clicking a chip follows it
