@@ -1,8 +1,7 @@
 "use client";
 
-// Ctrl+K dialog shared by RichTextEditor and RichTextShape. A link can be a
-// URL, a new sticky note or an existing one; sticky notes are stored as
-// sticky:<id> hrefs on the normal Link mark.
+// Ctrl+K dialog shared by RichTextEditor and RichTextShape. Inserts a web link
+// or a reference chip (pasted token, tree pick, sticky note or a new sticky).
 
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import type { Editor } from "@tiptap/react";
@@ -15,12 +14,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { ReferencePicker } from "./ReferencePicker";
+import { parseReference, type Reference } from "@/lib/references/format";
 import { getStickyNotes, createStickyNote } from "@/lib/db/stickyNotes";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
 import { extractPlainText, extractFirstImageSrc } from "@/lib/tiptap/extractText";
 import type { StickyNote } from "@/types";
 
-interface LinkOrStickyDialogProps {
+interface InsertLinkDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editor: Editor | null;
@@ -88,15 +89,18 @@ function stopReactPropagation(e: SyntheticEvent) {
   e.stopPropagation();
 }
 
-export function LinkOrStickyDialog({
+export function InsertLinkDialog({
   open,
   onOpenChange,
   editor,
   currentUrl,
   userId,
-}: LinkOrStickyDialogProps) {
+}: InsertLinkDialogProps) {
   const [urlInput, setUrlInput] = useState("");
   const [search, setSearch] = useState("");
+  const [treeSearch, setTreeSearch] = useState("");
+  const [refInput, setRefInput] = useState("");
+  const [refError, setRefError] = useState(false);
   const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
   const [creating, setCreating] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
@@ -114,6 +118,9 @@ export function LinkOrStickyDialog({
       !!editor && editor.state.selection.empty && !isCursorStrictlyInsideLink(editor);
     setUrlInput(insertsNewLink ? "" : (currentUrl ?? ""));
     setSearch("");
+    setTreeSearch("");
+    setRefInput("");
+    setRefError(false);
     if (userId) {
       void getStickyNotes(userId).then(setStickyNotes);
     } else {
@@ -146,23 +153,32 @@ export function LinkOrStickyDialog({
     onOpenChange(false);
   }
 
+  function insertReference(ref: Reference) {
+    if (!editor) return;
+    restoreSelection(editor, savedSelectionRef.current);
+    editor.chain().focus().insertReference(ref).run();
+    onOpenChange(false);
+  }
+
+  function handleSubmitReference() {
+    const ref = parseReference(refInput);
+    if (!ref) {
+      setRefError(true);
+      return;
+    }
+    insertReference(ref);
+  }
+
   async function handleCreateNewStickyNote() {
     if (!editor || !userId || creating) return;
     setCreating(true);
     try {
       const id = await createStickyNote(userId);
       await openStickyNoteWindow(id);
-      applyLink(editor, `sticky:${id}`, savedSelectionRef.current);
-      onOpenChange(false);
+      insertReference({ kind: "sticky", id });
     } finally {
       setCreating(false);
     }
-  }
-
-  function handlePickStickyNote(note: StickyNote) {
-    if (!editor) return;
-    applyLink(editor, `sticky:${note.id}`, savedSelectionRef.current);
-    onOpenChange(false);
   }
 
   return (
@@ -180,7 +196,7 @@ export function LinkOrStickyDialog({
       onKeyUp={stopReactPropagation}
     >
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-md" showCloseButton={false} finalFocus={false}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md" showCloseButton={false} finalFocus={false}>
           <DialogHeader>
             <DialogTitle>Insert link</DialogTitle>
           </DialogHeader>
@@ -219,6 +235,54 @@ export function LinkOrStickyDialog({
                 Insert link
               </Button>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <label htmlFor="link-or-sticky-ref" className="text-xs font-medium text-muted-foreground">
+              Paste a reference
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="link-or-sticky-ref"
+                type="text"
+                value={refInput}
+                onChange={(e) => {
+                  setRefInput(e.target.value);
+                  setRefError(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSubmitReference();
+                  }
+                }}
+                placeholder="skylines://"
+                className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+              />
+              <Button size="sm" onClick={handleSubmitReference}>
+                Insert
+              </Button>
+            </div>
+            {refError && (
+              <div role="alert" className="text-xs text-destructive">
+                Not a valid reference. Use Copy reference in a right-click menu.
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <label htmlFor="link-or-sticky-tree-search" className="text-xs font-medium text-muted-foreground">
+              Notes and text boxes
+            </label>
+            <input
+              id="link-or-sticky-tree-search"
+              type="text"
+              value={treeSearch}
+              onChange={(e) => setTreeSearch(e.target.value)}
+              placeholder="Search..."
+              className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+            />
+            <ReferencePicker search={treeSearch} onPick={insertReference} />
           </div>
 
           <div className="flex flex-col gap-2 border-t border-border pt-3">
@@ -271,7 +335,7 @@ export function LinkOrStickyDialog({
                   <button
                     key={note.id}
                     type="button"
-                    onClick={() => handlePickStickyNote(note)}
+                    onClick={() => insertReference({ kind: "sticky", id: note.id })}
                     className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                   >
                     {imageSrc && (

@@ -41,7 +41,7 @@ import { BubbleMenu } from "@tiptap/react/menus";
 import { isNodeSelection, isTextSelection } from "@tiptap/core";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthContext } from "@/components/AuthProvider";
-import { LinkOrStickyDialog } from "@/components/editor/LinkOrStickyDialog";
+import { InsertLinkDialog } from "@/components/editor/InsertLinkDialog";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import { copyReference } from "@/lib/references/copy";
@@ -490,6 +490,15 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     },
   });
 
+  // Opens on the Ribbon's link button, but only for the editor it targets.
+  const linkDialogRequest = useAppStore((s) => s.linkDialogRequest);
+  const seenLinkRequestRef = useRef(linkDialogRequest);
+  useEffect(() => {
+    if (seenLinkRequestRef.current === linkDialogRequest) return;
+    seenLinkRequestRef.current = linkDialogRequest;
+    if (tiptapEditor && useAppStore.getState().activeEditor === tiptapEditor) setLinkDialogOpen(true);
+  }, [linkDialogRequest, tiptapEditor]);
+
   const setLink = useCallback(() => {
     if (!tiptapEditor) return;
     setLinkDialogOpen(true);
@@ -777,7 +786,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           onClose={closeEditingMenu}
         />
       )}
-      <LinkOrStickyDialog
+      <InsertLinkDialog
         open={linkDialogOpen}
         onOpenChange={setLinkDialogOpen}
         editor={tiptapEditor}

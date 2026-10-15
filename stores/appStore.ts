@@ -34,6 +34,9 @@ interface AppState {
   // The Ribbon is a sibling of the editor, so it reaches the Tiptap editor
   // through here. Null when no text editor is active.
   activeEditor: Editor | null;
+  // Bumped by the Ribbon's link button; the active editor opens its Insert
+  // link dialog when this changes.
+  linkDialogRequest: number;
   // The tldraw editor, set while any canvas note is open. Can be set together
   // with activeEditor; undo/redo prefer activeEditor.
   activeCanvasEditor: TldrawEditor | null;
@@ -80,6 +83,7 @@ interface AppState {
   setSidebarOpen: (open: boolean) => void;
   setSyncStatus: (status: SyncStatus) => void;
   setActiveEditor: (editor: Editor | null) => void;
+  requestLinkDialog: () => void;
   setActiveCanvasEditor: (editor: TldrawEditor | null) => void;
   setPendingEditClickPoint: (point: AppState["pendingEditClickPoint"]) => void;
   setIsHistoryNavigation: (value: boolean) => void;
@@ -110,6 +114,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sidebarOpen: true,
   syncStatus: "saved",
   activeEditor: null,
+  linkDialogRequest: 0,
   activeCanvasEditor: null,
   pendingEditClickPoint: null,
   noteHistory: [],
@@ -135,6 +140,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),
   setActiveEditor: (activeEditor) => set({ activeEditor }),
+  requestLinkDialog: () => set((s) => ({ linkDialogRequest: s.linkDialogRequest + 1 })),
   setActiveCanvasEditor: (activeCanvasEditor) => set({ activeCanvasEditor }),
   setPendingEditClickPoint: (pendingEditClickPoint) => set({ pendingEditClickPoint }),
   setIsHistoryNavigation: (value) => set({ isHistoryNavigation: value }),

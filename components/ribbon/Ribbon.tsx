@@ -123,6 +123,7 @@ const NEUTRAL_FORMAT_STATE: FormatActionState = {
 
 function FormatTab() {
   const activeEditor = useAppStore((s) => s.activeEditor);
+  const requestLinkDialog = useAppStore((s) => s.requestLinkDialog);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // The editor's identity doesn't change with its state, so subscribe with
@@ -149,15 +150,7 @@ function FormatTab() {
   }
 
   function setLink() {
-    if (!activeEditor) return;
-    const prev = state?.link ?? "https://";
-    const url = window.prompt("URL", prev);
-    if (url === null) return;
-    if (url === "") {
-      activeEditor.chain().focus().extendMarkRange("link").unsetLink().run();
-    } else {
-      activeEditor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
-    }
+    if (activeEditor) requestLinkDialog();
   }
 
   return (

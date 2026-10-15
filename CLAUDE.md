@@ -34,9 +34,11 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 
 - When the app window is hidden, screenshots come back stale. Use page-structure and computed-style evidence instead of retrying focus.
 - Simulated events can't start a native window drag or trigger real keyboard focus, so mark those steps for the user.
-- Simulated 't' + canvas click doesn't create a tldraw text box; hover/chip tests need a text box made by hand or test data seeded first.
+- To make a text box, dispatch synthetic `pointerdown` then `pointerup` on `.tl-canvas` with the text tool (no awaits). The first click only deselects the previous box, so click twice.
 - Seed canvas data through the tldraw editor, reached by a React fiber walk from `.tl-container` (`memoizedState.memoizedState.current.createShape`). Use a fresh shape id after one hits an error boundary, and keep `webview_execute_js` scripts synchronous (`await` times out).
 - After code changes to modules with module-level state (e.g. `mainWindowRouter` in `lib/references/navigate.ts`), run `location.reload()` and re-enter a notebook before testing; hot reload leaves that state stale.
+- Canvas changes reach SQLite on a debounce. Wait for a save (e.g. reopen the dialog) before expecting new text boxes in DB-backed views: the picker, chips and missing state.
+- While the window is hidden, `visibilityState` is "hidden" and timers and Radix close animations stall (dialogs linger with `data-closed`). Use `manage_window` focus to make it visible again.
 
 ## Gotchas
 

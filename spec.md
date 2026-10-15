@@ -490,14 +490,14 @@ Test steps:
 
 ### T11 Insert link dialog: tree, paste box and references
 
-Status: todo
+Status: done
 Depends on: T6, T7
 Tester: yes, the dialog's sections, tree, search, errors and inserted chips can all be driven and checked through the webview tools
 
 Rebuild `LinkOrStickyDialog.tsx` (rename it to `InsertLinkDialog.tsx`) on top of T6's event and selection handling. Sections:
 1. URL field: Insert link, as today.
 2. "Paste a reference" field: accepts a `skylines://` token and inserts it as a chip on Enter or a button press. Invalid input shows an inline error.
-3. A searchable tree, in a new read-only component (for example `components/editor/ReferencePicker.tsx`; don't reuse the sidebar's `FolderTree`, which is tied to routing, drag and menus). It shows notebooks › folders › notes › pages › text boxes, built from the store's notebooks, folders and notes. It lazy-loads pages with `getPages(noteId)` and text boxes from each page's `canvasData` when expanded, uses the `FolderTree.tsx` sort and filter, and uses `components/ui/collapsible.tsx`. Search filters by title across loaded items. Picking any row inserts that reference.
+3. A searchable tree, in a new read-only component (for example `components/editor/ReferencePicker.tsx`; don't reuse the sidebar's `FolderTree`, which is tied to routing, drag and menus). It shows notebooks › folders › notes › pages › text boxes, built from the store's notebooks, folders and notes. It lazy-loads pages with `getPages(noteId)` and text boxes from each page's `canvasData` when expanded, uses the `FolderTree.tsx` sort and filter, and uses `components/ui/collapsible.tsx`. Search filters by title across everything: the first search loads every note's pages and text boxes (cached after that), so nothing needs expanding first. Picking any row inserts that reference.
 4. Sticky notes: the existing list with search and the preview toggle, inserting `sticky` references.
 5. Create new sticky note: create it, open its window, insert its reference.
 
@@ -650,3 +650,4 @@ Test steps:
 - [x] T16 Double-clicking a chip follows it
 - [x] T10 Hover previews
 - [x] T15 References to images
+- [x] T11 Insert link dialog: tree, paste box and references

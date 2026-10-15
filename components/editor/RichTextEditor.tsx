@@ -12,7 +12,7 @@ import type { Note } from "@/types";
 import { formatActions, selectFormatActionState } from "@/components/ribbon/formatActions";
 import { cn } from "@/lib/utils";
 import { Link as LinkIcon } from "lucide-react";
-import { LinkOrStickyDialog } from "./LinkOrStickyDialog";
+import { InsertLinkDialog } from "./InsertLinkDialog";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import "./editor.css";
@@ -120,6 +120,15 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
   });
 
+  // Opens on the Ribbon's link button, but only for the editor it targets.
+  const linkDialogRequest = useAppStore((s) => s.linkDialogRequest);
+  const seenLinkRequestRef = useRef(linkDialogRequest);
+  useEffect(() => {
+    if (seenLinkRequestRef.current === linkDialogRequest) return;
+    seenLinkRequestRef.current = linkDialogRequest;
+    if (editor && useAppStore.getState().activeEditor === editor) setLinkDialogOpen(true);
+  }, [linkDialogRequest, editor]);
+
   const setLink = useCallback(() => {
     if (!editor) return;
     setLinkDialogOpen(true);
@@ -192,7 +201,7 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
         <EditorContent editor={editor} className="flex-1" />
       </div>
 
-      <LinkOrStickyDialog
+      <InsertLinkDialog
         open={linkDialogOpen}
         onOpenChange={setLinkDialogOpen}
         editor={editor}
