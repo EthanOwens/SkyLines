@@ -71,6 +71,8 @@ declare module "@tiptap/core" {
     reference: {
       /** Replaces the selection with a chip, using any selected text as its label. */
       insertReference: (ref: Reference) => ReturnType;
+      /** Turns the chip at pos into its label as plain text, or deletes it if it has none. */
+      removeReference: (pos: number) => ReturnType;
     };
   }
 }
@@ -145,6 +147,18 @@ export const ReferenceNode = Node.create({
 
   addCommands() {
     return {
+      removeReference:
+        (pos) =>
+        ({ state, tr, dispatch }) => {
+          const node = state.doc.nodeAt(pos);
+          if (node?.type.name !== "reference") return false;
+          if (dispatch) {
+            const label = (node.attrs as ReferenceAttrs).label;
+            if (label) tr.replaceWith(pos, pos + node.nodeSize, state.schema.text(label, node.marks));
+            else tr.delete(pos, pos + node.nodeSize);
+          }
+          return true;
+        },
       insertReference:
         (ref) =>
         ({ state, tr, dispatch }) => {

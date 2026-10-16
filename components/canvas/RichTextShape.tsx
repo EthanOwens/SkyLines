@@ -66,7 +66,7 @@ import {
   toggleHighlight,
 } from "@/components/ribbon/formatActions";
 import { cn } from "@/lib/utils";
-import { Link as LinkIcon, Link2, Highlighter } from "lucide-react";
+import { Link as LinkIcon, Link2, Unlink, Highlighter } from "lucide-react";
 import "@/components/editor/editor.css";
 
 // One formatter so the date and time always share a consistent format.
@@ -220,11 +220,13 @@ export function EditingContextMenu({
   x,
   y,
   onCopyReference,
+  onRemoveLink,
   onClose,
 }: {
   x: number;
   y: number;
   onCopyReference: () => void;
+  onRemoveLink?: () => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -291,6 +293,20 @@ export function EditingContextMenu({
         <Link2 className="size-4 shrink-0" />
         Copy reference
       </button>
+      {onRemoveLink && (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onClose();
+            onRemoveLink();
+          }}
+          className="flex w-full cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm select-none hover:bg-accent hover:text-accent-foreground"
+        >
+          <Unlink className="size-4 shrink-0" />
+          Remove link
+        </button>
+      )}
     </div>,
     document.body,
   );
@@ -310,6 +326,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     x: number;
     y: number;
     imageId?: string;
+    linkPos?: number;
   } | null>(null);
   const closeEditingMenu = useCallback(() => setEditingMenuAt(null), []);
   const copyShapeReference = useCopyShapeReference();
@@ -392,6 +409,17 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
   // Pending image-editor listeners, removed on unmount so a pop-out that never
   // saves can't leak one or patch a destroyed view.
   const pendingImageEditorUnlistens = useRef<Set<() => void>>(new Set());
+  function removeLinkAt(pos: number) {
+    if (!tiptapEditor) return;
+    const chain = tiptapEditor.chain().focus();
+    if (tiptapEditor.state.doc.nodeAt(pos)?.type.name === "reference") {
+      chain.removeReference(pos).setTextSelection(pos);
+    } else {
+      chain.setTextSelection(pos).extendMarkRange("link").unsetLink();
+    }
+    chain.run();
+  }
+
   useEffect(() => {
     return () => {
       pendingImageEditorUnlistens.current.forEach((fn) => fn());
@@ -560,7 +588,15 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
                 // selectionchange; focus() writes the editor's selection back.
                 tiptapEditor?.view.focus();
                 const img = e.target instanceof Element ? e.target.closest("img[data-image-id]") : null;
+                const linkEl =
+                  e.target instanceof Element
+                    ? e.target.closest("[data-reference-token], a[href]")
+                    : null;
                 setEditingMenuAt({
+                  linkPos:
+                    linkEl && tiptapEditor?.view.dom.contains(linkEl)
+                      ? tiptapEditor.view.posAtDOM(linkEl, 0)
+                      : undefined,
                   x: e.clientX,
                   y: e.clientY,
                   imageId: img?.getAttribute("data-image-id") ?? undefined,
@@ -801,6 +837,9 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           x={editingMenuAt.x}
           y={editingMenuAt.y}
           onCopyReference={() => void copyShapeReference(shape.id, editingMenuAt.imageId)}
+          onRemoveLink={
+            editingMenuAt.linkPos === undefined ? undefined : () => removeLinkAt(editingMenuAt.linkPos!)
+          }
           onClose={closeEditingMenu}
         />
       )}

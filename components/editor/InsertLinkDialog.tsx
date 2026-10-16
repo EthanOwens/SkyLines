@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import type { Editor } from "@tiptap/react";
-import { XIcon } from "lucide-react";
+import { XIcon, Unlink } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -210,6 +210,18 @@ export function InsertLinkDialog({
     insertReference(ref);
   }
 
+  function handleRemoveLink() {
+    if (!editor) return;
+    const saved = savedSelectionRef.current;
+    if (saved?.isNode) {
+      editor.chain().focus().removeReference(saved.from).setTextSelection(saved.from).run();
+    } else {
+      restoreSelection(editor, saved);
+      editor.chain().focus().extendMarkRange("link").unsetLink().run();
+    }
+    onOpenChange(false);
+  }
+
   async function handleCreateNewStickyNote() {
     if (!editor || !userId || creating) return;
     setCreating(true);
@@ -256,13 +268,27 @@ export function InsertLinkDialog({
           </Button>
 
           {chip && (
-            <div className="truncate text-sm text-muted-foreground" data-testid="link-dialog-current">
-              Currently: {chipDisplayText(chip.attrs, chipResolved)}
+            <div className="flex items-center gap-2">
+              <div className="flex-1 truncate text-sm text-muted-foreground" data-testid="link-dialog-current">
+                Currently: {chipDisplayText(chip.attrs, chipResolved)}
+              </div>
+              <Button variant="ghost" size="sm" className="text-destructive" onClick={handleRemoveLink}>
+                <Unlink />
+                Remove link
+              </Button>
             </div>
           )}
 
           <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
-            <h3 className="text-sm font-medium">Web link</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Web link</h3>
+              {currentUrl && !chip && (
+                <Button variant="ghost" size="sm" className="text-destructive" onClick={handleRemoveLink}>
+                  <Unlink />
+                  Remove link
+                </Button>
+              )}
+            </div>
             <div className="flex gap-2">
               <Input
                 type="text"

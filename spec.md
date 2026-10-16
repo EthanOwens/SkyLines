@@ -746,7 +746,7 @@ Test steps:
 
 ### T23 Remove a link or chip
 
-Status: todo
+Status: done
 Depends on: T18, T22
 Tester: yes, the dialog and right-click removals and the resulting text are observable in the DOM; a real right-click may need the user
 
@@ -811,3 +811,4 @@ Test steps:
 - [x] T20 Kind labels and sticky notes in the reference tree
 - [x] T21 Search filters in the reference tree
 - [x] T22 Split the Insert link dialog into two panels
+- [x] T23 Remove a link or chip
