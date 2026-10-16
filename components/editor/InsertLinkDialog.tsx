@@ -262,7 +262,7 @@ export function InsertLinkDialog({
       onKeyUp={stopReactPropagation}
     >
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="max-h-[90vh] max-w-[calc(100%-1rem)] overflow-y-auto sm:max-w-md" showCloseButton={false} finalFocus={false}>
+        <DialogContent className="grid-cols-[minmax(0,1fr)] max-h-[90vh] max-w-[calc(100%-1rem)] overflow-y-auto sm:max-w-md" showCloseButton={false} finalFocus={false}>
           <DialogHeader>
             <DialogTitle>Insert link</DialogTitle>
           </DialogHeader>
@@ -289,7 +289,7 @@ export function InsertLinkDialog({
             </div>
           )}
 
-          <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
+          <div className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 p-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">Web link</h3>
               {currentUrl && !chip && (
@@ -320,7 +320,7 @@ export function InsertLinkDialog({
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
+          <div className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 p-3">
             <h3 className="text-sm font-medium">In app</h3>
             <div className="flex gap-2">
               <Input

@@ -244,10 +244,11 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
           <button
             type="button"
             data-ref-row={ref?.kind}
+            title={node.label}
             onClick={() => (ref ? onPick(ref) : toggle(node, !isOpen))}
             className="min-w-0 flex-1 truncate py-1 text-left text-sm"
           >
-            {node.label}
+            {node.label.length > 40 ? `${node.label.slice(0, 40)}…` : node.label}
           </button>
           {ref && (
             <span className="shrink-0 pr-2 text-xs text-muted-foreground">
@@ -262,7 +263,7 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
 
   const rows = tree.map((r) => renderNode(r, 0)).filter(Boolean);
   return (
-    <div className="flex max-h-48 flex-col overflow-y-auto">
+    <div className="flex max-h-48 min-w-0 flex-col overflow-y-auto overflow-x-hidden">
       {query.unknownKinds.length > 0 && (
         <div className="px-1 py-1 text-xs text-muted-foreground">
           Unknown type &apos;{query.unknownKinds[0]}&apos;. Try notebook, folder, note, page, text_box, image or sticky

@@ -130,7 +130,7 @@ Test steps:
 
 ### T3 Long names in the reference tree stay inside the dialog
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes, row text, the title attribute and the dialog's scrollWidth vs clientWidth are measurable in the DOM
 
@@ -164,3 +164,4 @@ Test steps:
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Pasting over an auto-text link or chip replaces it
 - [x] T2 Re-embedding a web link updates its text
+- [x] T3 Long names in the reference tree stay inside the dialog
