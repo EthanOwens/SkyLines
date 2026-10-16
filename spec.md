@@ -556,7 +556,7 @@ Test steps:
 
 ### T18 Edit a selected chip through the Insert link dialog
 
-Status: todo
+Status: done
 Depends on: T11, T17
 Tester: yes, selecting a chip, opening the dialog and checking the replaced chip and undo are all observable
 
@@ -806,3 +806,4 @@ Test steps:
 - [x] T15 References to images
 - [x] T11 Insert link dialog: tree, paste box and references
 - [x] T17 Sticky notes get the Insert link dialog
+- [x] T18 Edit a selected chip through the Insert link dialog

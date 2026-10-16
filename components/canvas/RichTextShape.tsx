@@ -480,6 +480,12 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
   });
 
+  const chipSelected = useEditorState({
+    editor: tiptapEditor,
+    selector: ({ editor }) =>
+      !!editor && isNodeSelection(editor.state.selection) && editor.state.selection.node.type.name === "reference",
+  });
+
   const selectedImageId = useEditorState({
     editor: tiptapEditor,
     selector: ({ editor }) => {
@@ -621,14 +627,26 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
                 return false;
               }
               if (isNodeSelection(selection)) {
-                return selection.node.type.name === "image" && !!selection.node.attrs.id;
+                return (
+                  selection.node.type.name === "reference" ||
+                  (selection.node.type.name === "image" && !!selection.node.attrs.id)
+                );
               }
               return true;
             }}
             // Compact and wrapping, so it fits near a 320x200 shape.
             className="flex max-w-[220px] flex-wrap items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
           >
-            {selectedImageId ? (
+            {chipSelected ? (
+              <button
+                type="button"
+                title="Insert link"
+                onClick={setLink}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <LinkIcon className="h-3 w-3" />
+              </button>
+            ) : selectedImageId ? (
               <button
                 type="button"
                 title="Copy reference"

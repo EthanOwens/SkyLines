@@ -49,7 +49,7 @@ export function referenceFromAttrs(attrs: ReferenceAttrs): Reference | null {
   return { kind: attrs.kind, id: attrs.id };
 }
 
-function attrsFromReference(ref: Reference, label: string | null): ReferenceAttrs {
+export function attrsFromReference(ref: Reference, label: string | null): ReferenceAttrs {
   return {
     kind: ref.kind,
     id: ref.id,

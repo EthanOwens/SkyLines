@@ -15,7 +15,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ReferencePicker } from "./ReferencePicker";
-import { parseReference, type Reference } from "@/lib/references/format";
+import { chipDisplayText } from "./ReferenceChip";
+import { useResolvedReference } from "@/lib/references/useResolvedReference";
+import { attrsFromReference, referenceFromAttrs, type ReferenceAttrs } from "@/lib/tiptap/reference";
+import { NodeSelection } from "@tiptap/pm/state";
+import { formatReference, parseReference, type Reference } from "@/lib/references/format";
 import { getStickyNotes, createStickyNote } from "@/lib/db/stickyNotes";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
 import { extractPlainText, extractFirstImageSrc } from "@/lib/tiptap/extractText";
@@ -30,7 +34,14 @@ interface InsertLinkDialogProps {
   userId: string | null;
 }
 
-type SavedSelection = { from: number; to: number };
+type SavedSelection = { from: number; to: number; isNode: boolean };
+
+// A selected reference chip, which the dialog edits instead of inserting.
+function selectedChip(editor: Editor) {
+  const { selection } = editor.state;
+  if (!(selection instanceof NodeSelection) || selection.node.type.name !== "reference") return null;
+  return { pos: selection.from, attrs: selection.node.attrs as ReferenceAttrs };
+}
 
 // Actions apply to the selection captured when the dialog opened, which may
 // have moved since (for example through a content sync on the canvas).
@@ -105,11 +116,17 @@ export function InsertLinkDialog({
   const [creating, setCreating] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
+  const [chip, setChip] = useState<{ pos: number; attrs: ReferenceAttrs } | null>(null);
+  const chipRef = useMemo(() => (chip ? referenceFromAttrs(chip.attrs) : null), [chip]);
+  const chipResolved = useResolvedReference(chipRef);
+
   const savedSelectionRef = useRef<SavedSelection | null>(null);
   useEffect(() => {
     if (!open || !editor) return;
     const { from, to } = editor.state.selection;
-    savedSelectionRef.current = { from, to };
+    const nextChip = selectedChip(editor);
+    savedSelectionRef.current = { from, to, isNode: nextChip !== null };
+    setChip(nextChip);
   }, [open, editor]);
 
   useEffect(() => {
@@ -119,7 +136,9 @@ export function InsertLinkDialog({
     setUrlInput(insertsNewLink ? "" : (currentUrl ?? ""));
     setSearch("");
     setTreeSearch("");
-    setRefInput("");
+    const openChip = editor ? selectedChip(editor) : null;
+    const openRef = openChip ? referenceFromAttrs(openChip.attrs) : null;
+    setRefInput(openRef ? formatReference(openRef) : "");
     setRefError(false);
     if (userId) {
       void getStickyNotes(userId).then(setStickyNotes);
@@ -141,7 +160,8 @@ export function InsertLinkDialog({
     if (!nextOpen && editor && editor.isEditable) {
       const saved = savedSelectionRef.current;
       const chain = editor.chain().focus();
-      if (saved) chain.setTextSelection(saved);
+      if (saved?.isNode) chain.setNodeSelection(saved.from);
+      else if (saved) chain.setTextSelection(saved);
       chain.run();
     }
     onOpenChange(nextOpen);
@@ -149,13 +169,50 @@ export function InsertLinkDialog({
 
   function handleSubmitUrl() {
     if (!editor) return;
-    applyUrl(editor, urlInput.trim(), savedSelectionRef.current);
+    const href = urlInput.trim();
+    const saved = savedSelectionRef.current;
+    if (saved?.isNode) {
+      const node = editor.state.doc.nodeAt(saved.from);
+      if (href !== "" && node?.type.name === "reference") {
+        editor
+          .chain()
+          .focus()
+          .insertContentAt(
+            { from: saved.from, to: saved.from + node.nodeSize },
+            { type: "text", text: href, marks: [{ type: "link", attrs: { href } }] },
+          )
+          .unsetMark("link")
+          .run();
+        onOpenChange(false);
+      } else if (href === "") {
+        handleOpenChange(false);
+      }
+      return;
+    }
+    applyUrl(editor, href, saved);
     onOpenChange(false);
   }
 
   function insertReference(ref: Reference) {
     if (!editor) return;
-    restoreSelection(editor, savedSelectionRef.current);
+    const saved = savedSelectionRef.current;
+    if (saved?.isNode) {
+      const node = editor.state.doc.nodeAt(saved.from);
+      if (node?.type.name === "reference") {
+        const attrs = attrsFromReference(ref, null);
+        editor
+          .chain()
+          .focus()
+          .command(({ tr }) => {
+            tr.setNodeMarkup(saved.from, undefined, attrs);
+            return true;
+          })
+          .run();
+      }
+      onOpenChange(false);
+      return;
+    }
+    restoreSelection(editor, saved);
     editor.chain().focus().insertReference(ref).run();
     onOpenChange(false);
   }
@@ -210,6 +267,12 @@ export function InsertLinkDialog({
             <XIcon />
             <span className="sr-only">Close</span>
           </Button>
+
+          {chip && (
+            <div className="truncate text-sm text-muted-foreground" data-testid="link-dialog-current">
+              Currently: {chipDisplayText(chip.attrs, chipResolved)}
+            </div>
+          )}
 
           <div className="flex flex-col gap-2">
             <label htmlFor="link-or-sticky-url" className="text-xs font-medium text-muted-foreground">

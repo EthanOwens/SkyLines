@@ -129,6 +129,12 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
     if (editor && useAppStore.getState().activeEditor === editor) setLinkDialogOpen(true);
   }, [linkDialogRequest, editor]);
 
+  const chipSelected = useEditorState({
+    editor,
+    selector: ({ editor }) =>
+      !!editor && isNodeSelection(editor.state.selection) && editor.state.selection.node.type.name === "reference",
+  });
+
   const setLink = useCallback(() => {
     if (!editor) return;
     setLinkDialogOpen(true);
@@ -150,13 +156,14 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
               return false;
             }
             if (isNodeSelection(selection)) {
-              return false;
+              return selection.node.type.name === "reference";
             }
             return true;
           }}
           className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
         >
           {bubbleMenuState &&
+            !chipSelected &&
             bubbleMenuActions.map((action) => (
               <button
                 key={action.id}

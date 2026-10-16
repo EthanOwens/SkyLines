@@ -32,7 +32,7 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 
 ### Lessons
 
-- While the app window is hidden, screenshots come back stale, and timers and close animations stall: closed dialogs linger with `data-closed`, and awaited timeouts in `webview_execute_js` time out. Rely on DOM and computed-style evidence, and use `manage_window` focus when you need the window live.
+- While the app window is hidden, screenshots come back stale, and timers and close animations stall: closed dialogs linger with `data-closed`, and awaited timeouts in `webview_execute_js` time out. The window goes hidden whenever another app takes focus, and `manage_window` focus doesn't wake it: run `osascript -e 'tell application "System Events" to set frontmost of process "skylines" to true'` before each batch of steps, and rely on DOM and computed-style evidence.
 - Simulated events can't start a native window drag or trigger real keyboard focus, so mark those steps for the user.
 - To make a text box, dispatch synthetic `pointerdown` then `pointerup` on `.tl-canvas` with the text tool (no awaits). The first click only deselects the previous box, so click twice.
 - (fragile) Seed canvas data through the tldraw editor, reached by a React fiber walk from `.tl-container` (`memoizedState.memoizedState.current.createShape`). Use a fresh shape id after one hits an error boundary, and keep `webview_execute_js` scripts synchronous (`await` times out).
