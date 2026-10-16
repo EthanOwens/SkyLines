@@ -1,11 +1,11 @@
 "use client";
 
 // Ctrl+K dialog shared by RichTextEditor and RichTextShape. Inserts a web link
-// or a reference chip (pasted token, tree pick, sticky note or a new sticky).
+// or a reference chip (pasted token, tree pick or a new sticky).
 
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import type { Editor } from "@tiptap/react";
-import { XIcon, List, LayoutGrid } from "lucide-react";
+import { XIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -20,10 +20,8 @@ import { useResolvedReference } from "@/lib/references/useResolvedReference";
 import { attrsFromReference, referenceFromAttrs, type ReferenceAttrs } from "@/lib/tiptap/reference";
 import { NodeSelection } from "@tiptap/pm/state";
 import { formatReference, parseReference, type Reference } from "@/lib/references/format";
-import { getStickyNotes, createStickyNote } from "@/lib/db/stickyNotes";
+import { createStickyNote } from "@/lib/db/stickyNotes";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
-import { extractPlainText, extractFirstImageSrc } from "@/lib/tiptap/extractText";
-import type { StickyNote } from "@/types";
 
 interface InsertLinkDialogProps {
   open: boolean;
@@ -108,13 +106,10 @@ export function InsertLinkDialog({
   userId,
 }: InsertLinkDialogProps) {
   const [urlInput, setUrlInput] = useState("");
-  const [search, setSearch] = useState("");
   const [treeSearch, setTreeSearch] = useState("");
   const [refInput, setRefInput] = useState("");
   const [refError, setRefError] = useState(false);
-  const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
   const [creating, setCreating] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
 
   const [chip, setChip] = useState<{ pos: number; attrs: ReferenceAttrs } | null>(null);
   const chipRef = useMemo(() => (chip ? referenceFromAttrs(chip.attrs) : null), [chip]);
@@ -134,24 +129,12 @@ export function InsertLinkDialog({
     const insertsNewLink =
       !!editor && editor.state.selection.empty && !isCursorStrictlyInsideLink(editor);
     setUrlInput(insertsNewLink ? "" : (currentUrl ?? ""));
-    setSearch("");
     setTreeSearch("");
     const openChip = editor ? selectedChip(editor) : null;
     const openRef = openChip ? referenceFromAttrs(openChip.attrs) : null;
     setRefInput(openRef ? formatReference(openRef) : "");
     setRefError(false);
-    if (userId) {
-      void getStickyNotes(userId).then(setStickyNotes);
-    } else {
-      setStickyNotes([]);
-    }
-  }, [open, currentUrl, userId, editor]);
-
-  const filteredStickyNotes = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return stickyNotes;
-    return stickyNotes.filter((n) => n.title.toLowerCase().includes(q));
-  }, [stickyNotes, search]);
+  }, [open, currentUrl, editor]);
 
   // Closing without inserting anything. Base UI's own focus return is off
   // (finalFocus={false}) because the element focused before opening, such as
@@ -357,64 +340,6 @@ export function InsertLinkDialog({
             >
               Create new sticky note
             </Button>
-          </div>
-
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <div className="flex items-center justify-between">
-              <label htmlFor="link-or-sticky-search" className="text-xs font-medium text-muted-foreground">
-                Existing sticky notes
-              </label>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title={showPreview ? "Show titles only" : "Show mini previews"}
-                onClick={() => setShowPreview((v) => !v)}
-              >
-                {showPreview ? <List /> : <LayoutGrid />}
-                <span className="sr-only">Toggle preview</span>
-              </Button>
-            </div>
-            <input
-              id="link-or-sticky-search"
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search sticky notes..."
-              className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-            />
-            <div className="flex max-h-40 flex-col overflow-y-auto">
-              {filteredStickyNotes.length === 0 && (
-                <div className="px-1 py-2 text-xs text-muted-foreground">
-                  {userId ? "No sticky notes found" : "Sign in to view sticky notes"}
-                </div>
-              )}
-              {filteredStickyNotes.map((note) => {
-                const rawPreview = showPreview ? extractPlainText(note.content) : "";
-                // Strip extractPlainText's "[Image]" placeholders from the
-                // preview.
-                const preview = rawPreview.replace(/\[Image\]\s*/g, "").trim();
-                const imageSrc = showPreview && !preview ? extractFirstImageSrc(note.content) : null;
-                return (
-                  <button
-                    key={note.id}
-                    type="button"
-                    onClick={() => insertReference({ kind: "sticky", id: note.id })}
-                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                  >
-                    {imageSrc && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={imageSrc} alt="" className="h-6 w-6 shrink-0 rounded object-cover" />
-                    )}
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate">{note.title || "Untitled"}</span>
-                      {showPreview && preview && (
-                        <span className="line-clamp-2 text-xs text-muted-foreground">{preview}</span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
           <DialogFooter>

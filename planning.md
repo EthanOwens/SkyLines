@@ -1,6 +1,3 @@
-I'd like to have the functionality added to the embed menu: 
-- it should say in faded text next to each thing in the reference drop down tree saying what it is (notebook, folder, note, page, etc)
-- combine sticky note and reference together, so the sticky notes have a drop down in the notebook section
-- I want to have some search filters. Like searching for just notes or text_boxes. Something like "is:text_box" or "has:'search text for text_box'"
-- The embed menu should be more properly split between the 2 sections, it looks loud right now, it should be more notably divided 
-- It shoudld be able to remove an embed too. If the embed had text it should just revert to plain text.
+Things to change:
+- when embedding something that doesn't have an original text you can't just paste over it and the text doesn't change if you re-embed it. For instance, if I copy and paste a link into a text box, I can't highlight it and paste another link over it and if I change the embed of it the text of the link stays the same, but the embed itself is different
+- In the embed menu if the navigation tree opens something with a name that's long it can force there to be a scroll wheeel (for instance a text box with a lot of text). This *can* be fine, but let's make it less likely by adding a character limit on how long the entry can be

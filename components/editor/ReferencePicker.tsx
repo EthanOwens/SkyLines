@@ -10,6 +10,7 @@ import { getPages } from "@/lib/db/pages";
 import { getNotebooks } from "@/lib/db/notebooks";
 import { getFolders } from "@/lib/db/folders";
 import { getNotes } from "@/lib/db/notes";
+import { getStickyNotes } from "@/lib/db/stickyNotes";
 import { extractPlainText } from "@/lib/tiptap/extractText";
 import { Collapsible, CollapsiblePanel } from "@/components/ui/collapsible";
 import type { Reference } from "@/lib/references/format";
@@ -18,7 +19,8 @@ import type { Folder, Note, Notebook, Page } from "@/types";
 interface TreeNode {
   key: string;
   label: string;
-  ref: Reference;
+  // Absent on the Sticky notes group, which isn't pickable.
+  ref?: Reference;
   // Present when the children are already known.
   children?: TreeNode[];
   // Present on nodes whose children need a database read.
@@ -100,6 +102,16 @@ function levelNodes(
   return [...subFolders.map((f) => folderNode(f, folders, notes)), ...levelNotes.map(noteNode)];
 }
 
+const KIND_LABELS: Record<Reference["kind"], string> = {
+  notebook: "notebook",
+  folder: "folder",
+  note: "note",
+  page: "page",
+  shape: "text box",
+  image: "image",
+  sticky: "sticky note",
+};
+
 interface Props {
   search: string;
   onPick: (ref: Reference) => void;
@@ -138,6 +150,28 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
         })),
     [notebooks, folders, notes],
   );
+  const tree = useMemo<TreeNode[]>(
+    () =>
+      userId
+        ? [
+            ...roots,
+            {
+              key: "sticky-group",
+              label: "Sticky notes",
+              load: async () =>
+                (await getStickyNotes(userId)).map((n) => ({
+                  key: `sticky:${n.id}`,
+                  label:
+                    n.title ||
+                    extractPlainText(n.content).replace(/\[Image\]/g, "").trim().slice(0, 60) ||
+                    "Untitled",
+                  ref: { kind: "sticky", id: n.id } as Reference,
+                })),
+            },
+          ]
+        : roots,
+    [roots, userId],
+  );
 
   const kidsOf = useCallback((n: TreeNode) => n.children ?? loaded[n.key], [loaded]);
   const matches = useCallback(
@@ -165,8 +199,8 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
         loadNode(n);
         if (n.children) walk(n.children);
       });
-    walk(roots);
-  }, [q, roots, loadNode]);
+    walk(tree);
+  }, [q, tree, loadNode]);
 
   function toggle(node: TreeNode, next: boolean) {
     setOpen((o) => ({ ...o, [node.key]: next }));
@@ -176,6 +210,7 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
   function renderNode(node: TreeNode, depth: number) {
     if (q && !matches(node)) return null;
     const kids = kidsOf(node);
+    const ref = node.ref;
     const expandable = !!node.load || (kids?.length ?? 0) > 0;
     const isOpen = !!open[node.key] || (q !== "" && !!kids?.some(matches));
     return (
@@ -195,19 +230,24 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
           </button>
           <button
             type="button"
-            data-ref-row={node.ref.kind}
-            onClick={() => onPick(node.ref)}
+            data-ref-row={ref?.kind}
+            onClick={() => (ref ? onPick(ref) : toggle(node, !isOpen))}
             className="min-w-0 flex-1 truncate py-1 text-left text-sm"
           >
             {node.label}
           </button>
+          {ref && (
+            <span className="shrink-0 pr-2 text-xs text-muted-foreground">
+              {KIND_LABELS[ref.kind]}
+            </span>
+          )}
         </div>
         <CollapsiblePanel>{kids?.map((k) => renderNode(k, depth + 1))}</CollapsiblePanel>
       </Collapsible>
     );
   }
 
-  const rows = roots.map((r) => renderNode(r, 0)).filter(Boolean);
+  const rows = tree.map((r) => renderNode(r, 0)).filter(Boolean);
   return (
     <div className="flex max-h-48 flex-col overflow-y-auto">
       {rows.length === 0 ? (

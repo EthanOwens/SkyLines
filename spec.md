@@ -638,7 +638,7 @@ Test steps:
 
 ### T20 Kind labels and sticky notes in the reference tree
 
-Status: todo
+Status: done
 Depends on: T11
 Tester: yes, the kind labels, the Sticky notes group, its rows and the removed sticky list are all visible in the DOM
 
@@ -808,3 +808,4 @@ Test steps:
 - [x] T17 Sticky notes get the Insert link dialog
 - [x] T18 Edit a selected chip through the Insert link dialog
 - [x] T19 Rich previews for web links
+- [x] T20 Kind labels and sticky notes in the reference tree
