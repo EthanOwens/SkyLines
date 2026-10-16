@@ -1,814 +1,164 @@
-# Sticky note polish, working bullet lists, references to anything
+# Link text follows its link, tidy reference tree
 
-Source: planning.md, 2026-10-12; planning-chips.md, 2026-10-15; planning.md (embed menu), 2026-10-15
+Source: planning.md, 2026-10-16
 
 ## Goal
 
-Three areas. Sticky notes get their own taskbar group and icon on Windows, keep their top bar buttons when collapsed, and show previews on the home page that update live. Bullet lists in every text editor become visible and behave like VS Code's Markdown editing. The broken "embed a sticky note" link becomes a general reference system: anything in the app (notebook, folder, note, page, canvas shape, sticky note) can be copied as a reference, pasted or picked into any text box, shown as a prefixed chip with a hover preview, and followed with a click.
+When a link or chip has no text of its own, its visible text should follow what it points to. Today, pasting a URL over a link that shows its own URL only changes where it points, and the old URL text stays. Re-embedding a web link in the Insert link dialog keeps the old text too. Separately, long names in the Insert link dialog's "In app" tree can stretch the dialog and make it scroll sideways. They should be capped and cut off cleanly.
 
 ## Context
 
-- Tauri v2.11.5 (Rust, `src-tauri/`) around a Next.js static export. `@tauri-apps/api` 2.11.1. Tauri APIs are imported dynamically inside handlers and effects (no Tauri runtime during the static build); follow that pattern.
-- Windows created at runtime: sticky notes via `openStickyNoteWindow` in `lib/stickyWindow.ts` (label `sticky-<id>`, `decorations: false`), image editor via `lib/imageEditorWindow.ts`. Each label pattern has a capability file in `src-tauri/capabilities/` (`default.json` = `main` only, `sticky.json`, `image-editor.json`). A window can only use the plugin/core permissions its file grants.
-- Cross-window communication uses Tauri events: `emit` / `listen` from `@tauri-apps/api/event`, as in `image-editor:saved:<id>` (`components/editor/ImageEditor.tsx` emits, `StickyNoteEditor.tsx` / `RichTextShape.tsx` listen). `lib/db/events.ts` (`notifyDataChange` / `subscribeDataChange`) is in-memory per window and does not cross windows.
-- Data hierarchy: Notebook → Folder (nested via `parent_id`) → Note (`/canvas?id=<noteId>`) → Page (`pages` table, `canvas_data` = tldraw snapshot JSON) → tldraw shapes. Sticky notes (`sticky_notes`) sit outside the tree. All row IDs are `crypto.randomUUID()`. Shape IDs (`shape:<nanoid>`) live inside a page's snapshot, are only unique within that page and are duplicated when a page is copied, so a shape is identified by `(pageId, shapeId)`. Types in `types/index.ts`, DB access in `lib/db/*.ts`, migrations in `src-tauri/src/lib.rs` (never edit an existing one).
-- The main window's store (`stores/appStore.ts`) holds notebooks, folders and notes for all notebooks (loaded by `components/AppShell.tsx`); pages are loaded only for the open note (`getPages(noteId)` for others). Sticky and image-editor windows have no shell and no loaded store.
-- Navigation: `setSelectedNotebook(id)` + `router.push("/")` shows a notebook's tree; notes open with `router.push("/canvas?id=<noteId>")`; `CanvasEditor.tsx` picks the first page on load (`setSelectedPageId`) and loads the snapshot in `handleMount`.
-- Three Tiptap 3.29.2 editors each build their own extension list today: `components/editor/RichTextEditor.tsx`, `components/editor/StickyNoteEditor.tsx`, `components/canvas/RichTextShape.tsx` (a tldraw shape; also adds `Highlight`). All three add `Link.configure({ openOnClick: false })` on top of StarterKit v3, which already bundles Link with `openOnClick: true`, so two `link` extensions run.
-- Tiptap's Link rejects any href whose scheme isn't http/https/ftp/mailto/tel/etc. (`isAllowedUri`), so `sticky:<id>` links set by `components/editor/LinkOrStickyDialog.tsx` have never been applied. `lib/tiptap/stickyLinkClick.ts` and the `a[href^="sticky:"]` styles in `components/editor/editor.css` have therefore never matched anything.
-- Canvas text boxes (`RichTextShape.tsx`) have `pointer-events: none` on their content unless being edited, and `setEditable(false)` when not editing. The auto-return-to-text-tool logic is in `components/canvas/RichTextTool.tsx` (`requestReturnToRichText`, `clearPendingReturnToRichText`, `shapesWithSuppressedReenter`, `switchToToolExplicitly`).
-- Context menus: the sidebar items share a `menuItems()` function between the "···" `DropdownMenu` and a Base UI `ContextMenu` (`components/ui/context-menu.tsx`), in `FolderItem.tsx`, `NoteItem.tsx`, `PageItem.tsx`; sticky cards have one in `components/sticky/StickyNotesHome.tsx`. The canvas uses tldraw's default context menu with no overrides. Base UI has no `asChild`; use `render`.
-- Clipboard: only `writeImage` from `@tauri-apps/plugin-clipboard-manager` is used and granted. Text needs `clipboard-manager:allow-write-text` / `allow-read-text` added to the relevant capability files.
-- External URLs open with `@tauri-apps/plugin-opener` (`openUrl`); `opener:default` is granted in `default.json` only.
-- Verification and testing per `CLAUDE.md`. Development and the tester run on macOS, so Windows-only code (`#[cfg(windows)]`) isn't compiled by `cargo check`; if `rustup target list --installed` shows a Windows target, also run `cargo check --target <it>`.
+- The app is Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`.
+- **Editor extensions.** All three Tiptap 3.29.2 editors build their extensions from `createEditorExtensions()` in `lib/tiptap/extensions.ts`, so a paste fix there or in `lib/tiptap/reference.ts` covers all three. The three editors are:
+  - `components/editor/RichTextEditor.tsx`
+  - `components/editor/StickyNoteEditor.tsx`
+  - `components/canvas/RichTextShape.tsx`
+- **Link** comes from StarterKit with `openOnClick: false`. Otherwise Tiptap's defaults apply: `linkOnPaste: true` and `autolink: true`, and the mark is inclusive.
+  - Pasting a URL at an empty cursor inserts the URL text, and Link's paste rule marks it.
+  - The text is the URL as pasted, which linkify normalises for the href. For example, the text `example.com` gets the href `http://example.com`.
+- **Paste handlers, in priority order:**
+  1. `ReferencePaste` (`lib/tiptap/reference.ts`, priority 1001) handles `skylines://` tokens through `insertReference`.
+  2. Link's own `pasteHandler` (priority 1000) handles a single URL pasted over a non-empty selection. It runs `setMark(link, { href })`, so the selected text is never replaced. This is the bug.
+  3. A URL pasted over a selected chip (`NodeSelection`) puts a link mark on the chip node itself. The chip stays, and the new URL is hidden.
+- **Chips** are the inline atom node `reference`.
+  - `label` is fixed text chosen at insert time, and `null` means the chip shows its live title.
+  - `lastTitle` is a cache.
+  - `removeReference(pos)` in `reference.ts` shows how to replace a chip while keeping its marks: `tr.replaceWith(..., schema.text(text, node.marks))`.
+- **Insert link dialog** (`components/editor/InsertLinkDialog.tsx`):
+  - `applyLink` / `applyUrl` / `handleSubmitUrl`: inside a link, or with a text selection, the dialog runs `extendMarkRange("link").setLink({ href })`, which changes only the href.
+  - With an empty selection, it inserts the href as linked text, then runs `unsetMark("link")` so that typing afterwards doesn't extend the link.
+  - Replacing a chip with a URL uses `insertContentAt(range, linked text)`. That drops the surrounding marks (bold, colour, size, highlight).
+  - `currentUrl` comes from `editor.getAttributes("link").href` (`components/ribbon/formatActions.ts`). It is passed by `RichTextEditor.tsx` and `RichTextShape.tsx`, but `StickyNoteEditor.tsx` passes `currentUrl={null}`. So in sticky notes, the URL field is blank on a link and the Web link panel's "Remove link" never shows.
+- **Reference tree.** It is in `components/editor/ReferencePicker.tsx`:
+  - `TreeNode.label` is the name, and `renderNode` draws each row: a label button with `min-w-0 flex-1 truncate`, then a faded kind word.
+  - Plain search words match `label`. `has:` matches `text`, which holds the full text, but only for text boxes and sticky notes.
+  - Text box labels come from `extractPlainText(doc, 60)`. Untitled sticky labels are their text `.slice(0, 60)`, with no "…".
+  - Notebook, folder, note and page names have no limit.
+- **Why the dialog scrolls sideways.** `DialogContent` (`components/ui/dialog.tsx`) is a CSS grid, and the "In app" panel and the list have no `min-w-0`. One long row therefore widens the grid column, so `truncate` never kicks in. The dialog's `overflow-y-auto` then scrolls sideways too.
+- **Shortening helpers.**
+  - `extractPlainText` in `lib/tiptap/extractText.ts` works on Tiptap JSON only.
+  - `lib/references/resolve.ts` has a private `truncate(text, max)` that returns `slice(0, max).trimEnd() + "…"`.
+  - Don't change `extractPlainText`'s defaults or `resolve.ts`'s `TITLE_LENGTH`. They feed chips, hover cards and saved `lastTitle`s.
 
 ## Decisions
 
-- **Collapsed sticky bar:** when collapsed, the top bar shows the dot menu, Pin, Minimize and Close whether or not the window is focused. Expanded behaviour is unchanged (controls only while focused).
-- **Sticky home previews** refresh live through a Tauri event emitted whenever a sticky note is created, updated or deleted, and show up to 3 lines of text.
-- **Taskbar:** on Windows, sticky windows get their own taskbar group (a separate AppUserModelID, `SkyLines.StickyNotes`) and a sticky-note icon. macOS shows one Dock icon per app, so there (and on Windows too) each sticky window's title is the note's title instead of "Sticky note", which names it in the Dock's right-click list, the Window menu and Alt-Tab. The implementer makes a simple placeholder icon (`src-tauri/icons/sticky.png`) that the user can replace.
-- **Bullets:** "- " (dash then space) at the start of a line starts a bullet list; a dash alone stays a dash. Enter adds a bullet at the same level; Enter on an empty nested bullet moves it out one level, and on an empty top-level bullet ends the list (stock behaviour). Tab indents and Shift+Tab outdents the bullet(s) the cursor or selection touches. Where there's nothing to indent or outdent (plain text, the first bullet of a list, Shift+Tab on a top-level bullet, a selection crossing the list's edge), Tab and Shift+Tab do nothing and focus stays in the editor. Backspace at the start of a bullet removes it (stock). The same applies to numbered and task lists.
-- **Numbered lists** start from "1. " (stock) and also from "1 " (a 1 then a space, user's request after T5's first pass). Only the digit 1 triggers the short form, so lines like "3 apples" or "2024 recap" stay as text.
-- **List styling:** markers by depth (disc, circle, square, then repeat) and a left indent per level, in `editor.css`, scoped to `.tiptap` and excluding task lists. Don't install `@tailwindcss/typography`; it would restyle headings and paragraphs everywhere.
-- **The three editors share one extension factory** in `lib/tiptap/extensions.ts`.
-- **Reference format:** the clipboard text is `skylines://<kind>/<id>` with kind `notebook`, `folder`, `note`, `page` or `sticky`, and `skylines://shape/<pageId>/<shapeId>` for a canvas shape. It reuses the app's registered deep-link scheme, though opening these from outside the app is out of scope.
-- **Reference rendering:** an inline atom node (not a Link mark, which avoids URL sanitisation) shown as a chip. In-app places use "#" plus a short path ending in the item's live title (for example "#Week 3 › Lecture notes"), and sticky notes use "%" plus the title. If the user had text selected when inserting, that text becomes the chip's fixed label (after the prefix) instead of the live title. A reference whose target is gone shows its last known title struck through, with "Not found" in its preview. Web links stay normal Link marks with a small "↗" after them.
-- **Inserting references:** paste a `skylines://` token into any text box and it becomes a chip. The Insert link dialog (Ctrl/Cmd+K, the bubble menu's link button and the Ribbon Format tab's link button) has a URL field, a paste-reference field, a searchable tree (notebooks › folders › notes › pages › text boxes), the sticky notes list and "Create new sticky note".
-- **Copying references:** right-click › "Copy reference" on notebooks, folders, notes, pages, sticky cards (home and the sticky window's dot menu) and canvas shapes.
-- **Following references:** in a canvas text box that isn't being edited, a single click on a chip or web link follows it. While editing, and in the always-editable sticky and main editors, Ctrl/Cmd+click follows it. Notebook: show it in the sidebar on the home page. Folder: same, with the folder selected and expanded. Note: open it. Page: open its note on that page. Shape: open the note on that page, then select the shape and zoom to it. Sticky: open its window. From a sticky window, in-app references bring the main window forward and navigate there. Web links open in the default browser.
-- **Hover preview:** hovering a chip or web link for about 400ms shows a card with the kind, the path, the title, and up to 3 lines of text (or the first image if there's no text). For web links it shows the full URL.
-- The ID uniqueness rule means a copied page's shapes keep their IDs. A shape reference always includes its page, so it still resolves to the original page.
-- **Double-click on chips (T16):** double-clicking a chip follows it in every editor and mode. Double-clicking anywhere else on its line, including the small gap just before it, selects a word as normal and never selects the chip. This replaces T13's "double-click selects the chip", which recorded the user's report wrongly. A single click while editing still selects the chip. Web links don't follow on double-click while editing, and no double-click ever follows twice.
-- **Retargeting a chip (T18):** with a chip selected, the Insert link dialog edits it. Picking a target replaces the chip in place and clears any custom label, and a URL replaces it with a web link. The dialog opens on a chip from Ctrl/Cmd+K, the floating toolbar's link button (which now shows for a selected chip) and the Ribbon link button. There is no right-click "Edit reference".
-- **Sticky notes get the Insert link dialog** through Ctrl/Cmd+K (T17). They keep their bottom bar, with no floating toolbar.
-- **Rich web link previews (T19):** like Discord's link embeds, the hover card for a web link shows the site's own preview: the site name, title, description and picture from the page's Open Graph / Twitter Card meta tags. The page is fetched by a Rust command, only when the link is hovered (never on paste), so the site sees a request from this computer only when the user points at its link. The picture is downloaded by Rust and handed to the page as a `data:` URL, so the CSP's `img-src` stays as it is. If anything fails, the card shows the URL as it does after T10.
-- **Reference tree (T20, T21):** each row shows its kind in faded text. Sticky notes are a "Sticky notes" group at the end of the tree, which replaces the separate sticky list and its preview toggle. Untitled sticky notes are labelled by their first line of text. Search takes `is:<kind>` (kinds OR'd) and `has:"text"` (full text of text boxes and sticky notes), ANDed with plain title text. Plain words still match titles only.
-- **Dialog layout (T22):** two bordered panels, "Web link" and "In app", with "Currently: …" above them when editing a chip.
-- **Removing (T23):** "Remove link" in the dialog (on a chip or in a web link) and in the canvas text box's right-click menu. A labelled chip becomes its label as plain text, an unlabelled chip is deleted, and a web link keeps its text. The note editor and sticky notes have no right-click item.
+- **"No original text"** means a chip with `label == null`, or a web link whose text equals its href. The comparison ignores a leading `http://` or `https://` and a trailing `/` on both sides, so the text `example.com` matches the href `http://example.com/`.
+- **Pasting a URL over a selection** replaces the selection with the new URL as linked text, but only when the selection is exactly one of these:
+  - a selected chip, labelled or not, as in the dialog's chip-to-URL case
+  - a web link with no original text, the whole link or any part of it
+  
+  The new text keeps the replaced content's other marks (bold, colour, and so on). Selecting ordinary words, or a link with custom text, and pasting a URL still turns those words into a link (stock behaviour).
+- **Pasting a `skylines://` token** over a selected web link with no original text gives an unlabelled chip. Today the old URL becomes the chip's fixed label. Over a link with custom text, that text still becomes the label (unchanged).
+- **Re-embedding a web link in the dialog** (the cursor or selection is inside an existing link) always replaces the whole link's text with the new URL, even custom text (user's choice). Applying a URL to a text selection that isn't in a link still links those words, as now.
+- Every replacement keeps the replaced text's other marks, adds the link mark, and is one undo step. It is followed by `unsetMark("link")`, so typing afterwards doesn't extend the link.
+- Sticky notes pass `currentUrl` like the other editors, so re-embedding and Remove link work there too.
+- **Tree names:**
+  - Each row's displayed name is capped at 40 characters with "…", and the row's `title` attribute holds the full name.
+  - Rows also never widen the dialog: they cut off at the dialog edge, so the dialog never scrolls sideways.
+  - Plain search words still match the full name (as today for notebooks, folders, notes and pages). Text box and untitled sticky labels stay as they are now: 60 characters at most.
 
 ## Out of scope
 
-- Syncing sticky notes to Firestore. References to sticky notes won't resolve on another device until sticky sync exists.
-- Opening `skylines://` references from outside the app (OS deep links).
-- Typing a prefix ("#", "%") to search and insert a reference inline.
-- Backlinks ("what references this?") and updating references when items are copied.
-- Per-window Dock icons on macOS (not possible).
-- Changing the sticky note bottom bar or the image editor.
-- Embedded players (YouTube, Spotify) and oEmbed in web link previews; a setting to turn previews off.
-- Autocomplete for search filters, and plain search over text content (use `has:`).
+- Changing how chips with a fixed label display, or how labels are chosen at insert time from ordinary selected text.
+- A setting to turn off link-on-paste.
+- Changing the cap on names in chips, hover cards or the "Currently: …" line.
 
 ## Tasks
 
-### T1 Collapsed sticky notes keep their top bar buttons
+### T1 Pasting over an auto-text link or chip replaces it
 
-Status: done
+Status: todo
 Depends on: none
+Tester: yes, a paste can be driven with `editor.view.pasteText(...)` in a text box and the resulting HTML read from the DOM
 
-In `components/editor/StickyNoteTopBar.tsx`, the controls block (Pin, the `MoreVertical` dot menu, Minimize, Close) renders only when `focused && !collapsed`. Change it to render when `focused || collapsed`. The collapsed bar is already the tall `h-10` variant and fits inside the 48px collapsed window (`COLLAPSED_HEIGHT` in `StickyNoteEditor.tsx`). Keep the button group's `onDoubleClick` stopPropagation so double-clicking a button doesn't toggle collapse. Update the file's header comment to describe the new rule.
+Fix the paste path in `lib/tiptap/reference.ts` (inside `ReferencePaste`, or a sibling paste plugin with priority above Link's 1000) for all three editors.
 
-Files: `components/editor/StickyNoteTopBar.tsx`
+1. **A single URL over a chip or an auto-text link.** When the clipboard text/plain is a single URL and the selection is one of the cases under Decisions, replace the selection with the URL as linked text.
+   - A selected chip is a `NodeSelection` on a `reference`.
+   - An auto-text link is a text selection inside one web link whose text equals its href.
+   - Use linkify's href, as Link does: `find` from `linkifyjs`, which Link already uses, or the same check Link's `pasteHandler` makes.
+   - Build the replacement text with the replaced content's marks plus the new link mark, in one transaction, then `unsetMark("link")`.
+   - Return `true`, so Link's `pasteHandler` doesn't also run.
+2. **A `skylines://` token over an auto-text link.** `insertReference` gives an unlabelled chip, instead of using the old URL text as the label.
+3. **Everything else is unchanged.** That covers pasting at an empty cursor, a URL over ordinary text or a custom-text link, and a token over ordinary text.
+4. **Shared helpers.** Put the "is this link's text its own URL" check and the "replace range with linked text, keeping marks" step in exported helpers in `lib/tiptap/reference.ts` (or a new `lib/tiptap/link.ts`). T2 reuses them.
 
-Acceptance:
-- The controls block renders when the note is collapsed, focused or not, and when it is expanded and focused.
-- When expanded and unfocused, the bar still shows only the title.
-- Double-clicking a button in the group doesn't collapse or restore the window.
-
-Test steps:
-1. Open a sticky note window and double-click its top bar: it collapses, and the dot menu, Pin, Minimize and Close buttons are visible.
-2. Click the main window so the sticky note loses focus: the collapsed bar still shows all four buttons.
-3. Click the dot menu on the collapsed note: the menu opens. Close it.
-4. Double-click the bar's title: the note restores to its previous size.
-
-### T2 Live sticky note previews on the home page
-
-Status: done
-Depends on: none
-
-`StickyNotesHome` (`components/sticky/StickyNotesHome.tsx`) loads notes once per open, so edits made in a sticky window don't show until it's reopened. In `lib/db/stickyNotes.ts`, after `createStickyNote`, `updateStickyNote` and `deleteStickyNote` write to SQLite, emit a Tauri event `sticky-note:changed` with `{ id }` (dynamic import of `@tauri-apps/api/event`, ignore failures). In `StickyNotesHome`, while `open`, `listen` for it and re-fetch with `getStickyNotes` (also refresh `openNoteIds`), unlistening on close. Make sure a rename being typed on a card isn't overwritten by a refresh (the card's local `title` state). For previews, call `extractPlainText(note.content, 300)` (`lib/tiptap/extractText.ts`) and change the preview span's `line-clamp-2` to `line-clamp-3`.
-
-Files: `lib/db/stickyNotes.ts`, `components/sticky/StickyNotesHome.tsx`
+Files: `lib/tiptap/reference.ts` (possibly a new `lib/tiptap/link.ts`)
 
 Acceptance:
-- `createStickyNote`, `updateStickyNote` and `deleteStickyNote` emit `sticky-note:changed`.
-- The home listens only while open and cleans up the listener on close and unmount.
-- Card previews use up to 300 characters, clamped to 3 lines.
+- Pasting `https://b.example` over a selected link whose text is `https://a.example` leaves the text `https://b.example`, linked to `https://b.example`, in one undo step.
+- Pasting a URL over a selected chip (labelled or not) replaces the chip with the URL as linked text. No chip keeps a link mark.
+- Pasting a URL over a bold auto-text link leaves bold, linked new text.
+- Pasting a URL over selected ordinary words, or over a link with custom text, still makes those words a link, with the text unchanged.
+- Pasting a `skylines://` token over a selected auto-text link gives a chip with no label. Over a selected custom-text link, the chip's label is that text.
+- Typing right after a replacement isn't linked.
 
 Test steps:
-1. In the main window, open Sticky notes from the Ribbon. Create a sticky note, so its window opens alongside.
-2. Type three or four lines of text into the sticky note and wait about a second: the card in the still-open home updates without closing the dialog.
-3. The card shows up to 3 lines of preview text.
-4. Rename the sticky note in its window and click out of the title: the card's title updates.
-5. Delete the test note from its dot menu: its card disappears from the open home.
-
-### T12 Deleted sticky note windows can be closed
-
-Status: done
-Depends on: none
-
-Added after T2: a sticky note deleted during testing left its window open. When that window reloaded, `app/sticky/page.tsx` showed only "Sticky note not found." Sticky windows have `decorations: false`, so there was no way to close it. Three changes:
-- On the not-found screen (and the no-id screen), keep a slim top bar with the app's drag behaviour (`useWindowDrag` from `hooks/useWindowDrag.ts`) and a Close button that calls `getCurrentWindow().close()`, styled like the Close button in `components/editor/StickyNoteTopBar.tsx`.
-- An open sticky window closes itself when its note is deleted from anywhere. Listen for `sticky-note:changed` (`STICKY_NOTE_CHANGED_EVENT` in `lib/db/stickyNotes.ts`, from T2) for its own id, check `getStickyNoteById`, and if the note is gone, close the window without saving. Deleting from the home page's card menu therefore closes that note's window too.
-- Find out why deleting from the top bar's dot menu (`handleDelete` in `StickyNoteTopBar.tsx`) can leave the window open, and fix it if the cause is in the app. The second change also catches this case, but report what you find.
-
-Files: `app/sticky/page.tsx`, `components/editor/StickyNoteEditor.tsx` or `app/sticky/page.tsx` (listener), `components/editor/StickyNoteTopBar.tsx`
-
-Acceptance:
-- The not-found and no-id screens show a draggable bar with a working Close button.
-- Deleting a sticky note from the home page closes its open window.
-- Deleting from the window's own dot menu closes the window.
-- A pending debounced save in a window whose note was deleted doesn't bring the note back or write to it.
-
-Test steps:
-1. Create a sticky note from the Sticky notes home so its window opens. Then delete it from its card's menu in the home: its window closes.
-2. Create another, type a word, and delete it from its own dot menu: the window closes.
-3. Use `webview_execute_js` in main to open a sticky window for an id that doesn't exist (for example via `openStickyNoteWindow` or by creating a `WebviewWindow` with label `sticky-<fake id>` and url `/sticky/?id=<fake id>`): it shows "Sticky note not found." under a bar with a Close button. Click Close: the window closes.
-4. Check the Sticky notes home: neither test note is listed.
-
-### T3 Sticky windows get their own taskbar group, icon and title
-
-Status: done
-Depends on: none
-
-Add a Rust command `setup_sticky_window(label: String)` in `src-tauri/src/lib.rs` and register it in the invoke handler. It looks up the window and sets its icon from an embedded `src-tauri/icons/sticky.png` (`tauri::image::Image::from_bytes(include_bytes!(..))`; enable the `image-png` feature on `tauri` in `Cargo.toml`). Under `#[cfg(windows)]` only, it gets the window's `hwnd()` and sets `PKEY_AppUserModel_ID` to `SkyLines.StickyNotes` through `SHGetPropertyStoreForWindow`, using the `windows` crate as a Windows-only dependency with the needed Win32 features. That splits sticky notes into their own taskbar group. On other platforms that part is a no-op. Create `sticky.png` as a simple placeholder (a yellow square sticky note with a folded corner, 256×256) using whatever tooling is at hand.
-
-In `lib/stickyWindow.ts`, pass the note's title (or "Untitled") as the window `title` (the caller fetches it with `getStickyNoteById`, or `openStickyNoteWindow` takes an optional title), and call `invoke("setup_sticky_window", { label })` after the window's `tauri://created` event. In `StickyNoteEditor.tsx`, call `getCurrentWindow().setTitle(...)` when the title is saved. Add `core:window:allow-set-title` to `sticky.json`. Also check whether `existing.setFocus()` in `openStickyNoteWindow` needs `core:window:allow-set-focus` in `default.json` (it runs from the main window) and add it if missing.
-
-Files: `src-tauri/src/lib.rs`, `src-tauri/Cargo.toml`, `src-tauri/icons/sticky.png` (new), `lib/stickyWindow.ts`, `components/editor/StickyNoteEditor.tsx`, `src-tauri/capabilities/sticky.json`, `src-tauri/capabilities/default.json`
-
-Acceptance:
-- `setup_sticky_window` is registered, sets the window icon from `sticky.png` on every platform, and sets the AppUserModelID only under `#[cfg(windows)]`.
-- The `windows` crate dependency is Windows-only.
-- Sticky windows open with the note's title as their window title, and the title updates on rename.
-- `cargo check` passes on macOS.
-
-Test steps:
-1. Open an existing sticky note: it opens normally, with no errors in the logs about `setup_sticky_window` or set-focus.
-2. Read the sticky window's title (`manage_window` / window info): it's the note's title, not "Sticky note".
-3. Rename the note in its title field and click away: the window title changes to match.
-4. Manual, Windows: open two sticky notes. They appear as a separate taskbar group from the main SkyLines window, with the sticky-note icon, and hovering the group lists them by title.
-5. Manual, macOS: right-click the Dock icon. Each sticky window is listed by its note's title.
-
-### T4 Shared editor extensions and visible lists
-
-Status: done
-Depends on: none
-
-Bullet lists already work underneath (typing "- " creates one), but nothing draws them. The editors use `prose` classes from `@tailwindcss/typography`, which isn't installed, and Tailwind's preflight strips list markers and padding. Create `lib/tiptap/extensions.ts` exporting a factory (for example `createEditorExtensions({ placeholder, highlight })`) that returns the extension list the three editors build today, and switch `RichTextEditor.tsx`, `StickyNoteEditor.tsx` and `RichTextShape.tsx` to it with no behaviour change (keep the duplicate Link for now; T9 cleans it up). In `components/editor/editor.css`, style `.tiptap ul:not([data-type="taskList"])` and `.tiptap ol`: markers disc → circle → square by nesting depth and decimal for `ol`, a left padding of about 1.25em per level, and small vertical spacing between items. Check that canvas text boxes still size sensibly.
-
-Files: `lib/tiptap/extensions.ts` (new), `components/editor/RichTextEditor.tsx`, `components/editor/StickyNoteEditor.tsx`, `components/canvas/RichTextShape.tsx`, `components/editor/editor.css`
-
-Acceptance:
-- All three editors get their extensions from `lib/tiptap/extensions.ts`; only the canvas passes the option that adds `Highlight`.
-- Bullet lists show markers that change with depth, and each nesting level is indented.
-- Numbered lists show numbers; task list styling is unchanged.
-
-Test steps:
-1. In a canvas text box, type "- one", Enter, "two": two bullet points with visible dots.
-2. Press Tab on "two" (it has a bullet above it): it indents and its marker changes to a hollow circle.
-3. Type "1. first" on a new line outside the list: a numbered list with "1." appears.
-4. In a sticky note, type "- a", Enter, "b": visible bullets there too.
-5. Delete the test text and close the sticky note if you created it.
-
-### T5 Tab and Shift+Tab in lists
-
-Status: done
-Depends on: T4
-
-Add a Tiptap extension in `lib/tiptap/listKeymap.ts` and include it in the factory. Its `addKeyboardShortcuts` handles `Tab` and `Shift-Tab` with high priority:
-- Tab: if the selection is in a `listItem` or `taskItem`, run `sinkListItem` for that type.
-- Shift-Tab: run `liftListItem` only if the item is nested inside another list item. For a top-level item, do nothing.
-- Always return true while the editor is focused, so a failed command (first bullet, plain text, a selection crossing the list's edge) never lets the browser move focus.
-
-The stock "- " input rule, Enter and Backspace behaviour stay as they are. Make sure the handler doesn't affect other keyboard handling, such as the Ctrl/Cmd+K handler in `editorProps.handleKeyDown` or tldraw's shortcuts when the canvas text box isn't being edited.
-
-Files: `lib/tiptap/listKeymap.ts` (new), `lib/tiptap/extensions.ts`
-
-Acceptance:
-- Tab indents and Shift+Tab outdents the list items touched by the cursor or a selection inside one list, for bullet, numbered and task lists.
-- Tab and Shift+Tab never move focus out of the editor and never insert a tab character.
-- Shift+Tab on a top-level list item leaves it unchanged.
-- A dash alone at the start of a line doesn't start a list; "- " does.
-- "1 " at the start of a line starts a numbered list, the same as "1. "; other numbers followed by a space (for example "3 ") don't.
-
-Test steps:
-1. In a canvas text box, type "- one", Enter, "two", Enter. On the new empty bullet press Tab: it becomes a sub-bullet. Type "three".
-2. Press Shift+Tab: "three" moves back to the top level.
-3. Select part of "two" and "three" together and press Tab: both indent under "one".
-4. Put the cursor on "one" (the first bullet) and press Tab: nothing changes and you can keep typing in the text box.
-5. Press Shift+Tab on "one": nothing changes and focus stays.
-6. Press Enter on an empty nested bullet: it moves out one level. Press Enter on an empty top-level bullet: the list ends.
-7. On a plain line, type "-x": it stays as text.
-7a. On a plain line, type "1 " then "first": a numbered list starting at 1 appears. On another plain line, type "3 apples": it stays as text.
-8. Repeat steps 1–4 in a sticky note. Delete all test text and close any sticky note you created.
-
-### T6 Fix the Insert link dialog on the canvas
-
-Status: done
-Depends on: none
-
-On a canvas text box, the Insert link dialog (`components/editor/LinkOrStickyDialog.tsx`, rendered inside the shape at the bottom of `RichTextShape.tsx`) leaves tldraw stuck in its Select tool. React events from the portalled dialog still bubble through the shape's React tree into tldraw's canvas handlers (`useCanvasEvents` on `.tl-canvas`), so a pointerdown in the dialog captures the pointer and ends text editing. The auto-return then gets suppressed (`shapesWithSuppressedReenter` in `RichTextTool.tsx`) and nothing switches back to the text tool.
-
-Fix:
-- Stop pointer, mouse and key events from the dialog's content and backdrop propagating through the React tree, for example with a wrapper that calls `stopPropagation` on `onPointerDown`, `onPointerUp`, `onMouseDown`, `onClick` and `onKeyDown`.
-- Snapshot the editor selection `{from, to}` when the dialog opens and restore it before applying.
-- When the dialog closes, return the shape to editing (or at least `switchToToolExplicitly(editor, "rich-text")`) so the canvas is never left in Select.
-- If the selection is empty when a URL is inserted, insert the URL as linked text at the cursor.
-- Once events no longer leak, remove the `makeHandlers` mousedown workaround and use plain `onClick`.
-
-Leave the sticky-note sections working as they do now; T11 rebuilds the dialog.
-
-Files: `components/editor/LinkOrStickyDialog.tsx`, `components/canvas/RichTextShape.tsx`, `components/canvas/RichTextTool.tsx`
-
-Acceptance:
-- Clicking anywhere in the dialog, its backdrop, Cancel or the close button doesn't end the text box's editing session or change tldraw's current tool.
-- After the dialog closes, by any route, the canvas is in the rich-text tool: clicking empty canvas creates a text box and clicking a text box edits it.
-- Inserting a URL with text selected links that text; with no selection, it inserts the URL as linked text.
-
-Test steps:
-1. Create a canvas text box, type "docs", select it, press Ctrl/Cmd+K, enter `https://example.com` and press Insert link: "docs" becomes a link and the text box is still being edited.
-2. Click on empty canvas: a new text box is created (not stuck in Select).
-3. In a text box with the cursor at the end, press Ctrl/Cmd+K, enter `https://example.org` and insert: the URL appears as linked text.
-4. Open the dialog again and click its backdrop, then reopen and press Cancel: each time, clicking an existing text box enters editing.
-5. Delete the text boxes you created.
-
-### T7 Reference chips
-
-Status: done
-Depends on: T4
-
-Add `lib/references/`:
-- `format.ts`: a `Reference` type `{ kind: "notebook" | "folder" | "note" | "page" | "shape" | "sticky", id, pageId?, shapeId? }`, with `formatReference` / `parseReference` for the `skylines://<kind>/<id>` and `skylines://shape/<pageId>/<shapeId>` tokens.
-- `resolve.ts`: `resolveReference(ref)` returns `{ exists, title, path: string[], previewText, previewImage }` by reading SQLite through `lib/db/*`. A shape is found in its page's `canvasData`; its title is `extractPlainText` of a rich-text shape's content, or the shape type. It must work in sticky windows too, which have no loaded store.
-
-Add a Tiptap inline atom node `reference` (`lib/tiptap/reference.ts`) with attrs `{ kind, id, pageId, shapeId, label, lastTitle }`. It renders a chip through a React node view: "#" plus the last one or two path segments and the title for in-app items (for example "#Week 3 › Lecture notes"), and "%" plus the title for sticky notes. It uses `label` instead of the live title when set, stores the resolved title in `lastTitle`, and shows a struck-through chip with `lastTitle` when `exists` is false. It parses and serializes HTML via a `span[data-reference]`. Add a paste rule or `handlePaste`: plain text that is exactly one `skylines://` token (trimmed) becomes a `reference` node at the cursor, replacing any selection and using the selected text as `label`. Add it to the factory. Style the chip in `editor.css` (rounded, subtle background, theme colours) and replace the dead `a[href^="sticky:"]` chip styles. Clicking and hovering come in T9 and T10.
-
-Files: `lib/references/format.ts` (new), `lib/references/resolve.ts` (new), `lib/tiptap/reference.ts` (new), `lib/tiptap/extensions.ts`, `components/editor/editor.css`
-
-Acceptance:
-- `parseReference(formatReference(r))` round-trips every kind, and `parseReference` returns null for anything else.
-- Pasting exactly one token into any of the three editors inserts a chip; pasting other text behaves as before.
-- Chips show "#" or "%" per kind with the live title or the fixed label, and a missing target renders struck through.
-- The node survives a save and reload (it's part of the stored Tiptap JSON).
-
-Test steps:
-1. Create a note and page for testing. Find its note ID (from the URL `id=` or via `webview_execute_js`) and put `skylines://note/<id>` on the clipboard.
-2. Paste it into a canvas text box: a "#…" chip with that note's title appears.
-3. Rename the note in the sidebar: the chip's title updates (after re-render or reload).
-4. Paste `skylines://sticky/<id>` for a test sticky note into another text box: a "%<title>" chip appears.
-5. Paste `skylines://note/00000000-0000-0000-0000-000000000000`: a struck-through chip appears.
-6. Reload the note: all chips are still there.
-7. Delete the test note, text boxes and sticky note.
-
-### T8 Copy reference from right-click menus
-
-Status: done
-Depends on: T7
-
-Add a "Copy reference" item that writes the item's `formatReference` token to the OS clipboard with `writeText` from `@tauri-apps/plugin-clipboard-manager`. Add `clipboard-manager:allow-write-text` and `allow-read-text` to `default.json` and `sticky.json`. Put it:
-- in the `menuItems()` of notebooks (wherever notebook items have a menu; add one following the `NoteItem` pattern if they don't), `FolderItem`, `NoteItem` and `PageItem`;
-- in the sticky card menu in `StickyNotesHome.tsx` and the dot menu in `StickyNoteTopBar.tsx`;
-- in tldraw's context menu for shapes, via `overrides` / `components.ContextMenu` with `DefaultContextMenuContent` in `components/canvas/CanvasEditor.tsx`, when exactly one shape is selected. It uses the current `selectedPageId` and the shape's ID.
-
-Show brief confirmation (a toast if the app has one, otherwise the item's label changes to "Copied" for a moment, like the image editor's copy flash).
-
-Files: `components/sidebar/FolderItem.tsx`, `components/sidebar/NoteItem.tsx`, `components/sidebar/PageItem.tsx`, the notebook list component, `components/sticky/StickyNotesHome.tsx`, `components/editor/StickyNoteTopBar.tsx`, `components/canvas/CanvasEditor.tsx`, `src-tauri/capabilities/default.json`, `src-tauri/capabilities/sticky.json`
-
-Acceptance:
-- Every listed menu has "Copy reference", and it puts the correct token on the clipboard.
-- The canvas item appears only when exactly one shape is selected and includes the page ID.
-- Pasting the copied token into a text box produces the matching chip (T7).
-
-Test steps:
-1. Right-click a test note in the sidebar › Copy reference, then paste into a canvas text box: a "#<note>" chip appears.
-2. Right-click a page in the page sidebar › Copy reference and paste: a page chip appears.
-3. Right-click a canvas text box (not editing) › Copy reference and paste into another text box: a chip with the first text box's text appears.
-4. In Sticky notes, right-click a test sticky card › Copy reference and paste: a "%" chip appears.
-5. Delete everything you created.
-
-### T13 Reference chip cursor and double-click selection
-
-Status: done
-Depends on: T7
-
-Added after T8 (user report). Two problems with the reference chip (`lib/tiptap/reference.ts`, `components/editor/ReferenceChip.tsx`, `.reference-chip` styles in `components/editor/editor.css`), in canvas text boxes and sticky notes:
-- When a chip is the first thing on a line, double-clicking it doesn't select it. With text before it on the line, a double-click selects that text. Double-clicking a chip anywhere should select the whole chip (a `NodeSelection` on it), and a single click should behave as it does now. Don't add click-to-follow; that's T9.
-- When a chip is the first thing on a line, the text cursor before it is drawn inside the chip's shaded background, just after its left edge, instead of just before the chip. This is a WebKit caret problem with `contenteditable="false"` inline nodes at a line's start. Fix it so the cursor before a chip is drawn outside the chip at every position: line start, mid-line and line end. Also check the cursor after a chip at the end of a line. Use the usual ProseMirror approaches, such as a zero-width spacer or separator before the chip in the node view, moving the chip's padding and background onto an inner element, or a `margin`-based layout, and pick whatever works in WebKit (macOS) without changing what's stored. The stored document and the chip's appearance must stay the same.
-
-Files: `components/editor/ReferenceChip.tsx`, `lib/tiptap/reference.ts`, `components/editor/editor.css`
-
-Acceptance:
-- Double-clicking a chip selects that chip, whether or not there is text before it on the line.
-- With a chip first on a line, the cursor placed before it (click to its left, Home, or arrow keys) is drawn outside the chip's background.
-- The cursor can move across a chip with the arrow keys in both directions, and Backspace/Delete next to a chip remove it.
-- Stored content for chips is unchanged (same `reference` node JSON), and chips look the same as before.
-
-Test steps:
-1. In a canvas text box, paste a reference token as the only thing on a line (copy one with right-click › Copy reference on a note in the sidebar). Double-click the chip: the whole chip is selected (selection outline).
-2. Press Home (or click to the left of the chip): the cursor is drawn just before the chip, not inside its shaded area. Screenshot it zoomed in.
-3. Type "x " before the chip, then double-click the chip: the chip is selected, not "x".
-4. With the cursor just after the chip, press Left twice: the cursor moves before the chip. Press Delete: the chip is removed. Undo.
-5. Repeat steps 1–2 in a sticky note.
-6. Delete the test text box/note and sticky note.
-
-### T14 Reliable Copy reference for text boxes
-
-Status: done
-Depends on: T8
-
-Added after T8 (user report): right-clicking a canvas text box to get Copy reference is unreliable. T8 put "Copy reference" in tldraw's context menu (`CanvasContextMenu` in `components/canvas/CanvasEditor.tsx`). It only shows when exactly one shape is selected, and in the rich-text tool selection on right-click comes from the new `Idle.onRightClick` in `components/canvas/RichTextTool.tsx`. Right-clicking a text box that is being edited goes to the text instead (`RichTextShape.tsx` stops pointer events while editing).
-
-First, reproduce right-clicking text boxes in their different states and record what goes wrong:
-- not selected
-- selected
-- being edited
-- another shape selected
-- right-clicking the text itself versus the box's padding or edge
-- a right-click straight after editing ends
-
-Then make it work every time:
-- Right-clicking any part of a text box that isn't being edited always selects just that box and shows "Copy reference".
-- Right-clicking inside a text box that is being edited shows a menu with "Copy reference" for that box. This can be tldraw's menu, or a small custom menu if tldraw's can't open there. The editor's own selection and focus must stay as they are.
-
-Also add a "Copy reference" button (a link icon, with "Copy reference" as its tooltip) to the text box's formatting bubble menu in `RichTextShape.tsx`. That gives a way that doesn't depend on right-click at all. It copies `skylines://shape/<pageId>/<shapeId>` for the box being edited, via `copyReference` in `lib/references/copy.ts`, and confirms with tldraw's toast like the context menu does.
-
-Report the causes you found.
-
-Files: `components/canvas/CanvasEditor.tsx`, `components/canvas/RichTextTool.tsx`, `components/canvas/RichTextShape.tsx`, `lib/references/copy.ts`
-
-Acceptance:
-- Right-clicking a non-editing text box, anywhere on it, selects only that box and shows "Copy reference", whatever was selected before.
-- Right-clicking inside a text box being edited shows "Copy reference" for that box without ending editing or losing the text selection.
-- The bubble menu has a Copy reference button that copies the box's shape reference and shows a confirmation.
-- tldraw's other context menu behaviour (other shapes, multiple shapes, empty canvas) is unchanged.
-
-Test steps:
-1. Create two text boxes A and B with text. Select B. Right-click A on its text: only A is selected and the menu shows Copy reference. Use it and paste into B: a chip for A appears.
-2. Right-click A near its edge or padding (not on text): same result.
-3. Click into A to edit it, then right-click its text: a menu with Copy reference appears, A stays in editing, and the text selection is kept. Copy and paste into B: a chip for A appears.
-4. While editing A, select some text so the bubble menu appears, and click its Copy reference button: a confirmation shows, and pasting into B gives a chip for A.
-5. Finish editing A, then immediately right-click it: Copy reference shows.
-6. Right-click empty canvas and a non-text shape: menus behave as before.
-7. Delete the test text boxes and note.
-
-### T9 Following references and web links
-
-Status: done
-Depends on: T7
-
-Add `lib/references/navigate.ts`, `followReference(ref)`, which runs in the main window:
-- notebook: `setSelectedNotebook`, `router.push("/")`
-- folder: the same, plus select and expand the folder
-- note: `/canvas?id=`
-- page: `/canvas?id=<noteId>&page=<pageId>`
-- shape: like page, plus `&shape=<shapeId>`
-- sticky: `openStickyNoteWindow`
-
-In `CanvasEditor.tsx`, read the `page` and `shape` query params: select that page instead of the first one, and after `loadSnapshot` in `handleMount`, `select` the shape and zoom to its bounds (respecting `applyPageCameraConstraints`). From a sticky window, emit a Tauri event `reference:follow` with the token; the main window listens for it in `AppShell`, shows and focuses itself (expose the existing `show_main_window` as a command, or use window permissions), then calls `followReference`. A missing target shows a brief "Not found" message instead of navigating.
-
-Click handling:
-- In a canvas text box that isn't being edited, give reference chips and links `pointer-events: auto` and follow them on a plain click, stopping tldraw from receiving that pointerdown.
-- While editing, and in the sticky and main editors, follow on Ctrl/Cmd+click.
-- Replace `lib/tiptap/stickyLinkClick.ts` with this.
-
-Web links: remove the duplicate Link by configuring the one bundled in StarterKit (`StarterKit.configure({ link: { openOnClick: false, ... } })`) in the factory, open http(s)/mailto links with the opener plugin's `openUrl` under the same click rules, add `opener:default` to `sticky.json`, and add a small "↗" after web links in `editor.css`.
-
-Files: `lib/references/navigate.ts` (new), `lib/tiptap/reference.ts`, `lib/tiptap/extensions.ts`, `lib/tiptap/stickyLinkClick.ts` (remove), `components/canvas/CanvasEditor.tsx`, `components/canvas/RichTextShape.tsx`, `components/AppShell.tsx`, `src-tauri/src/lib.rs`, `src-tauri/capabilities/sticky.json`, `components/editor/editor.css`
-
-Acceptance:
-- Each kind navigates as described, and a shape reference ends with that shape selected and in view on its page.
-- In a non-editing canvas text box a plain click follows; while editing it takes Ctrl/Cmd+click. Clicks elsewhere on the text box behave as before.
-- Following an in-app reference from a sticky window brings the main window forward and navigates it.
-- Only one `link` extension is registered, web links open in the default browser, and they show "↗".
-
-Test steps:
-1. Create test note A with two pages. On page 2, make a text box "target", and copy its reference. In note B, paste it into a text box and click away so it isn't being edited.
-2. Click the chip: note A opens on page 2 with "target" selected and in view.
-3. In note B, enter the text box and plain-click the chip: the cursor/selection moves and nothing navigates. Ctrl/Cmd+click it: it navigates.
-4. Paste a sticky note reference into a text box and click it (not editing): that sticky note's window opens.
-5. In a sticky note, paste note A's reference and Ctrl/Cmd+click it: the main window comes forward showing note A.
-6. Click a web link chip "↗" outside editing: the default browser opens (check the logs for the opener call, since the browser itself is out of reach).
-7. Delete the test notes, text boxes and sticky note.
-
-### T16 Double-clicking a chip follows it
-
-Status: done
-Depends on: T9
-Tester: yes, double-clicks, the resulting navigation, the selection and opener calls can all be observed through the webview tools
-
-Added after T9 (user report). T13 recorded the double-click rule wrongly: it made double-clicking a chip select the chip. The intended rule is that double-clicking a chip follows it, in every editor and mode, and double-clicking anywhere else on that line selects the word under the pointer as normal and never selects the chip.
-
-All the click logic is in `lib/tiptap/reference.ts`, which the three editors get from the shared factory:
-- **`referenceDoubleClick` plugin** (T13, `handleDoubleClickOn`, around lines 119-135). It currently sets a `NodeSelection` whenever `direct` is true. That also catches the zero-width space and the 3px margin in front of the chip, which sit inside the node view's `contenteditable=false` wrapper (`components/editor/ReferenceChip.tsx` around 55-72, `.reference-chip` styles in `components/editor/editor.css`).
-  - Decide on `event.target.closest(".reference-chip")`, not on `direct`.
-  - On the chip itself, return true so the browser doesn't select a word, and let the click listener follow.
-  - Anywhere else, return false.
-- **`FollowOnClick` capture `click` listener** (around 222-241). Use `event.detail`:
-  - `detail === 1`: follow under the T9 rules (plain click when not editable, Cmd/Ctrl+click when editable).
-  - `detail === 2` on a chip, in an editable view, with no modifier: follow.
-  - `detail >= 2` on a chip or link whose first click already followed (a view that isn't editable, or a modifier held): `preventDefault` and `stopPropagation` without following again. Today a double-click in those cases follows twice: two `router.push` calls, or two `openStickyNoteWindow` calls racing to create the same window label, or the browser opened twice.
-- **Web links don't follow on double-click while editing.** They're editable text, so double-click keeps selecting a word inside them.
-- **A single plain click while editing still selects the chip** (a `NodeSelection`), which T18 relies on.
-- **Watch WebKit word selection next to a chip.** With no real space between a word and the chip, double-clicking the word must select only that word, never into or across the chip. If WebKit extends it, clamp the selection, for example in the editors' `handleDoubleClick` or in the plugin.
-
-In a canvas text box that isn't being edited, tldraw already never sees pointer events on chips (`keepFollowClickFromTldraw` in `components/canvas/RichTextShape.tsx`), so double-clicking a chip there doesn't enter edit mode. Double-clicking elsewhere on the box still enters editing as before.
-
-Files: `lib/tiptap/reference.ts`, possibly `components/editor/ReferenceChip.tsx` and `components/editor/editor.css`
-
-Acceptance:
-- Double-clicking a chip follows it exactly once: in a canvas text box (editing or not), in a sticky note and in the note editor.
-- Double-clicking outside the `.reference-chip` element on a chip's line, including the gap just before the chip, never selects the chip or navigates. Double-clicking a word selects only that word.
-- A single plain click on a chip while editing selects it without navigating, and Cmd/Ctrl+click follows once.
-- A double-click on a web link opens the browser at most once. While editing, a plain double-click on a link selects a word and opens nothing.
-
-Test steps:
-1. Create test notes A and B. In a text box in B, type "alpha", paste note A's reference right after it (no space), then type " omega". Click away so the box isn't being edited.
-2. Note `history.length` (via `webview_execute_js`), then double-click the chip. Note A opens, and `history.length` grew by exactly 1.
-3. Go back to B and enter the text box. Double-click the chip: note A opens.
-4. In B, editing, double-click "alpha": the selection text is exactly "alpha", the URL is unchanged and the chip has no `ProseMirror-selectednode`. Repeat for "omega", and for the point 1-2px left of the chip's background.
-5. Single-click the chip: it gets `ProseMirror-selectednode` and nothing navigates. Cmd+click it: note A opens once.
-6. Add a web link "https://example.com" to the box. While editing, double-click a word in it: a word is selected and there's no `plugin:opener|open_url` call. Click away, then double-click the link: exactly one `plugin:opener|open_url` call (watch with `ipc_monitor`).
-7. Open a test sticky note, paste note A's reference in it and double-click the chip: the main window comes forward showing note A.
-8. In a canvas text box, paste that sticky note's reference, close the sticky window, click away and double-click the chip: exactly one `sticky-<id>` window opens.
-9. Delete the test notes, text boxes and sticky note, and close the sticky window.
-
-### T10 Hover previews
-
-Status: done
-Depends on: T9
-
-Show a preview card when the pointer rests about 400ms on a reference chip or web link, in all three editors and in non-editing canvas text boxes (chips are hoverable there after T9). Use Base UI's `PreviewCard` from `@base-ui/react` (add a wrapper in `components/ui/preview-card.tsx` following `tooltip.tsx`), or a single floating card driven by the node view if that's simpler inside tldraw. Content, from `resolveReference`: a kind label (Notebook, Folder, Note, Page, Text box, Sticky note), the path, the title in bold, and up to 3 lines of `previewText` (or `previewImage` as a thumbnail if there's no text). For a missing target it shows "Not found". For web links it shows the full URL. Resolve lazily on open and cache per card. The card mustn't steal focus or end text editing.
-
-Files: `components/ui/preview-card.tsx` (new), `lib/tiptap/reference.ts`, `components/canvas/RichTextShape.tsx`, `components/editor/editor.css`
-
-Acceptance:
-- Hovering a chip or web link for about 400ms shows the card, and moving away hides it.
-- The card shows kind, path, title and up to 3 lines of preview (or an image), "Not found" for missing targets, and the URL for web links.
-- Showing the card doesn't change focus, selection or the tldraw tool.
-
-Test steps:
-1. In a test note, paste a reference to a text box that contains several lines, and click away.
-2. Hover the chip: after a moment a card shows "Text box", the note › page path, and the first lines of its text.
-3. Hover a web link: the card shows its URL.
-4. Hover a reference to a deleted item: the card says "Not found".
-5. While editing a text box, hover a chip, then keep typing: text still goes into the text box.
-6. Clean up.
-
-### T15 References to images
-
-Status: done
-Depends on: T9, T10
-Tester: yes, chips, hover cards, missing states and navigation are visible in the DOM; seed images and text boxes through the app or JS, since simulated input can't create a canvas text box
-
-Added after T8 (user request). There are two kinds of pasted image:
-- **Canvas image shapes.** Pasting an image onto the canvas while not editing goes through tldraw's default paste and makes an `image` shape with an asset record in the page snapshot. These can already be copied as a `shape` reference (T8), but `resolveReference` (`lib/references/resolve.ts`) titles them with the raw shape type and gives no `previewImage`.
-- **Images inside text.** Images pasted into a text box or sticky note while editing, or inserted with the Ribbon's image button (`Ribbon.tsx`, `setImage`), are Tiptap `image` nodes with a base64 `src` and no id, so they can't be referenced.
-
-Make both work:
-1. **Canvas image shapes.** For a `shape` reference to an `image` shape, resolve the title as "Image" (or the asset's `name` if it has a meaningful one), and set `previewImage` from the asset's `src` (look up the shape's `props.assetId` in the snapshot's asset records). The chip, hover card (T10) and following (T9, select and zoom) then work as for other shapes.
-2. **Images inside text.**
-   - **Ids:** give the Tiptap image node a stable `id` attribute, kept in the HTML as `data-image-id`, through the shared factory (`lib/tiptap/extensions.ts`, by extending `Image`). An `appendTransaction` plugin assigns `crypto.randomUUID()` to any image node without one, including existing images the next time that editor changes. A pasted image whose id already exists in the same document gets a new one.
-   - **Reference kind:** add a reference kind `image` to `lib/references/format.ts`: `skylines://image/shape/<pageId>/<shapeId>/<imageId>` for an image in a canvas text box, and `skylines://image/sticky/<stickyId>/<imageId>` for one in a sticky note. Keep `parseReference` strict and update the round-trip check.
-   - **Resolving:** `resolveReference` finds the image inside its container's content. Title "Image", path = the container's path plus its title, `previewImage` = the image `src`. If the image is gone, `exists` is false.
-   - **Chip prefix:** "#" when the container is in the notebook, "%" when it's a sticky note.
-   - **Following** (`lib/references/navigate.ts`): follow the container (open the note on its page and select and zoom to the text box, or open the sticky window), then scroll the image into view and briefly highlight it.
-   - **Copying:** right-clicking an image inside a text box or sticky note while editing shows a small menu with "Copy reference". Also add a Copy reference button to the bubble menu when an image node is selected. Both use `copyReference` (`lib/references/copy.ts`) and confirm like T8/T14 do.
-3. **Picker.** If T11 is already done, list images under their text box in its tree. Otherwise T11 picks this up.
-
-Files: `lib/references/format.ts`, `lib/references/resolve.ts`, `lib/references/navigate.ts`, `lib/tiptap/extensions.ts`, `lib/tiptap/imageId.ts` (new), `components/editor/ReferenceChip.tsx`, `components/canvas/RichTextShape.tsx`, `components/editor/StickyNoteEditor.tsx`
-
-Acceptance:
-- A reference to a canvas image shape shows a chip titled "Image" (or the asset name), its hover card shows the picture, and following it selects and zooms to the image.
-- Every image node inside text has a unique `id`, assigned automatically, and stored in the content.
-- Images inside canvas text boxes and sticky notes can be copied as `image` references from a right-click menu and from the bubble menu. Pasting one gives a chip, hovering shows the picture, and clicking opens the container and scrolls to and highlights the image.
-- `parseReference(formatReference(r))` round-trips both `image` forms, and malformed image tokens return null.
-- A deleted image's chip shows as missing.
-
-Test steps:
-1. Paste an image onto empty canvas (not editing) so it becomes an image shape. Right-click it › Copy reference, and paste into a text box: a chip "#… › Image" appears. Hover it: the card shows the picture. Click it from another page: you land on the image, selected.
-2. Edit a text box, paste an image into its text, right-click the image › Copy reference. Paste into another text box: a chip appears. Hover it: the picture shows.
-3. Click that chip (not editing): the note opens on that page, the text box is selected, and the image is scrolled into view and highlighted.
-4. Select the image in the text so the bubble menu shows its Copy reference button. Use it and paste: the same chip.
-5. In a sticky note, paste an image and copy its reference. Paste it into a canvas text box: a "%… › Image" chip. Click it: the sticky window opens with the image in view.
-6. Delete the image from the text box: its chip shows as missing.
-7. Delete all test notes, text boxes, images and the sticky note.
-
-### T11 Insert link dialog: tree, paste box and references
-
-Status: done
-Depends on: T6, T7
-Tester: yes, the dialog's sections, tree, search, errors and inserted chips can all be driven and checked through the webview tools
-
-Rebuild `LinkOrStickyDialog.tsx` (rename it to `InsertLinkDialog.tsx`) on top of T6's event and selection handling. Sections:
-1. URL field: Insert link, as today.
-2. "Paste a reference" field: accepts a `skylines://` token and inserts it as a chip on Enter or a button press. Invalid input shows an inline error.
-3. A searchable tree, in a new read-only component (for example `components/editor/ReferencePicker.tsx`; don't reuse the sidebar's `FolderTree`, which is tied to routing, drag and menus). It shows notebooks › folders › notes › pages › text boxes, built from the store's notebooks, folders and notes. It lazy-loads pages with `getPages(noteId)` and text boxes from each page's `canvasData` when expanded, uses the `FolderTree.tsx` sort and filter, and uses `components/ui/collapsible.tsx`. Search filters by title across everything: the first search loads every note's pages and text boxes (cached after that), so nothing needs expanding first. Picking any row inserts that reference.
-4. Sticky notes: the existing list with search and the preview toggle, inserting `sticky` references.
-5. Create new sticky note: create it, open its window, insert its reference.
-
-Inserting a reference replaces the saved selection with a `reference` node, using the selected text as `label` if there was any. Point the Ribbon Format tab's link action (`components/ribbon/Ribbon.tsx`, which uses `window.prompt` today) at this dialog, for example through a store flag that the active editor (`activeEditor`) listens to. Remove the dialog's dead `sticky:` href code.
-
-Files: `components/editor/InsertLinkDialog.tsx` (renamed), `components/editor/ReferencePicker.tsx` (new), `components/editor/RichTextEditor.tsx`, `components/canvas/RichTextShape.tsx`, `components/ribbon/Ribbon.tsx`, `stores/appStore.ts`
-
-Acceptance:
-- The dialog has the URL field, the paste-reference field, the tree, the sticky list and Create new sticky note, and each inserts the right thing at the saved selection.
-- The tree lazy-loads pages and text boxes, and search filters it.
-- The Ribbon's link button opens this dialog for the active editor; `window.prompt` is gone.
-- After any insert or cancel on the canvas, the canvas is still in the text tool (T6 still holds).
-
-Test steps:
-1. Create a test note with a page containing a text box "alpha". In another text box, press Ctrl/Cmd+K.
-2. In the tree, expand down to the "alpha" text box and pick it: a chip for it is inserted and the dialog closes.
-3. Reopen the dialog, type "alpha" in the search: the matching row shows.
-4. Copy a note's reference from the sidebar, open the dialog and paste it into the reference field: a chip is inserted.
-5. Type "nonsense" into the reference field and submit: an inline error shows and nothing is inserted.
-6. Select some text, open the dialog from the Ribbon's Format tab link button and pick a note: the chip shows the selected text as its label.
-7. Use Create new sticky note: a sticky window opens and a "%Untitled" chip is inserted. Close that window.
-8. Click empty canvas: a new text box is created. Delete everything you created.
-
-### T17 Sticky notes get the Insert link dialog
-
-Status: done
-Depends on: T11
-Tester: yes, Cmd/Ctrl+K, the dialog's tree and what gets inserted can be driven and checked in the sticky window
-
-`components/editor/StickyNoteEditor.tsx` has no link dialog today: no Ctrl/Cmd+K, no bubble menu, no link button. Add a Ctrl/Cmd+K `handleKeyDown` that opens T11's `InsertLinkDialog`, following the pattern in `RichTextEditor.tsx`. Sticky notes stay without a bubble menu; the bottom bar is unchanged.
-
-Sticky windows have no shell and no loaded store, but T11's `ReferencePicker` tree is built from the store's notebooks, folders and notes. When the store is empty (in a sticky window), load them from SQLite through `lib/db/*` instead. Pages and text boxes already lazy-load from the database.
-
-**Create new sticky note** must work from a sticky window. It opens another `sticky-*` window, so check that `src-tauri/capabilities/sticky.json` grants window creation, and add the permission if it doesn't. The dialog has to fit the small sticky window: cap it to the window's size and let it scroll.
-
-Files: `components/editor/StickyNoteEditor.tsx`, `components/editor/InsertLinkDialog.tsx`, `components/editor/ReferencePicker.tsx`, `src-tauri/capabilities/sticky.json`
-
-Acceptance:
-- In a sticky note, Ctrl/Cmd+K opens the Insert link dialog, and each section inserts the right thing at the cursor or selection.
-- In a sticky window, the tree lists notebooks, folders and notes, loaded from the database.
-- Create new sticky note works from a sticky window.
-- The dialog stays within the sticky window, and Escape closes it with the cursor back in the editor.
-
-Test steps:
-1. Create a test note "beta" and a test sticky note, and open the sticky note's window.
-2. In the sticky note, press Cmd+K: the dialog opens inside the window, with no part outside the viewport.
-3. In the tree, expand down to "beta" and pick it: a "#…beta" chip is inserted in the sticky note.
-4. Press Cmd+K, enter "https://example.com" in the URL field and insert it: a web link with "↗" appears.
-5. Press Cmd+K, then Escape: the dialog closes and typing goes into the sticky note.
-6. Press Cmd+K and use Create new sticky note: a second sticky window opens and a "%Untitled" chip is inserted. Close that window.
-7. Delete the test note and both sticky notes.
-
-### T18 Edit a selected chip through the Insert link dialog
-
-Status: done
-Depends on: T11, T17
-Tester: yes, selecting a chip, opening the dialog and checking the replaced chip and undo are all observable
-
-With a chip selected (a `NodeSelection` on a `reference` node; a single click selects one while editing), opening `InsertLinkDialog` opens it on that chip, and picking a new target replaces the chip instead of inserting a second one.
-
-- **Detect the chip** when the dialog opens. T6's saved selection is a plain `{from, to}` restored with `setTextSelection`. Also record whether it was a `NodeSelection`, and restore it with `setNodeSelection` on cancel, so the chip keeps its selection outline.
-- **Show the current target** at the top of the dialog ("Currently: <chip text>"), using `useResolvedReference` (`lib/references/useResolvedReference.ts`). Build the text the chip shows from a small helper factored out of `ReferenceChip.tsx`. Prefill the paste-reference field with `formatReference` of the chip's reference.
-- **Replace in place.** Picking any reference (tree, paste field, sticky list, Create new sticky note) changes that chip's attrs with `setNodeMarkup` at the saved position, as one undo step.
-  - Check `doc.nodeAt(pos)?.type.name === "reference"` first, because the canvas can re-sync content while the dialog is open.
-  - Clear `label` and `lastTitle`, so the chip shows the new target's live title.
-  - The chip keeps its marks.
-  - Export `attrsFromReference` from `lib/tiptap/reference.ts` if needed.
-- **A URL replaces the chip** with the URL as linked text. Never put a Link mark on the chip itself.
-- **Floating toolbar.** Its `shouldShow` hides it for every `NodeSelection` (`components/canvas/RichTextShape.tsx` around 581-595, `components/editor/RichTextEditor.tsx` around 133-147). Let it show for a selected `reference` node with only the link button, which opens the dialog on the chip.
-  - Sticky notes use Ctrl/Cmd+K only (T17).
-  - The Ribbon's link button opens the same dialog after T11, so it gets edit mode without extra work.
-
-Files: `components/editor/InsertLinkDialog.tsx`, `components/editor/ReferenceChip.tsx`, `lib/tiptap/reference.ts`, `components/canvas/RichTextShape.tsx`, `components/editor/RichTextEditor.tsx`
-
-Acceptance:
-- With a chip selected, Ctrl/Cmd+K (all three editors), the floating toolbar's link button (canvas and note editor) and the Ribbon link button open the dialog showing the chip's current target, with its token in the paste field.
-- Picking a new target changes that chip in place: the text box still has exactly one chip, it points to the new target, it shows the live title (any custom label is gone), and a single undo restores the old chip.
-- Entering a URL with a chip selected replaces the chip with a web link; the chip never ends up with a Link mark.
-- Cancelling leaves the chip selected (`NodeSelection`) and unchanged.
-- With no chip selected, the dialog inserts exactly as in T11.
-
-Test steps:
-1. Create test notes A and C. In a text box in note B, type "my label", select it, and paste note A's reference: a chip labelled "my label" appears.
-2. Click the chip while editing to select it. Press Cmd+K: the dialog shows "Currently: …my label" (or A's path), and the paste field holds A's token.
-3. In the tree, pick note C: the box has one chip, it shows C's title, and following it opens C.
-4. Press Cmd+Z: the chip is back, pointing to A and labelled "my label".
-5. Select the chip: the floating toolbar shows a link button. Click it: the dialog opens on the chip. Press Escape: the chip still has `ProseMirror-selectednode` and is unchanged.
-6. Select the chip, press Cmd+K, enter "https://example.com" in the URL field and insert it: the chip is replaced by a web link with "↗".
-7. In a test sticky note with a chip, click the chip, press Cmd+K and pick note C: the chip now points to C.
-8. Delete the test notes, text boxes and sticky note.
-
-### T19 Rich previews for web links
-
-Status: done
-Depends on: T10
-Tester: yes, hovering a web link and checking the card's title, description and image is observable in the DOM (needs network access)
-
-Added after T10 (user request). T10's hover card (`lib/tiptap/hoverPreview.ts`) shows only the URL for web links. Make it show the site's own preview, as Discord does: sites choose their preview through `<meta>` tags in the page header.
-
-1. **Rust commands** in `src-tauri/src/lib.rs` (or a new `link_preview.rs` module), registered in `generate_handler!` next to the existing commands. Add `reqwest` with `default-features = false` and the `rustls-tls` feature, so neither platform needs OpenSSL.
-   - `fetch_page_head(url)`: returns `{ contentType, html }`. Read the body only until `</head>` or 512 KB, whichever comes first.
-   - `fetch_image(url)`: returns a `data:` URL. It accepts only `image/*` responses up to 2 MB.
-   - Both accept only `http` and `https`, time out after 5 seconds, and refuse `localhost` and literal loopback or private IP hosts. Every failure is returned as an `Err` string. Nothing panics.
-2. **Parsing** in a new `lib/linkPreview.ts`.
-   - Read the head with the webview's `DOMParser`, which never runs scripts.
-   - Take `og:title` (else `<title>`), `og:description` (else `meta name="description"`), `og:site_name` (else the host), `og:image` (else `twitter:image`), `twitter:card` and `theme-color`.
-   - Resolve a relative image URL against the page URL, then load it through `fetch_image`.
-   - If `contentType` is `image/*`, the link is the image itself: fetch it the same way and show it.
-   - Cache results per URL in memory for the session, failures included, so hovering again doesn't re-fetch. Import Tauri's `invoke` dynamically, as elsewhere.
-3. **Card** (`hoverPreview.ts`, `editor.css`).
-   - For a web link, show the URL straight away, then fill in the site name, the bold title, up to 3 lines of description and the picture when the fetch finishes.
-   - The picture goes full width under the text when `twitter:card` is `summary_large_image`, and is a small thumbnail beside the text otherwise.
-   - If there's a `theme-color`, show it as a left border.
-   - Set every fetched string with `textContent`, never as HTML.
-   - If the pointer has left before the fetch finishes, don't show the card (the result is still cached). On any failure, keep the URL-only card.
-   - Fetch only from a hover, never on paste or render. Reference chips are unchanged.
-
-Files: `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `lib/linkPreview.ts` (new), `lib/tiptap/hoverPreview.ts`, `components/editor/editor.css`
-
-Acceptance:
-- Hovering a web link to a page with Open Graph tags shows its site name, title, up to 3 lines of description and its image (large or thumbnail per `twitter:card`), with the URL still shown.
-- A link straight to an image shows that image.
-- A page with no tags, a timeout, a non-http(s) URL, `localhost` or a private IP falls back to the URL-only card without errors in the console.
-- Hovering the same link twice fetches it once.
-- The CSP in `tauri.conf.json` is unchanged, and no page fetch happens on paste or render.
-
-Test steps:
-1. In a test note's text box (create it by hand or seed it, per the Testing lessons), add web links to https://github.com, to an image URL such as https://github.githubassets.com/favicons/favicon.png, and to http://localhost:1, then click away.
-2. Hover the github.com link: after a moment the card shows "GitHub", a title, a description and an image, with the URL.
-3. Hover the image link: the card shows the image.
-4. Hover the localhost link: the card shows only the URL, with no console errors.
-5. Hover github.com again: the card fills in immediately, with no new `fetch_page_head` call (check with `ipc_monitor`).
+1. Create a test note with a text box. Paste `https://a.example` into it: the link text is `https://a.example`.
+2. Select that whole link and paste `https://b.example`: the text and href are both `https://b.example`. Press Cmd+Z: the text and href are `https://a.example` again.
+3. Type "docs", select it and paste `https://c.example`: "docs" is now a link to `https://c.example`.
+4. Insert a chip to the test note, select it (click it while editing) and paste `https://d.example`: the chip is gone, replaced by `https://d.example` linked text.
+5. Paste `https://e.example`, select it, then paste the test note's `skylines://` reference: an unlabelled chip shows the note's live title.
 6. Delete the test note.
 
-### T20 Kind labels and sticky notes in the reference tree
+### T2 Re-embedding a web link updates its text
 
-Status: done
-Depends on: T11
-Tester: yes, the kind labels, the Sticky notes group, its rows and the removed sticky list are all visible in the DOM
+Status: todo
+Depends on: T1
+Tester: yes, the dialog's results are visible in the editor's DOM
 
-Added after T11 (user request, planning.md 2026-10-15). Two changes to the reference tree in `components/editor/ReferencePicker.tsx`, and the dialog's separate sticky list goes away.
+In `components/editor/InsertLinkDialog.tsx`, when the dialog applies a URL with the cursor or selection inside an existing web link, the dialog replaces the whole link (its `extendMarkRange("link")` range) with the new URL as linked text. This happens even when the link has custom text (see Decisions). Use T1's helper so other marks are kept, the change is one undo step, and `unsetMark("link")` follows.
 
-1. **Kind labels.** Every pickable row shows what it is in faded text after its label: `text-xs text-muted-foreground`, `shrink-0`, right-aligned in the row so the label still truncates first. The text comes from `ref.kind`: "notebook", "folder", "note", "page", "text box" (for `shape`), "image" and "sticky note".
-2. **Sticky notes group.** Add a root-level "Sticky notes" row after the notebooks.
-   - It isn't pickable: clicking its label toggles it, like the chevron. It has no kind label. `TreeNode.ref` becomes optional for this row; check every place that reads `ref`.
-   - Its children load lazily with `getStickyNotes(userId)` (`lib/db/stickyNotes.ts`) through the same `load` path notes use, so the first search loads them too (T11's load-all).
-   - Each sticky row's label is its title, else the first 60 characters of `extractPlainText(content)` with `[Image]` removed, else "Untitled". Picking it inserts a `sticky` reference.
-   - `ReferencePicker` gets a `userId` prop. With no user, the group isn't shown.
-3. **Remove the "Existing sticky notes" section** from `components/editor/InsertLinkDialog.tsx`: its label, search box, list/preview toggle and list. Keep the "Create new sticky note" button.
+Also switch the chip-to-URL path from `insertContentAt` to the same helper, so a chip's marks carry over. Applying a URL to a text selection that isn't in a link stays as it is (`setLink` on the selection), and so does inserting at an empty cursor.
 
-Files: `components/editor/ReferencePicker.tsx`, `components/editor/InsertLinkDialog.tsx`
+In `components/editor/StickyNoteEditor.tsx`, pass `currentUrl` the way the other two editors do (`editor.isActive("link") ? editor.getAttributes("link").href : null`, or via `formatActions.ts`), instead of `null`.
+
+Files: `components/editor/InsertLinkDialog.tsx`, `components/editor/StickyNoteEditor.tsx`
 
 Acceptance:
-- Every pickable row in the tree shows its kind in faded text after its label; the Sticky notes row has none.
-- The tree ends with a collapsed "Sticky notes" row whose children are the user's sticky notes, loaded only on expand or search, and picking one inserts a `%` chip.
-- Typing in the tree search finds sticky notes by title without expanding anything.
-- The dialog no longer has the "Existing sticky notes" section or its preview toggle; Create new sticky note still works.
+- With the cursor inside a link (with auto or custom text) and a new URL applied in the dialog, the whole link's text becomes the new URL, linked to it, in one undo step. Bold and colour on the old link carry over.
+- Replacing a bold chip with a URL in the dialog gives bold, linked URL text.
+- Selecting non-link words and applying a URL still links those words, with the text unchanged.
+- In a sticky note, Cmd+K with the cursor in a link prefills the URL field and shows the Web link panel's "Remove link".
 
 Test steps:
-1. Create a test note "gamma" with a text box, and a test sticky note titled "delta".
-2. In another text box, press Ctrl/Cmd+K: the tree's last row is "Sticky notes", and there's no separate sticky list or preview toggle.
-3. Expand the notebook down to "gamma" and its text box: the rows read "notebook", "note", "page" and "text box" in faded text.
-4. Expand "Sticky notes": "delta" is listed with "sticky note". Pick it: a "%delta" chip is inserted.
-5. Reopen the dialog and search "delta": the Sticky notes group opens on its own and shows "delta".
-6. Delete the test note and sticky note.
+1. Create a test note with a text box. Paste `https://a.example`, put the cursor inside it, press Cmd+K and apply `https://b.example`: the text and href are both `https://b.example`. Press Cmd+Z: it's `https://a.example` again.
+2. Make "read this" a link to `https://c.example`. Put the cursor inside it, press Cmd+K and apply `https://d.example`: the text is now `https://d.example`.
+3. Type "plain words", select them, press Cmd+K and apply `https://e.example`: "plain words" is a link, with the text unchanged.
+4. Create a sticky note and paste `https://f.example` into it. Put the cursor inside it and press Cmd+K: the URL field shows `https://f.example` and "Remove link" shows in the Web link panel. Apply `https://g.example`: the text becomes `https://g.example`.
+5. Delete the test note and the sticky note.
 
-### T21 Search filters in the reference tree
+### T3 Long names in the reference tree stay inside the dialog
 
-Status: done
-Depends on: T20
-Tester: yes, typing filter queries and checking which rows show is all observable in the DOM
+Status: todo
+Depends on: none
+Tester: yes, row text, the title attribute and the dialog's scrollWidth vs clientWidth are measurable in the DOM
 
-Added after T11 (user request, planning.md 2026-10-15). The tree search in `ReferencePicker.tsx` gains `is:` and `has:` filters.
+There are two parts.
 
-1. **Parser** in a new `lib/references/searchQuery.ts`: a pure function, for example `parseSearchQuery(q)`, returning the kinds, the `has:` phrases, the remaining title text and any unknown kinds.
-   - Split on whitespace, keeping quoted phrases (`"…"` or `'…'`) together.
-   - `is:<kind>` with `notebook`, `folder`, `note`, `page`, `text_box` (also `textbox`, `text-box`), `image` and `sticky` (also `sticky_note`), case-insensitive. Several `is:` filters mean any of those kinds.
-   - `has:<word>`, `has:"two words"` or `has:'two words'`: the row's full text contains the phrase, case-insensitive. Several `has:` filters must all match.
-   - The other words, joined with single spaces, match the row's label as today (case-insensitive substring).
-   - All parts combine with AND. Only text boxes and sticky notes have text, so any other row fails a `has:` filter.
-2. **Matching.**
-   - Text boxes keep their full text alongside the 60-character label: `extractPlainText` of the shape's doc with no length cap, as `textBoxNodes` already has the doc. Sticky rows keep `extractPlainText(content)`.
-   - Rows that don't match still show when a descendant matches, and auto-expand, as today.
-   - Any non-empty query, filters included, triggers T11's load-all.
-3. **Hints.**
-   - The search placeholder becomes `Search (e.g. is:note has:"text")`.
-   - An unknown `is:` value shows a faded line under the search, "Unknown type 'xyz'. Try notebook, folder, note, page, text_box, image or sticky", and nothing matches.
+1. **Character cap.** In `components/editor/ReferencePicker.tsx`'s `renderNode`, show each row's `label` capped at 40 characters with "…", and put the full `label` in the label button's `title`.
+   - Cap only at render time, so search (`matches`) still uses the full `label`.
+   - For the helper, export `resolve.ts`'s `truncate` or add a small plain-string one next to `extractPlainText`. Don't change existing limits elsewhere.
+2. **Layout.** Stop wide rows from widening the dialog, so the label's `truncate` takes effect.
+   - Add `min-w-0` to the "In app" panel in `InsertLinkDialog.tsx` and to the tree list in `ReferencePicker.tsx`. Use `grid-cols-[minmax(0,1fr)]` on that dialog's content if needed.
+   - Add `overflow-x-hidden` to the list, so it scrolls only vertically.
+   - Check the Web link panel and the "Currently: …" line too.
 
-Files: `lib/references/searchQuery.ts` (new), `components/editor/ReferencePicker.tsx`
+Files: `components/editor/ReferencePicker.tsx`, `components/editor/InsertLinkDialog.tsx`, possibly `lib/references/resolve.ts` or `lib/tiptap/extractText.ts`
 
 Acceptance:
-- `is:note` shows only notes, with their notebook and folder ancestors; `is:text_box` only text boxes; `is:note is:page` both.
-- `has:"exact phrase"` shows text boxes and sticky notes whose full text contains the phrase, including text past the first 60 characters, and no other kinds.
-- `is:text_box has:foo bar` shows text boxes whose label contains "bar" and whose text contains "foo".
-- An unknown `is:` value shows the hint and no rows; a plain query behaves as in T11.
+- No tree row shows more than 40 characters of name plus "…", and a capped row's `title` is the full name.
+- With a 200-character note title in the tree, expanded, the dialog's `scrollWidth` equals its `clientWidth` (no sideways scroll), in the main window and in a sticky window.
+- Searching for a word that appears only after the 40th character of a note title still finds that note.
+- Chips, hover cards and the "Currently: …" line show the same text as before.
 
 Test steps:
-1. Create a test note "epsilon" with a page holding two text boxes. Make one's text over 60 characters, ending in "zebra crossing". Make the other's text "other box".
-2. Press Ctrl/Cmd+K in another text box and search `is:note epsilon`: only "epsilon" shows, under its notebook, with no pages or text boxes.
-3. Search `has:"zebra crossing"`: only the first text box shows, with its ancestors.
-4. Search `is:text_box other`: only the "other box" text box shows.
-5. Search `is:xyz`: the unknown-type hint shows and no rows.
-6. Search `is:sticky`: only sticky notes show.
-7. Delete the test note.
-
-### T22 Split the Insert link dialog into two panels
-
-Status: done
-Depends on: T18, T20
-Tester: yes, the panel structure and that each control still inserts are checkable in the DOM; how quiet it looks is for the user
-
-Added after T11 (user request, planning.md 2026-10-15): the dialog looks loud and its parts aren't clearly divided. Restructure `components/editor/InsertLinkDialog.tsx` into two panels.
-
-1. **"Currently: …"** (T18's edit mode, when the dialog opens on a chip) sits at the top, under the title, outside both panels.
-2. **"Web link" panel:** the URL field and its Insert link button.
-3. **"In app" panel**, in this order:
-   - the paste-reference field with its Insert button and inline error, with no separate label (its placeholder becomes "Paste a reference (skylines://…)")
-   - the tree search and `ReferencePicker`
-   - "+ New sticky note" (the Create new sticky note action) as a small ghost button
-4. **Styling.**
-   - Each panel is a `rounded-lg border bg-muted/30 p-3` block with a `text-sm font-medium` heading, and the panels are separated by a gap.
-   - Remove the `border-t` separators and the per-field labels inside the panels.
-   - Use `components/ui/input.tsx` for the inputs instead of the repeated raw `<input>` class string.
-   - Keep the footer's Cancel and the close button.
-5. **Keep the behaviour.** T6's event-stopping wrapper, the saved selection, autofocus on the URL field (the tree search when T18 opens on a chip) and T17's size cap in sticky windows all stay. This is a layout change only: every action inserts exactly as before.
-
-Files: `components/editor/InsertLinkDialog.tsx`
-
-Acceptance:
-- The dialog shows two bordered panels headed "Web link" and "In app", with the controls listed above in that order, and no `border-t` section separators.
-- With a chip selected, "Currently: …" shows above the panels.
-- The URL insert, tree pick, paste-reference insert and error, and New sticky note all work as before.
-- In a sticky window, the dialog still fits the window and scrolls.
-
-Test steps:
-1. Create a test note "zeta" with a text box. In another text box, press Ctrl/Cmd+K: the dialog has a "Web link" panel and an "In app" panel, and there's no border-top separator between sections.
-2. Insert https://example.com from the Web link panel: a web link appears.
-3. Reopen, pick "zeta" in the tree: a chip appears. Reopen, paste "nonsense" in the reference field: the inline error shows.
-4. Click the chip while editing and press Cmd+K: "Currently: …zeta" shows above the panels.
-5. Press Escape. Reopen and use "+ New sticky note": a sticky window opens and a chip is inserted. Close that window.
-6. Delete the test note and the sticky note.
-
-### T23 Remove a link or chip
-
-Status: done
-Depends on: T18, T22
-Tester: yes, the dialog and right-click removals and the resulting text are observable in the DOM; a real right-click may need the user
-
-Added after T11 (user request, planning.md 2026-10-15).
-
-1. **Removing.**
-   - A chip with a `label` becomes that label as plain text, keeping the chip's marks. A chip without a label is deleted.
-   - A web link loses its Link mark and keeps its text (`extendMarkRange("link").unsetLink()`).
-   - Each removal is one undo step.
-   - Add the chip case as a command in `lib/tiptap/reference.ts` (for example `removeReference(pos)`). It checks `doc.nodeAt(pos)?.type.name === "reference"` first, because the canvas can re-sync content.
-2. **In the dialog** (`InsertLinkDialog.tsx`):
-   - A "Remove link" button (ghost, small, `text-destructive`) sits beside "Currently: …" when the dialog opens on a chip (T18). It also sits in the Web link panel when the cursor or selection is in a web link (`currentUrl` is set).
-   - Clicking it removes the link, closes the dialog and puts the cursor where the link was.
-   - This covers all three editors, including sticky notes through Cmd+K (T17).
-3. **In the canvas text box right-click menu** (`EditingContextMenu`, `components/canvas/RichTextShape.tsx`):
-   - When the right-click hits a chip (`[data-reference-token]`) or a web link (`a[href]`) while editing, add "Remove link" (lucide `Unlink` icon) below Copy reference.
-   - Find the position with `view.posAtDOM` on the hit element.
-   - The note editor and sticky notes get no right-click item.
-4. On the canvas, the text tool still holds after a removal (T6).
-
-Files: `lib/tiptap/reference.ts`, `components/editor/InsertLinkDialog.tsx`, `components/canvas/RichTextShape.tsx`
-
-Acceptance:
-- Removing a chip that has a label leaves the label as plain text with the same marks; removing one without a label leaves nothing; removing a web link leaves its text unlinked.
-- Each removal undoes in one step back to the original chip or link.
-- "Remove link" shows in the dialog only when it opened on a chip or with the cursor in a web link, and in the canvas right-click menu only when the click hit a chip or a web link.
-- After removing on the canvas, the box is still being edited and the text tool still holds.
-
-Test steps:
-1. Create test notes A and B. In a text box in B, add:
-   - a chip to A with the label "my label" (select the text, then insert A's reference)
-   - a chip to A with no label
-   - a web link to https://example.com
-2. Click the labelled chip and press Cmd+K: "Remove link" shows beside "Currently". Click it: the chip is gone and "my label" is plain text. Press Cmd+Z: the chip is back.
-3. Right-click the unlabelled chip while editing: the menu has Copy reference and Remove link. Click Remove link: the chip disappears.
-4. Put the cursor inside the web link and press Cmd+K: Remove link shows in the Web link panel. Click it: the text stays, unlinked, with no "↗".
-5. Right-click plain text while editing: the menu has no Remove link.
-6. Delete the test notes.
+1. Create a test note whose title is about 120 characters, ending in "flamingo". Give its page a text box with a long paragraph.
+2. In another text box, press Cmd+K and expand the test note and its page in the tree. Each row's name is at most 40 characters plus "…", hovering shows the full name, and the dialog has no sideways scrollbar (its `scrollWidth` equals its `clientWidth`).
+3. Search "flamingo": the test note shows.
+4. Open a sticky note, press Cmd+K and expand the same rows: there's still no sideways scroll.
+5. Delete the test note and the sticky note.
 
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
-- [x] T1 Collapsed sticky notes keep their top bar buttons
-- [x] T2 Live sticky note previews on the home page
-- [x] T12 Deleted sticky note windows can be closed
-- [x] T3 Sticky windows get their own taskbar group, icon and title
-- [x] T4 Shared editor extensions and visible lists
-- [x] T5 Tab and Shift+Tab in lists
-- [x] T6 Fix the Insert link dialog on the canvas
-- [x] T7 Reference chips
-- [x] T8 Copy reference from right-click menus
-- [x] T13 Reference chip cursor and double-click selection
-- [x] T14 Reliable Copy reference for text boxes
-- [x] T9 Following references and web links
-- [x] T16 Double-clicking a chip follows it
-- [x] T10 Hover previews
-- [x] T15 References to images
-- [x] T11 Insert link dialog: tree, paste box and references
-- [x] T17 Sticky notes get the Insert link dialog
-- [x] T18 Edit a selected chip through the Insert link dialog
-- [x] T19 Rich previews for web links
-- [x] T20 Kind labels and sticky notes in the reference tree
-- [x] T21 Search filters in the reference tree
-- [x] T22 Split the Insert link dialog into two panels
-- [x] T23 Remove a link or chip
