@@ -670,7 +670,7 @@ Test steps:
 
 ### T21 Search filters in the reference tree
 
-Status: todo
+Status: done
 Depends on: T20
 Tester: yes, typing filter queries and checking which rows show is all observable in the DOM
 
@@ -809,3 +809,4 @@ Test steps:
 - [x] T18 Edit a selected chip through the Insert link dialog
 - [x] T19 Rich previews for web links
 - [x] T20 Kind labels and sticky notes in the reference tree
+- [x] T21 Search filters in the reference tree

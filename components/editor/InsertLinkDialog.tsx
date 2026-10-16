@@ -325,7 +325,7 @@ export function InsertLinkDialog({
               type="text"
               value={treeSearch}
               onChange={(e) => setTreeSearch(e.target.value)}
-              placeholder="Search..."
+              placeholder={'Search, or is:note has:"text"'}
               className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
             />
             <ReferencePicker search={treeSearch} onPick={insertReference} userId={userId} />

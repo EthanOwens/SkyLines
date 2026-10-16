@@ -14,11 +14,14 @@ import { getStickyNotes } from "@/lib/db/stickyNotes";
 import { extractPlainText } from "@/lib/tiptap/extractText";
 import { Collapsible, CollapsiblePanel } from "@/components/ui/collapsible";
 import type { Reference } from "@/lib/references/format";
+import { parseSearchQuery } from "@/lib/references/searchQuery";
 import type { Folder, Note, Notebook, Page } from "@/types";
 
 interface TreeNode {
   key: string;
   label: string;
+  // Full text of text boxes and sticky notes, for `has:` filters.
+  text?: string;
   // Absent on the Sticky notes group, which isn't pickable.
   ref?: Reference;
   // Present when the children are already known.
@@ -52,6 +55,7 @@ function textBoxNodes(page: Page): TreeNode[] {
     return {
       key: `shape:${page.id}:${shape.id}`,
       label: extractPlainText(doc, 60) || "Text box",
+      text: extractPlainText(doc, Infinity),
       ref: { kind: "shape", id: shape.id, pageId: page.id, shapeId: shape.id },
       children: images,
     };
@@ -136,7 +140,8 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
   const notes = storeEmpty && db ? db.notes : storeNotes;
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [loaded, setLoaded] = useState<Record<string, TreeNode[]>>({});
-  const q = search.trim().toLowerCase();
+  const query = useMemo(() => parseSearchQuery(search), [search]);
+  const q = search.trim();
 
   const roots = useMemo<TreeNode[]>(
     () =>
@@ -165,6 +170,7 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
                     n.title ||
                     extractPlainText(n.content).replace(/\[Image\]/g, "").trim().slice(0, 60) ||
                     "Untitled",
+                  text: extractPlainText(n.content, Infinity),
                   ref: { kind: "sticky", id: n.id } as Reference,
                 })),
             },
@@ -175,9 +181,16 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
 
   const kidsOf = useCallback((n: TreeNode) => n.children ?? loaded[n.key], [loaded]);
   const matches = useCallback(
-    (n: TreeNode): boolean =>
-      n.label.toLowerCase().includes(q) || (kidsOf(n) ?? []).some(matches),
-    [q, kidsOf],
+    (n: TreeNode): boolean => {
+      if (query.unknownKinds.length) return false;
+      const text = n.text?.toLowerCase() ?? "";
+      const self =
+        (!query.kinds.length || (!!n.ref && query.kinds.includes(n.ref.kind))) &&
+        query.has.every((h) => text.includes(h)) &&
+        n.label.toLowerCase().includes(query.text);
+      return self || (kidsOf(n) ?? []).some(matches);
+    },
+    [query, kidsOf],
   );
 
   // Keys already loaded or being loaded, so each note is fetched once.
@@ -250,6 +263,11 @@ export function ReferencePicker({ search, onPick, userId }: Props) {
   const rows = tree.map((r) => renderNode(r, 0)).filter(Boolean);
   return (
     <div className="flex max-h-48 flex-col overflow-y-auto">
+      {query.unknownKinds.length > 0 && (
+        <div className="px-1 py-1 text-xs text-muted-foreground">
+          Unknown type &apos;{query.unknownKinds[0]}&apos;. Try notebook, folder, note, page, text_box, image or sticky
+        </div>
+      )}
       {rows.length === 0 ? (
         <div className="px-1 py-2 text-xs text-muted-foreground">Nothing found</div>
       ) : (
