@@ -595,7 +595,7 @@ Test steps:
 
 ### T19 Rich previews for web links
 
-Status: todo
+Status: done
 Depends on: T10
 Tester: yes, hovering a web link and checking the card's title, description and image is observable in the DOM (needs network access)
 
@@ -807,3 +807,4 @@ Test steps:
 - [x] T11 Insert link dialog: tree, paste box and references
 - [x] T17 Sticky notes get the Insert link dialog
 - [x] T18 Edit a selected chip through the Insert link dialog
+- [x] T19 Rich previews for web links

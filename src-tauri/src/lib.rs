@@ -1,3 +1,5 @@
+mod link_preview;
+
 use tauri_plugin_deep_link::DeepLinkExt;
 
 #[tauri::command]
@@ -611,7 +613,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, setup_sticky_window, focus_main_window])
+        .invoke_handler(tauri::generate_handler![greet, setup_sticky_window, focus_main_window, link_preview::fetch_page_head, link_preview::fetch_image])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

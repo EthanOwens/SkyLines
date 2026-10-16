@@ -236,3 +236,28 @@
   max-height: 120px;
   border-radius: 4px;
 }
+.hover-preview-url {
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+.hover-preview-body {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.hover-preview-main {
+  flex: 1;
+  min-width: 0;
+}
+.hover-preview-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.hover-preview-large {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+}

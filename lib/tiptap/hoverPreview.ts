@@ -1,5 +1,6 @@
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { parseReference, type ReferenceKind } from "@/lib/references/format";
+import { getLinkPreview, type LinkPreview } from "@/lib/linkPreview";
 import { cachedResolve } from "@/lib/references/useResolvedReference";
 
 const DELAY_MS = 400;
@@ -22,10 +23,30 @@ function line(card: HTMLElement, className: string, text: string) {
   card.appendChild(el);
 }
 
+function fillPreview(card: HTMLElement, p: LinkPreview) {
+  const body = document.createElement("div");
+  body.className = "hover-preview-body";
+  const text = document.createElement("div");
+  text.className = "hover-preview-main";
+  if (p.siteName) line(text, "hover-preview-kind", p.siteName);
+  if (p.title) line(text, "hover-preview-title", p.title);
+  if (p.description) line(text, "hover-preview-text", p.description);
+  body.appendChild(text);
+  card.insertBefore(body, card.firstChild);
+  if (p.image) {
+    const img = document.createElement("img");
+    img.src = p.image;
+    img.className = p.large ? "hover-preview-image hover-preview-large" : "hover-preview-thumb";
+    if (p.large) card.appendChild(img);
+    else body.appendChild(img);
+  }
+  if (p.themeColor) card.style.borderLeft = `4px solid ${p.themeColor}`;
+}
+
 async function fillCard(card: HTMLElement, target: Element) {
   const href = target.getAttribute("href");
   if (href) {
-    line(card, "hover-preview-title", href);
+    line(card, "hover-preview-url", href);
     return;
   }
   const ref = parseReference(target.getAttribute("data-reference-token") ?? "");
@@ -86,6 +107,13 @@ export const hoverPreviewPlugin = () =>
         const below = rect.bottom + 6;
         next.style.top = `${below + next.offsetHeight > window.innerHeight ? Math.max(8, rect.top - next.offsetHeight - 6) : below}px`;
         card = next;
+        const href = target.getAttribute("href");
+        if (href && /^https?:/i.test(href)) {
+          // Fetched here, on hover only; the card grows when the result arrives.
+          void getLinkPreview(href).then((p) => {
+            if (p && card === next) fillPreview(next, p);
+          });
+        }
       };
 
       const onOver = (event: MouseEvent) => {

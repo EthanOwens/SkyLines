@@ -30,6 +30,9 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-screenshots = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-mcp-bridge = "=0.13.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+base64 = "0.22"
+url = "2"
 
 # `devtools` is Android-only: it lets an inspector attach to release Android
 # builds, but on desktop it would expose the app's JS/IPC context to anyone
