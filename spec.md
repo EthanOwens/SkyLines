@@ -43,7 +43,7 @@ Three areas. Sticky notes get their own taskbar group and icon on Windows, keep 
 - **Sticky notes get the Insert link dialog** through Ctrl/Cmd+K (T17). They keep their bottom bar, with no floating toolbar.
 - **Rich web link previews (T19):** like Discord's link embeds, the hover card for a web link shows the site's own preview: the site name, title, description and picture from the page's Open Graph / Twitter Card meta tags. The page is fetched by a Rust command, only when the link is hovered (never on paste), so the site sees a request from this computer only when the user points at its link. The picture is downloaded by Rust and handed to the page as a `data:` URL, so the CSP's `img-src` stays as it is. If anything fails, the card shows the URL as it does after T10.
 - **Reference tree (T20, T21):** each row shows its kind in faded text. Sticky notes are a "Sticky notes" group at the end of the tree, which replaces the separate sticky list and its preview toggle. Untitled sticky notes are labelled by their first line of text. Search takes `is:<kind>` (kinds OR'd) and `has:"text"` (full text of text boxes and sticky notes), ANDed with plain title text. Plain words still match titles only.
-- **Dialog layout (T22):** two bordered panels, "Web link" and "In SkyLines", with "Currently: …" above them when editing a chip.
+- **Dialog layout (T22):** two bordered panels, "Web link" and "In app", with "Currently: …" above them when editing a chip.
 - **Removing (T23):** "Remove link" in the dialog (on a chip or in a web link) and in the canvas text box's right-click menu. A labelled chip becomes its label as plain text, an unlabelled chip is deleted, and a web link keeps its text. The note editor and sticky notes have no right-click item.
 
 ## Out of scope
@@ -687,7 +687,7 @@ Added after T11 (user request, planning.md 2026-10-15). The tree search in `Refe
    - Rows that don't match still show when a descendant matches, and auto-expand, as today.
    - Any non-empty query, filters included, triggers T11's load-all.
 3. **Hints.**
-   - The search placeholder becomes `Search, or is:note has:"text"`.
+   - The search placeholder becomes `Search (e.g. is:note has:"text")`.
    - An unknown `is:` value shows a faded line under the search, "Unknown type 'xyz'. Try notebook, folder, note, page, text_box, image or sticky", and nothing matches.
 
 Files: `lib/references/searchQuery.ts` (new), `components/editor/ReferencePicker.tsx`
@@ -709,7 +709,7 @@ Test steps:
 
 ### T22 Split the Insert link dialog into two panels
 
-Status: todo
+Status: done
 Depends on: T18, T20
 Tester: yes, the panel structure and that each control still inserts are checkable in the DOM; how quiet it looks is for the user
 
@@ -717,9 +717,9 @@ Added after T11 (user request, planning.md 2026-10-15): the dialog looks loud an
 
 1. **"Currently: …"** (T18's edit mode, when the dialog opens on a chip) sits at the top, under the title, outside both panels.
 2. **"Web link" panel:** the URL field and its Insert link button.
-3. **"In SkyLines" panel**, in this order:
-   - the tree search and `ReferencePicker`
+3. **"In app" panel**, in this order:
    - the paste-reference field with its Insert button and inline error, with no separate label (its placeholder becomes "Paste a reference (skylines://…)")
+   - the tree search and `ReferencePicker`
    - "+ New sticky note" (the Create new sticky note action) as a small ghost button
 4. **Styling.**
    - Each panel is a `rounded-lg border bg-muted/30 p-3` block with a `text-sm font-medium` heading, and the panels are separated by a gap.
@@ -731,13 +731,13 @@ Added after T11 (user request, planning.md 2026-10-15): the dialog looks loud an
 Files: `components/editor/InsertLinkDialog.tsx`
 
 Acceptance:
-- The dialog shows two bordered panels headed "Web link" and "In SkyLines", with the controls listed above in that order, and no `border-t` section separators.
+- The dialog shows two bordered panels headed "Web link" and "In app", with the controls listed above in that order, and no `border-t` section separators.
 - With a chip selected, "Currently: …" shows above the panels.
 - The URL insert, tree pick, paste-reference insert and error, and New sticky note all work as before.
 - In a sticky window, the dialog still fits the window and scrolls.
 
 Test steps:
-1. Create a test note "zeta" with a text box. In another text box, press Ctrl/Cmd+K: the dialog has a "Web link" panel and an "In SkyLines" panel, and there's no border-top separator between sections.
+1. Create a test note "zeta" with a text box. In another text box, press Ctrl/Cmd+K: the dialog has a "Web link" panel and an "In app" panel, and there's no border-top separator between sections.
 2. Insert https://example.com from the Web link panel: a web link appears.
 3. Reopen, pick "zeta" in the tree: a chip appears. Reopen, paste "nonsense" in the reference field: the inline error shows.
 4. Click the chip while editing and press Cmd+K: "Currently: …zeta" shows above the panels.
@@ -810,3 +810,4 @@ Test steps:
 - [x] T19 Rich previews for web links
 - [x] T20 Kind labels and sticky notes in the reference tree
 - [x] T21 Search filters in the reference tree
+- [x] T22 Split the Insert link dialog into two panels

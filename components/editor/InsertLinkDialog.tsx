@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ReferencePicker } from "./ReferencePicker";
 import { chipDisplayText } from "./ReferenceChip";
 import { useResolvedReference } from "@/lib/references/useResolvedReference";
@@ -221,6 +222,9 @@ export function InsertLinkDialog({
     }
   }
 
+  // Read at render so autoFocus is right on the dialog's first mount.
+  const opensOnChip = open && !!editor && selectedChip(editor) !== null;
+
   return (
     <div
       style={{ display: "contents" }}
@@ -257,15 +261,12 @@ export function InsertLinkDialog({
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
-            <label htmlFor="link-or-sticky-url" className="text-xs font-medium text-muted-foreground">
-              URL
-            </label>
+          <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
+            <h3 className="text-sm font-medium">Web link</h3>
             <div className="flex gap-2">
-              <input
-                id="link-or-sticky-url"
+              <Input
                 type="text"
-                autoFocus
+                autoFocus={!opensOnChip}
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -275,7 +276,7 @@ export function InsertLinkDialog({
                   }
                 }}
                 placeholder="https://"
-                className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+                className="flex-1"
               />
               <Button size="sm" onClick={handleSubmitUrl}>
                 Insert link
@@ -283,13 +284,10 @@ export function InsertLinkDialog({
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <label htmlFor="link-or-sticky-ref" className="text-xs font-medium text-muted-foreground">
-              Paste a reference
-            </label>
+          <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
+            <h3 className="text-sm font-medium">In app</h3>
             <div className="flex gap-2">
-              <input
-                id="link-or-sticky-ref"
+              <Input
                 type="text"
                 value={refInput}
                 onChange={(e) => {
@@ -302,8 +300,8 @@ export function InsertLinkDialog({
                     handleSubmitReference();
                   }
                 }}
-                placeholder="skylines://"
-                className="h-8 flex-1 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+                placeholder="Paste a reference (skylines://…)"
+                className="flex-1"
               />
               <Button size="sm" onClick={handleSubmitReference}>
                 Insert
@@ -314,31 +312,22 @@ export function InsertLinkDialog({
                 Not a valid reference. Use Copy reference in a right-click menu.
               </div>
             )}
-          </div>
-
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <label htmlFor="link-or-sticky-tree-search" className="text-xs font-medium text-muted-foreground">
-              Notes and text boxes
-            </label>
-            <input
-              id="link-or-sticky-tree-search"
+            <Input
               type="text"
+              autoFocus={opensOnChip}
               value={treeSearch}
               onChange={(e) => setTreeSearch(e.target.value)}
-              placeholder={'Search, or is:note has:"text"'}
-              className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+              placeholder={'Search (e.g. is:note has:"text")'}
             />
             <ReferencePicker search={treeSearch} onPick={insertReference} userId={userId} />
-          </div>
-
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
+              className="self-start"
               disabled={!userId || creating}
               onClick={() => void handleCreateNewStickyNote()}
             >
-              Create new sticky note
+              + New sticky note
             </Button>
           </div>
 
