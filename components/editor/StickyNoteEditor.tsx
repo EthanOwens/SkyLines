@@ -372,7 +372,7 @@ export function StickyNoteEditor({ note }: Props) {
         open={linkDialogOpen}
         onOpenChange={setLinkDialogOpen}
         editor={editor}
-        currentUrl={null}
+        currentUrl={editor?.isActive("link") ? (editor.getAttributes("link").href ?? null) : null}
         userId={user?.uid ?? null}
       />
       <StickyNoteBottomBar editor={editor} focused={focused} collapsed={collapsed} />

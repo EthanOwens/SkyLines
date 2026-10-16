@@ -103,7 +103,7 @@ Test steps:
 
 ### T2 Re-embedding a web link updates its text
 
-Status: todo
+Status: done
 Depends on: T1
 Tester: yes, the dialog's results are visible in the editor's DOM
 
@@ -163,3 +163,4 @@ Test steps:
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Pasting over an auto-text link or chip replaces it
+- [x] T2 Re-embedding a web link updates its text

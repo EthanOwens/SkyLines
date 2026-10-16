@@ -20,6 +20,8 @@ import { chipDisplayText } from "./ReferenceChip";
 import { useResolvedReference } from "@/lib/references/useResolvedReference";
 import { attrsFromReference, referenceFromAttrs, type ReferenceAttrs } from "@/lib/tiptap/reference";
 import { NodeSelection } from "@tiptap/pm/state";
+import { getMarkRange } from "@tiptap/core";
+import { replaceWithLinkedText } from "@/lib/tiptap/link";
 import { formatReference, parseReference, type Reference } from "@/lib/references/format";
 import { createStickyNote } from "@/lib/db/stickyNotes";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
@@ -74,6 +76,19 @@ function isCursorStrictlyInsideLink(editor: Editor) {
 // link, so the URL itself goes in as new link text.
 function applyUrl(editor: Editor, href: string, saved: SavedSelection | null) {
   restoreSelection(editor, saved);
+  const { doc, selection, schema } = editor.state;
+  const inLink = !selection.empty || isCursorStrictlyInsideLink(editor);
+  const range = href !== "" && inLink
+    ? getMarkRange(doc.resolve(selection.empty ? selection.from : selection.from + 1), schema.marks.link)
+    : null;
+  if (range && range.to >= selection.to) {
+    // Re-embedding replaces the whole link, including custom text.
+    editor.commands.focus();
+    editor.view.dispatch(
+      replaceWithLinkedText(editor.state.tr, range.from, range.to, href, href, doc.nodeAt(range.from)?.marks ?? []),
+    );
+    return;
+  }
   if (
     href !== "" &&
     editor.state.selection.empty &&
@@ -158,15 +173,10 @@ export function InsertLinkDialog({
     if (saved?.isNode) {
       const node = editor.state.doc.nodeAt(saved.from);
       if (href !== "" && node?.type.name === "reference") {
-        editor
-          .chain()
-          .focus()
-          .insertContentAt(
-            { from: saved.from, to: saved.from + node.nodeSize },
-            { type: "text", text: href, marks: [{ type: "link", attrs: { href } }] },
-          )
-          .unsetMark("link")
-          .run();
+        editor.commands.focus();
+        editor.view.dispatch(
+          replaceWithLinkedText(editor.state.tr, saved.from, saved.from + node.nodeSize, href, href, node.marks),
+        );
         onOpenChange(false);
       } else if (href === "") {
         handleOpenChange(false);
