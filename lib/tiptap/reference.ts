@@ -1,10 +1,11 @@
 import { Extension, Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import { parseReference, type Reference, type ReferenceKind } from "@/lib/references/format";
 import { openReference, openWebLink } from "@/lib/references/navigate";
+import { replaceWithLinkedText, selectedAutoTextLink, singleUrlHref } from "@/lib/tiptap/link";
 import { hoverPreviewPlugin } from "@/lib/tiptap/hoverPreview";
 import { ReferenceChipView } from "@/components/editor/ReferenceChip";
 
@@ -69,8 +70,8 @@ function fallbackText(node: PMNode): string {
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     reference: {
-      /** Replaces the selection with a chip, using any selected text as its label. */
-      insertReference: (ref: Reference) => ReturnType;
+      /** Replaces the selection with a chip, using any selected text as its label unless `unlabelled`. */
+      insertReference: (ref: Reference, options?: { unlabelled?: boolean }) => ReturnType;
       /** Turns the chip at pos into its label as plain text, or deletes it if it has none. */
       removeReference: (pos: number) => ReturnType;
     };
@@ -160,10 +161,10 @@ export const ReferenceNode = Node.create({
           return true;
         },
       insertReference:
-        (ref) =>
+        (ref, options) =>
         ({ state, tr, dispatch }) => {
           const { from, to, empty } = state.selection;
-          const selected = empty ? "" : state.doc.textBetween(from, to, " ").trim();
+          const selected = empty || options?.unlabelled ? "" : state.doc.textBetween(from, to, " ").trim();
           const node = this.type.create(attrsFromReference(ref, selected || null));
           if (dispatch) tr.replaceSelectionWith(node, false).scrollIntoView();
           return true;
@@ -184,12 +185,28 @@ export const ReferencePaste = Extension.create({
       new Plugin({
         key: new PluginKey("referencePaste"),
         props: {
-          handlePaste: (_view, event) => {
+          handlePaste: (view, event) => {
             const text = event.clipboardData?.getData("text/plain");
             if (!text) return false;
+            const { state } = view;
+            const { selection } = state;
+            const autoLink = selectedAutoTextLink(state);
             const ref = parseReference(text);
-            if (!ref) return false;
-            return editor.commands.insertReference(ref);
+            if (ref) return editor.commands.insertReference(ref, { unlabelled: !!autoLink });
+            const href = singleUrlHref(text);
+            if (!href) return false;
+            if (autoLink) {
+              const { from, to } = selection;
+              const marks = state.doc.nodeAt(from)?.marks ?? [];
+              view.dispatch(replaceWithLinkedText(state.tr, from, to, text, href, marks));
+              return true;
+            }
+            if (selection instanceof NodeSelection && selection.node.type.name === "reference") {
+              const { from, to, node } = selection;
+              view.dispatch(replaceWithLinkedText(state.tr, from, to, text, href, node.marks));
+              return true;
+            }
+            return false;
           },
         },
       }),

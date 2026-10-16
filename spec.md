@@ -67,7 +67,7 @@ When a link or chip has no text of its own, its visible text should follow what 
 
 ### T1 Pasting over an auto-text link or chip replaces it
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes, a paste can be driven with `editor.view.pasteText(...)` in a text box and the resulting HTML read from the DOM
 
@@ -162,3 +162,4 @@ Test steps:
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 Pasting over an auto-text link or chip replaces it

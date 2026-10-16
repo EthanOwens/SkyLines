@@ -38,6 +38,7 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 - (fragile) Seed canvas data through the tldraw editor, reached by a React fiber walk from `.tl-container` (`memoizedState.memoizedState.current.createShape`). Use a fresh shape id after one hits an error boundary, and keep `webview_execute_js` scripts synchronous (`await` times out). Seed `rich-text` shapes, not tldraw `text`, and enter edit mode (`setEditingShape`): only that editor has hover cards and chip handling.
 - After code changes to modules with module-level state (e.g. `mainWindowRouter` in `lib/references/navigate.ts`), run `location.reload()` and re-enter a notebook before testing; hot reload leaves that state stale.
 - Canvas changes reach SQLite on a debounce. Wait for a save (e.g. reopen the dialog) before expecting new text boxes in DB-backed views: the picker, chips and missing state.
+- To test paste, dispatch `new ClipboardEvent('paste', {clipboardData})` on the ProseMirror DOM; `view.pasteText()` has no clipboardData, so custom paste handlers are skipped. Do setup and the paste in separate `webview_execute_js` calls.
 
 ## Gotchas
 
