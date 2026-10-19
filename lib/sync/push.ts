@@ -1,4 +1,4 @@
-import { doc, setDoc } from "firebase/firestore";
+import { deleteField, doc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getDirtyFolders, markFolderSynced } from "@/lib/db/folders";
 import { getDirtyNotes, markNoteSynced } from "@/lib/db/notes";
@@ -47,8 +47,10 @@ function noteToFirestoreDoc(note: Note, updatedAt: number) {
     folderId: note.folderId,
     notebookId: note.notebookId,
     userId: note.userId,
-    content: note.content ?? null,
-    canvasData: note.canvasData ?? null,
+    contentJson: note.content ? JSON.stringify(note.content) : null,
+    content: deleteField(),
+    canvasJson: note.canvasData ? JSON.stringify(note.canvasData) : null,
+    canvasData: deleteField(),
     order: note.order,
     createdAt: note.createdAt,
     updatedAt,
@@ -61,8 +63,10 @@ function pageToFirestoreDoc(page: Page, updatedAt: number) {
     noteId: page.noteId,
     title: page.title,
     userId: page.userId,
-    content: page.content ?? null,
-    canvasData: page.canvasData ?? null,
+    contentJson: page.content ? JSON.stringify(page.content) : null,
+    content: deleteField(),
+    canvasJson: page.canvasData ? JSON.stringify(page.canvasData) : null,
+    canvasData: deleteField(),
     order: page.order,
     createdAt: page.createdAt,
     updatedAt,

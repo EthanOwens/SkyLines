@@ -179,7 +179,7 @@ Test steps (manual, after the user deploys):
 
 ### T3 Store canvas and content as JSON strings in Firestore
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes, push and pull can be checked with the Firebase SDK from the webview, and a deeply nested list reproduces the error
 
@@ -442,3 +442,4 @@ Test steps (manual):
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Keep dev-only things out of release builds
 - [x] T2 Lock each account's data with Firestore security rules
+- [x] T3 Store canvas and content as JSON strings in Firestore

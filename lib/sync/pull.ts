@@ -96,6 +96,11 @@ function toRemoteFolderData(id: string, data: DocumentData): RemoteFolderData {
   };
 }
 
+function parseJsonField(json: unknown, legacy: unknown): object | null {
+  if (typeof json === "string") return JSON.parse(json) as object;
+  return (legacy as object | null) ?? null;
+}
+
 function toRemoteNoteData(id: string, data: DocumentData): RemoteNoteData {
   return {
     id,
@@ -104,8 +109,8 @@ function toRemoteNoteData(id: string, data: DocumentData): RemoteNoteData {
     folderId: (data.folderId as string | null) ?? null,
     notebookId: (data.notebookId as string | null) ?? null,
     userId: data.userId as string,
-    content: (data.content as object | null) ?? null,
-    canvasData: (data.canvasData as object | null) ?? null,
+    content: parseJsonField(data.contentJson, data.content),
+    canvasData: parseJsonField(data.canvasJson, data.canvasData),
     order: (data.order as number) ?? 0,
     createdAt: data.createdAt as number,
     updatedAt: data.updatedAt as number,
@@ -131,8 +136,8 @@ function toRemotePageData(id: string, data: DocumentData): RemotePageData {
     noteId: data.noteId as string,
     title: (data.title as string) ?? "Untitled",
     userId: data.userId as string,
-    content: (data.content as object | null) ?? null,
-    canvasData: (data.canvasData as object | null) ?? null,
+    content: parseJsonField(data.contentJson, data.content),
+    canvasData: parseJsonField(data.canvasJson, data.canvasData),
     order: (data.order as number) ?? 0,
     createdAt: data.createdAt as number,
     updatedAt: data.updatedAt as number,
