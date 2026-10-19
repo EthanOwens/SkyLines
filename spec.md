@@ -156,7 +156,7 @@ Test steps:
 
 ### T2 Lock each account's data with Firestore security rules
 
-Status: todo
+Status: done
 Depends on: none
 Tester: no, the rules only take effect once the user deploys them
 
@@ -441,3 +441,4 @@ Test steps (manual):
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Keep dev-only things out of release builds
+- [x] T2 Lock each account's data with Firestore security rules
