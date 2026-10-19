@@ -39,6 +39,7 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 - After code changes to modules with module-level state (e.g. `mainWindowRouter` in `lib/references/navigate.ts`), run `location.reload()` and re-enter a notebook before testing; hot reload leaves that state stale.
 - Canvas changes reach SQLite on a debounce. Wait for a save (e.g. reopen the dialog) before expecting new text boxes in DB-backed views: the picker, chips and missing state.
 - To test paste, dispatch `new ClipboardEvent('paste', {clipboardData})` on the ProseMirror DOM; `view.pasteText()` has no clipboardData, so custom paste handlers are skipped. Do setup and the paste in separate `webview_execute_js` calls.
+- Canvas-note content syncs to the Firestore `pages` collection, not `notes` (its `canvasJson` stays null). To check it, use REST `runQuery` with the bearer token from IndexedDB `firebaseLocalStorageDb` and a `userId == uid` filter (unfiltered returns 403). Run fetch/IndexedDB scripts fire-and-forget, store the result on `window`, and read it in a second call.
 
 ## Gotchas
 

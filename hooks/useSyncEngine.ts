@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
-import { getSyncStatus, scheduleDirtyPush, startSyncEngine, subscribeSyncStatus } from "@/lib/sync/engine";
+import {
+  getSyncFailures,
+  getSyncStatus,
+  scheduleDirtyPush,
+  startSyncEngine,
+  subscribeSyncFailures,
+  subscribeSyncStatus,
+} from "@/lib/sync/engine";
 import { subscribeDataChange } from "@/lib/db/events";
 import { useAppStore } from "@/stores/appStore";
 
@@ -16,12 +23,15 @@ import { useAppStore } from "@/stores/appStore";
 // tombstone cleanup) already match Firestore, and pushing them would loop.
 export function useSyncEngine(userId: string | undefined) {
   const setSyncStatus = useAppStore((s) => s.setSyncStatus);
+  const setSyncFailures = useAppStore((s) => s.setSyncFailures);
 
   useEffect(() => {
     if (!userId) return;
 
     setSyncStatus(getSyncStatus());
     const unsubscribeStatus = subscribeSyncStatus(setSyncStatus);
+    setSyncFailures(getSyncFailures());
+    const unsubscribeFailures = subscribeSyncFailures(setSyncFailures);
     const stopEngine = startSyncEngine(userId);
     const unsubscribeDataChange = subscribeDataChange((origin) => {
       if (origin === "local") scheduleDirtyPush(userId);
@@ -30,7 +40,8 @@ export function useSyncEngine(userId: string | undefined) {
     return () => {
       unsubscribeDataChange();
       unsubscribeStatus();
+      unsubscribeFailures();
       stopEngine();
     };
-  }, [userId, setSyncStatus]);
+  }, [userId, setSyncStatus, setSyncFailures]);
 }

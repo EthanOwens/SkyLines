@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
 import type { Editor as TldrawEditor, TLShapeId } from "@tldraw/tldraw";
-import type { Folder, Note, Notebook, Page, SyncStatus } from "@/types";
+import type { Folder, Note, Notebook, Page, SyncFailure, SyncStatus } from "@/types";
 import type { Theme } from "@/lib/themes/types";
 import { BUILTIN_THEMES } from "@/lib/themes/builtin";
 import type { ClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
@@ -31,6 +31,7 @@ interface AppState {
   revealedFolder: { id: string; at: number } | null;
   sidebarOpen: boolean;
   syncStatus: SyncStatus;
+  syncFailures: SyncFailure[];
   // The Ribbon is a sibling of the editor, so it reaches the Tiptap editor
   // through here. Null when no text editor is active.
   activeEditor: Editor | null;
@@ -82,6 +83,7 @@ interface AppState {
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSyncStatus: (status: SyncStatus) => void;
+  setSyncFailures: (failures: SyncFailure[]) => void;
   setActiveEditor: (editor: Editor | null) => void;
   requestLinkDialog: () => void;
   setActiveCanvasEditor: (editor: TldrawEditor | null) => void;
@@ -113,6 +115,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   revealedFolder: null,
   sidebarOpen: true,
   syncStatus: "saved",
+  syncFailures: [],
   activeEditor: null,
   linkDialogRequest: 0,
   activeCanvasEditor: null,
@@ -139,6 +142,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),
+  setSyncFailures: (syncFailures) => set({ syncFailures }),
   setActiveEditor: (activeEditor) => set({ activeEditor }),
   requestLinkDialog: () => set((s) => ({ linkDialogRequest: s.linkDialogRequest + 1 })),
   setActiveCanvasEditor: (activeCanvasEditor) => set({ activeCanvasEditor }),

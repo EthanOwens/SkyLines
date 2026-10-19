@@ -203,7 +203,7 @@ Test steps:
 
 ### T4 One note that can't sync doesn't block the rest
 
-Status: todo
+Status: done
 Depends on: T3
 Tester: yes, an oversized text box can be created, and the account menu and other docs observed
 
@@ -443,3 +443,4 @@ Test steps (manual):
 - [x] T1 Keep dev-only things out of release builds
 - [x] T2 Lock each account's data with Firestore security rules
 - [x] T3 Store canvas and content as JSON strings in Firestore
+- [x] T4 One note that can't sync doesn't block the rest

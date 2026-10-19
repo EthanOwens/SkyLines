@@ -50,6 +50,7 @@ export function AccountMenu() {
   const router = useRouter();
   const { user } = useAuthContext();
   const syncStatus = useAppStore((s) => s.syncStatus);
+  const syncFailures = useAppStore((s) => s.syncFailures);
   const availableThemes = useAppStore((s) => s.availableThemes);
   const selectedThemeId = useAppStore((s) => s.selectedThemeId);
   const setSelectedThemeId = useAppStore((s) => s.setSelectedThemeId);
@@ -86,6 +87,11 @@ export function AccountMenu() {
 
   const statusInfo = SYNC_STATUS_DISPLAY[syncStatus] ?? SYNC_STATUS_DISPLAY.saved;
   const StatusIcon = statusInfo.icon;
+  const firstFailure = syncFailures[0];
+  const statusLabel = firstFailure
+    ? `Couldn't sync: ${firstFailure.name || "Untitled"} (${firstFailure.reason === "too-big" ? "too big" : "rejected"})` +
+      (syncFailures.length > 1 ? ` and ${syncFailures.length - 1} more` : "")
+    : statusInfo.label;
 
   async function handleSignOut() {
     await signOut(auth);
@@ -139,7 +145,7 @@ export function AccountMenu() {
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled className="text-xs text-muted-foreground">
             <StatusIcon className={`mr-2 h-3 w-3 ${statusInfo.className}`} />
-            {statusInfo.label}
+            {statusLabel}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuSub>

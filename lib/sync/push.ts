@@ -4,7 +4,7 @@ import { getDirtyFolders, markFolderSynced } from "@/lib/db/folders";
 import { getDirtyNotes, markNoteSynced } from "@/lib/db/notes";
 import { getDirtyNotebooks, markNotebookSynced } from "@/lib/db/notebooks";
 import { getDirtyPages, markPageSynced } from "@/lib/db/pages";
-import type { Folder, Note, Notebook, Page } from "@/types";
+import type { Folder, Note, Notebook, Page, SyncFailure } from "@/types";
 
 // Local -> Firestore push. Documents keep the reference app's field shape.
 // updatedAt is the client's edit time in milliseconds (not serverTimestamp()),
@@ -74,70 +74,70 @@ function pageToFirestoreDoc(page: Page, updatedAt: number) {
   };
 }
 
+// Firestore rejects documents over 1 MiB; leave headroom for field names.
+const MAX_DOC_JSON_LENGTH = 1_000_000;
+
 /**
- * Writes each row's own updatedAt (when the edit happened, which
- * last-write-wins needs), not the push time. syncedAt is local bookkeeping of
- * the push.
+ * Pushes each row with its own updatedAt (when the edit happened, which
+ * last-write-wins needs), not the push time. syncedAt is local bookkeeping.
+ * Data errors skip the row (it stays dirty) and are returned; anything else
+ * (network, auth) throws and aborts the pass.
  */
-export async function pushDirtyFolders(userId: string): Promise<void> {
-  const dirtyFolders = await getDirtyFolders(userId);
+async function pushRows<T extends { id: string; updatedAt: number }>(
+  table: SyncFailure["table"],
+  collectionName: string,
+  rows: T[],
+  toDoc: (row: T, updatedAt: number) => object,
+  nameOf: (row: T) => string,
+  markSynced: (id: string, syncedAt: number) => Promise<unknown>,
+): Promise<SyncFailure[]> {
+  const failures: SyncFailure[] = [];
+  for (const row of rows) {
+    const payload = toDoc(row, row.updatedAt);
+    const fail = (reason: SyncFailure["reason"], message: string) =>
+      failures.push({ table, id: row.id, name: nameOf(row), reason, message });
 
-  for (const folder of dirtyFolders) {
-    await setDoc(
-      doc(db, FOLDERS_COLLECTION, folder.id),
-      folderToFirestoreDoc(folder, folder.updatedAt),
-      { merge: true },
-    );
-    await markFolderSynced(folder.id, Date.now());
+    if (JSON.stringify(payload).length > MAX_DOC_JSON_LENGTH) {
+      fail("too-big", "document over the size limit");
+      continue;
+    }
+    try {
+      await setDoc(doc(db, collectionName, row.id), payload, { merge: true });
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "invalid-argument") {
+        fail("rejected", (err as Error).message);
+        continue;
+      }
+      throw err;
+    }
+    await markSynced(row.id, Date.now());
   }
+  return failures;
 }
 
-/** Same updatedAt rule as pushDirtyFolders. */
-export async function pushDirtyNotes(userId: string): Promise<void> {
-  const dirtyNotes = await getDirtyNotes(userId);
-
-  for (const note of dirtyNotes) {
-    await setDoc(
-      doc(db, NOTES_COLLECTION, note.id),
-      noteToFirestoreDoc(note, note.updatedAt),
-      { merge: true },
-    );
-    await markNoteSynced(note.id, Date.now());
-  }
+export async function pushDirtyFolders(userId: string): Promise<SyncFailure[]> {
+  return pushRows("folders", FOLDERS_COLLECTION, await getDirtyFolders(userId), folderToFirestoreDoc, (f) => f.name, markFolderSynced);
 }
 
-/** Same updatedAt rule as pushDirtyFolders. */
-export async function pushDirtyNotebooks(userId: string): Promise<void> {
-  const dirtyNotebooks = await getDirtyNotebooks(userId);
-
-  for (const notebook of dirtyNotebooks) {
-    await setDoc(
-      doc(db, NOTEBOOKS_COLLECTION, notebook.id),
-      notebookToFirestoreDoc(notebook, notebook.updatedAt),
-      { merge: true },
-    );
-    await markNotebookSynced(notebook.id, Date.now());
-  }
+export async function pushDirtyNotes(userId: string): Promise<SyncFailure[]> {
+  return pushRows("notes", NOTES_COLLECTION, await getDirtyNotes(userId), noteToFirestoreDoc, (n) => n.title, markNoteSynced);
 }
 
-/** Same updatedAt rule as pushDirtyFolders. */
-export async function pushDirtyPages(userId: string): Promise<void> {
-  const dirtyPages = await getDirtyPages(userId);
+export async function pushDirtyNotebooks(userId: string): Promise<SyncFailure[]> {
+  return pushRows("notebooks", NOTEBOOKS_COLLECTION, await getDirtyNotebooks(userId), notebookToFirestoreDoc, (n) => n.name, markNotebookSynced);
+}
 
-  for (const page of dirtyPages) {
-    await setDoc(
-      doc(db, PAGES_COLLECTION, page.id),
-      pageToFirestoreDoc(page, page.updatedAt),
-      { merge: true },
-    );
-    await markPageSynced(page.id, Date.now());
-  }
+export async function pushDirtyPages(userId: string): Promise<SyncFailure[]> {
+  return pushRows("pages", PAGES_COLLECTION, await getDirtyPages(userId), pageToFirestoreDoc, (p) => p.title, markPageSynced);
 }
 
 /** One push pass; scheduling and debouncing live in lib/sync/engine.ts. */
-export async function pushDirtyRows(userId: string): Promise<void> {
-  await pushDirtyFolders(userId);
-  await pushDirtyNotes(userId);
-  await pushDirtyNotebooks(userId);
-  await pushDirtyPages(userId);
+export async function pushDirtyRows(userId: string): Promise<SyncFailure[]> {
+  const failures: SyncFailure[] = [];
+  failures.push(...(await pushDirtyFolders(userId)));
+  failures.push(...(await pushDirtyNotes(userId)));
+  failures.push(...(await pushDirtyNotebooks(userId)));
+  failures.push(...(await pushDirtyPages(userId)));
+  return failures;
 }
