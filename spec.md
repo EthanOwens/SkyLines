@@ -133,7 +133,7 @@ Get SkyLines ready for friends to build from the codebase and use with their own
 
 ### T1 Keep dev-only things out of release builds
 
-Status: todo
+Status: done
 Depends on: none
 Tester: no, the change only shows in a release build, which the reviewer checks by searching `out/`. Dev mode looks the same as before.
 
@@ -440,3 +440,4 @@ Test steps (manual):
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 Keep dev-only things out of release builds

@@ -25,10 +25,6 @@ import {
   verifyAndConsumeNonce,
 } from "@/lib/auth/googleOAuth";
 
-// Self-bootstrapping dev login account. It holds no real data.
-const DEV_EMAIL = "dev@skylines.local";
-const DEV_PASSWORD = "DevLogin123!";
-
 // Google sign-in runs through the system browser and a deep link; see
 // lib/auth/googleOAuth.ts.
 export default function LoginPage() {
@@ -111,33 +107,6 @@ export default function LoginPage() {
       setError("Could not send reset email. Please check the address and try again.");
     } finally {
       setResetLoading(false);
-    }
-  }
-
-  async function handleDevLogin() {
-    setError("");
-    setResetMessage("");
-    setDevLoginLoading(true);
-    try {
-      try {
-        await signInWithEmailAndPassword(auth, DEV_EMAIL, DEV_PASSWORD);
-      } catch (err) {
-        // Only create the account when sign-in failed because it doesn't exist
-        // ("auth/invalid-credential" when email enumeration protection hides
-        // that). Rethrow every other error.
-        const code = err instanceof FirebaseError ? err.code : undefined;
-        if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
-          await createUserWithEmailAndPassword(auth, DEV_EMAIL, DEV_PASSWORD);
-        } else {
-          throw err;
-        }
-      }
-      router.replace("/");
-    } catch (err) {
-      console.error(err);
-      setError("Dev login failed.");
-    } finally {
-      setDevLoginLoading(false);
     }
   }
 
@@ -226,25 +195,86 @@ export default function LoginPage() {
           </Link>
         </p>
 
-        <div className="relative pt-2">
-          <div className="absolute inset-0 flex items-center pt-2">
-            <div className="w-full border-t border-dashed border-border" />
-          </div>
-          <div className="relative flex justify-center text-xs text-muted-foreground">
-            <span className="bg-background px-2">dev only</span>
-          </div>
-        </div>
-
-        <Button
-          type="button"
-          variant="secondary"
-          className="w-full border border-dashed border-amber-500 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
-          onClick={handleDevLogin}
-          disabled={anyActionInFlight}
-        >
-          {devLoginLoading ? "Signing in…" : "Dev Login"}
-        </Button>
+        {process.env.NODE_ENV === "development" && (
+          <DevLogin
+            disabled={anyActionInFlight}
+            loading={devLoginLoading}
+            onLoadingChange={setDevLoginLoading}
+            onError={(msg) => {
+              setError(msg);
+              setResetMessage("");
+            }}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+// Only rendered when NODE_ENV is "development", so release builds drop the
+// credentials.
+function DevLogin({
+  disabled,
+  loading,
+  onLoadingChange,
+  onError,
+}: {
+  disabled: boolean;
+  loading: boolean;
+  onLoadingChange: (loading: boolean) => void;
+  onError: (message: string) => void;
+}) {
+  const router = useRouter();
+  // Self-bootstrapping account. It holds no real data.
+  const email = "dev@skylines.local";
+  const password = "DevLogin123!";
+
+  async function handleDevLogin() {
+    onError("");
+    onLoadingChange(true);
+    try {
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+      } catch (err) {
+        // Only create the account when sign-in failed because it doesn't exist
+        // ("auth/invalid-credential" when email enumeration protection hides
+        // that). Rethrow every other error.
+        const code = err instanceof FirebaseError ? err.code : undefined;
+        if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
+          await createUserWithEmailAndPassword(auth, email, password);
+        } else {
+          throw err;
+        }
+      }
+      router.replace("/");
+    } catch (err) {
+      console.error(err);
+      onError("Dev login failed.");
+    } finally {
+      onLoadingChange(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="relative pt-2">
+        <div className="absolute inset-0 flex items-center pt-2">
+          <div className="w-full border-t border-dashed border-border" />
+        </div>
+        <div className="relative flex justify-center text-xs text-muted-foreground">
+          <span className="bg-background px-2">dev only</span>
+        </div>
+      </div>
+
+      <Button
+        type="button"
+        variant="secondary"
+        className="w-full border border-dashed border-amber-500 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
+        onClick={handleDevLogin}
+        disabled={disabled}
+      >
+        {loading ? "Signing in…" : "Dev Login"}
+      </Button>
+    </>
   );
 }

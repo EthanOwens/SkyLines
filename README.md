@@ -42,5 +42,5 @@ The release build needs a real signing keystore before it will install (the debu
 
 ## Notes
 
-- No app shell exists yet — after sign-in, `/login` and `/register` redirect to `/home`, which hasn't been built. Use `/note?id=...`, `/canvas?id=...`, or the `/spike-*` verification routes to exercise real functionality directly.
+- No app shell exists yet — after sign-in, `/login` and `/register` redirect to `/home`, which hasn't been built. Use `/note?id=...`, `/canvas?id=...` to exercise real functionality directly.
 - Google sign-in needs a manually-created "Desktop app" OAuth client in Google Cloud Console first — see `lib/auth/googleOAuth.ts`. Email/password sign-in works as-is.

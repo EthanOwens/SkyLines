@@ -22,8 +22,7 @@ import { SYSTEM_THEME_VALUE } from "@/components/topbar/AccountMenu";
 // Wires auth, the sync engine and the data hooks into the app lifecycle. It's a
 // client component because app/layout.tsx is a server component.
 //
-// Public routes are never redirected to /login. /spike-* pages handle their own
-// sign-in.
+// Public routes are never redirected to /login.
 const PUBLIC_ROUTES = ["/login", "/register"];
 
 function isPublicRoute(pathname: string | null): boolean {
@@ -31,8 +30,7 @@ function isPublicRoute(pathname: string | null): boolean {
   // trailingSlash: true makes usePathname() return "/register/", so strip the
   // slash before matching.
   const normalized = pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname;
-  if (PUBLIC_ROUTES.includes(normalized)) return true;
-  return normalized.startsWith("/spike-");
+  return PUBLIC_ROUTES.includes(normalized);
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -52,9 +50,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const normalizedPathname =
     pathname && pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname;
   const isRootRoute = normalizedPathname === "/";
-  // Narrower than publicRoute: spike pages expect the default theme, but login
-  // and register can still be themed.
-  const isSpikeRoute = normalizedPathname?.startsWith("/spike-") ?? false;
 
   // Sticky notes and the image editor open in their own windows: still
   // auth-gated, but rendered without AppLayout.
@@ -62,10 +57,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const isImageEditorRoute = normalizedPathname === "/image-editor";
 
-  // No user id on spike pages: they drive the sync engine themselves, and the
-  // engine is a module-level singleton that AppShell would otherwise start a
-  // second time. Pop-out windows are excluded too, because each window is its
-  // own JS runtime and would boot its own engine and subscriptions.
+  // No user id on public routes or in pop-out windows: each window is its own
+  // JS runtime and would boot its own engine and subscriptions.
   const syncUserId =
     publicRoute || isStickyRoute || isImageEditorRoute ? undefined : user?.uid;
 
@@ -91,11 +84,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Restore the saved theme on mount. It's per-device UI state, so it doesn't
   // wait for a user. Built-in themes and "System" apply immediately to avoid a
   // flash of default styling; user themes apply once they've loaded from disk.
-  // An id that matches nothing leaves the default theme in place. Skipped on
-  // spike pages.
+  // An id that matches nothing leaves the default theme in place.
   useEffect(() => {
-    if (isSpikeRoute) return;
-
     const persistedId = getSelectedThemeId();
 
     if (persistedId === SYSTEM_THEME_VALUE || !persistedId) {
@@ -145,7 +135,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isSpikeRoute, setAvailableThemes, setUserThemesLoaded, setSelectedThemeId]);
+  }, [setAvailableThemes, setUserThemesLoaded, setSelectedThemeId]);
 
   // On "/", reopen the last note if it still exists. Otherwise restore just the
   // notebook selection so the picker can show it.
