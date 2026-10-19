@@ -1,18 +1,9 @@
 /* TipTap editor prose styles */
 .tiptap.ProseMirror {
   outline: none;
-  /* spec.md M5 subtask 8. Base/default (unset) text color follows the
-     active theme's `--foreground` variable, same as the placeholder/
-     blockquote/link rules below - overrides Tailwind Typography's
-     `prose`/`dark:prose-invert` fixed color tokens (which never resolve to
-     this app's theme, since nothing here ever toggles a `.dark` class).
-     Set directly on this outer contenteditable root rather than
-     `--tw-prose-body` so it also covers plain, unstyled text even when the
-     `prose` classes' own color plumbing isn't in play. Any manually-chosen
-     text color (Tiptap's Color extension, via applyTextColor) is applied as
-     an inline `style="color: ..."` directly on the affected text's own
-     element, which always wins over this inherited value regardless of
-     selector specificity - so explicit colors are unaffected. */
+  /* Follow the theme's --foreground. Tailwind Typography's prose colors never
+     resolve to the app's themes (nothing toggles .dark). Colors chosen with
+     the Color extension are inline styles, so they still win. */
   color: var(--foreground);
 }
 
@@ -22,6 +13,52 @@
   color: var(--muted-foreground);
   pointer-events: none;
   height: 0;
+}
+
+/* Bullet and numbered lists. Tailwind's preflight strips list markers and
+   padding, and the prose classes have no stylesheet behind them. Markers cycle
+   disc, circle, square by depth; deeper selectors win on specificity. */
+.tiptap ul:not([data-type="taskList"]) {
+  list-style-type: disc;
+  padding-left: 1.25em;
+}
+
+.tiptap :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: circle;
+}
+
+.tiptap :is(ul, ol) :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: square;
+}
+
+.tiptap :is(ul, ol) :is(ul, ol) :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: disc;
+}
+
+.tiptap :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: circle;
+}
+
+.tiptap :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) ul:not([data-type="taskList"]) {
+  list-style-type: square;
+}
+
+/* A little wider than bullets so two-digit numbers fit. */
+.tiptap ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+}
+
+.tiptap :is(ul:not([data-type="taskList"]), ol) {
+  margin: 0.25em 0;
+}
+
+.tiptap li > :is(ul:not([data-type="taskList"]), ol) {
+  margin: 0.125em 0 0;
+}
+
+.tiptap :is(ul:not([data-type="taskList"]), ol) > li + li {
+  margin-top: 0.125em;
 }
 
 /* Task list checkboxes */
@@ -65,11 +102,84 @@
   cursor: pointer;
 }
 
+/* Web links open in the browser. inline-block keeps the link's underline off
+   the arrow. */
+.tiptap a:is([href^="http:"], [href^="https:"], [href^="mailto:"])::after {
+  content: "\2197";
+  display: inline-block;
+  margin-left: 0.1em;
+  font-size: 0.8em;
+  text-decoration: none;
+}
+
+/* A canvas text box that isn't being edited is pointer-events: none so tldraw
+   gets its clicks; chips and links opt back in so a plain click follows them. */
+.tiptap[contenteditable="false"] :is(.reference-chip, a[href]) {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Reference chips. The node view renders one span; the text part truncates
+   so a long title can't stretch a canvas text box. */
+/* The left margin is the gap the caret before a chip is drawn in; with the
+   shading flush against it, WebKit's caret overlaps the chip's first pixels. */
+.tiptap .reference-chip {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  margin-left: 3px;
+  padding: 0 0.4em;
+  border-radius: 0.375em;
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  color: var(--primary);
+  font-weight: 500;
+  line-height: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.tiptap .reference-chip[data-kind="sticky"] {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+
+.tiptap .reference-chip-prefix {
+  opacity: 0.6;
+  margin-right: 0.1em;
+}
+
+.tiptap .reference-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 24em;
+}
+
+.tiptap .reference-chip[data-missing] {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.tiptap .reference-chip[data-missing] .reference-chip-text {
+  text-decoration: line-through;
+}
+
+/* ProseMirror puts the class on the node view's outer element. */
+.tiptap .ProseMirror-selectednode > .reference-chip {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
 /* Images */
 .tiptap img {
   max-width: 100%;
   height: auto;
   border-radius: 0.375rem;
+}
+
+.tiptap img.image-highlight {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* Blockquote */
@@ -84,4 +194,70 @@
   border: none;
   border-top: 1px solid var(--border);
   margin: 1.5rem 0;
+}
+
+/* Hover preview card for chips and links; lives in <body>, outside .tiptap. */
+.hover-preview-card {
+  position: fixed;
+  z-index: 10000;
+  width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+  font-size: 12px;
+  pointer-events: none;
+}
+.hover-preview-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+.hover-preview-path {
+  opacity: 0.7;
+}
+.hover-preview-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.hover-preview-text {
+  margin-top: 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+}
+.hover-preview-image {
+  margin-top: 4px;
+  max-height: 120px;
+  border-radius: 4px;
+}
+.hover-preview-url {
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+.hover-preview-body {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.hover-preview-main {
+  flex: 1;
+  min-width: 0;
+}
+.hover-preview-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.hover-preview-large {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
 }

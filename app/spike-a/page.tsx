@@ -1,8 +1,6 @@
 import Link from "next/link";
 
-// M0 nav spike route (spec.md subtask 3). Trivial route + a <Link> to its
-// sibling route, used to verify SPA-smooth client-side navigation inside
-// the Tauri webview. See app/instance-probe.tsx for the detection method.
+// Dev-only navigation check; see app/instance-probe.tsx.
 export default function SpikeA() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4">

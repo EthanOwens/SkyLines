@@ -1,28 +1,8 @@
 "use client";
 
-// spec.md subtask 1 ("RichTextShape") verification route. Throwaway
-// harness, not production UI - follows the same pattern as
-// app/spike-canvas/page.tsx (auth, sync engine, Firestore test-doc
-// cleanup), but instead of navigating away to /canvas?id=, renders
-// CanvasEditor.tsx directly right here so this page can hold a reference to
-// the live tldraw `Editor` instance (via stores/appStore.ts's
-// `activeCanvasEditor`, set by CanvasEditor.tsx's own `handleMount`) and use
-// it to manually instantiate a RichTextShape via `editor.createShape(...)` -
-// there's no click-to-create tool yet (that's spec.md subtask 2), so this is
-// the only way to get one onto the canvas for this subtask's verification.
-//
-// Verifies, end to end:
-//   1. A RichTextShape can be created at a known position.
-//   2. Typing into it (once double-clicked into edit mode) works.
-//   3. The shape can be dragged (single click+drag, NOT entering edit mode)
-//      without accidentally typing, and double-clicked into edit mode
-//      without accidentally dragging.
-//   4. The typed content survives CanvasEditor's existing 800ms-debounced
-//      autosave into `canvasData` (lib/db/notes.ts's `updateNote`) - this
-//      route does not add or change that persistence path, only exercises
-//      it, per spec.md's Non-Goals.
-//   5. Reloading the note (fresh `getNoteById` + `editor.loadSnapshot`)
-//      restores the shape with its content intact.
+// Dev-only verification page for RichTextShape. Renders CanvasEditor directly
+// (instead of navigating to /canvas) so it can reach the live tldraw editor.
+// Not production UI.
 
 import { useRef, useState } from "react";
 import {
@@ -52,11 +32,8 @@ import type { Note } from "@/types";
 const TEST_EMAIL = "skylines-richtext-shape-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
 
-// Debug-only escape hatch for CDP-driven verification (spec.md subtask 2) -
-// lets a driver script poll `editor.getCurrentToolId()` etc. via
-// Runtime.evaluate WITHOUT dispatching any real DOM click (which would
-// itself be a confound, since real clicks on/off the tldraw container are
-// exactly the kind of interaction this subtask's tool cares about).
+// Exposes the editor on window so automation can inspect it without real
+// clicks.
 if (typeof window !== "undefined") {
   (window as unknown as { __appStore: typeof useAppStore }).__appStore = useAppStore;
 }
@@ -145,11 +122,6 @@ function SpikeRichTextShapeInner() {
     append(`debug: editingShapeId=${String(editor.getEditingShapeId())} selectedShapeIds=${JSON.stringify(editor.getSelectedShapeIds())} currentToolId=${editor.getCurrentToolId()}`);
   }
 
-  // spec.md subtask 2 ("Click-to-create tool") verification helper - lists
-  // every shape currently on the page (id/type/x/y/content), so CDP-driven
-  // real pointer-down clicks on the canvas can be verified end to end
-  // (shape created at the right point, correct count after N clicks)
-  // without needing a save/reload round trip.
   function debugListShapes() {
     const editor = useAppStore.getState().activeCanvasEditor;
     if (!editor) return append("no active tldraw editor");
@@ -166,15 +138,9 @@ function SpikeRichTextShapeInner() {
   function setToolSelect() {
     const editor = useAppStore.getState().activeCanvasEditor;
     if (!editor) return append("no active tldraw editor");
-    // Mirrors the REAL toolbar Select button's own onSelect handler (see
-    // node_modules/tldraw/src/lib/ui/hooks/useTools.tsx) - a raw
-    // `editor.setCurrentTool("select")` is a no-op when already inside the
-    // `select` tool (e.g. mid-edit, in `select.editing_shape`), since
-    // StateNode.transition() only exits/enters when the target id differs
-    // from the CURRENT top-level id. The real toolbar button special-cases
-    // this by forcing an exit+enter of the whole `select` branch first, so
-    // this debug button does the same for a realistic verification of
-    // "explicitly switching to Select while mid-edit".
+    // setCurrentTool("select") does nothing while already inside select (for
+    // example mid-edit), so force an exit and re-enter like tldraw's own
+    // toolbar button.
     if (editor.isIn("select")) {
       const currentNode = editor.root.getCurrent()!;
       currentNode.exit({}, currentNode.id);
@@ -210,10 +176,6 @@ function SpikeRichTextShapeInner() {
     const editor = useAppStore.getState().activeCanvasEditor;
     if (!editor || !lastShapeIdRef.current) return append("create a shape first");
     editor.setEditingShape(lastShapeIdRef.current as never);
-    // Give the Tiptap instance a tick to mount as `isEditing` flips true,
-    // then type via its own commands (no DOM keyboard events needed for
-    // this verification - the ProseMirror doc is the ground truth this
-    // subtask cares about round-tripping through canvasData).
     setTimeout(() => {
       const el = document.querySelector(`#${CSS.escape(lastShapeIdRef.current!)} .tiptap`);
       append(`found tiptap DOM el for shape: ${!!el}`);
@@ -224,9 +186,7 @@ function SpikeRichTextShapeInner() {
   async function inspectNote() {
     if (!manualId) return append("enter a note id first");
     const n = await getNoteById(manualId);
-    // tldraw's getSnapshot() (see @tldraw/editor's TLEditorSnapshot.ts) shapes
-    // this as `{ document: { store, schema }, session }` - `store` is a
-    // dict from record id to record, not top-level on the snapshot itself.
+    // tldraw snapshots keep records under document.store, not at the top level.
     const store = n?.canvasData
       ? ((n.canvasData as { document?: { store?: Record<string, unknown> } }).document?.store ?? {})
       : {};
@@ -336,12 +296,6 @@ function SpikeRichTextShapeInner() {
           <li key={i}>{line}</li>
         ))}
       </ul>
-      {/* spec.md subtask 4 verification - the real Ribbon (with its Format
-          tab), not rendered by this route's normal AppLayout.tsx (this spike
-          bypasses AppLayout to hold a direct reference to the tldraw
-          `Editor`, see this file's header comment), added here so CDP-driven
-          verification can exercise the actual Format tab / bubble menu
-          wiring end to end against shapes on this page. */}
       <div data-testid="spike-richtext-ribbon">
         <Ribbon />
       </div>

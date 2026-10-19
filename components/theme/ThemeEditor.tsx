@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Clipboard, Copy, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import {
@@ -27,41 +27,30 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "@/components/ui/collapsible";
 import { useAppStore } from "@/stores/appStore";
 import { BUILTIN_THEMES, LIGHT_THEME } from "@/lib/themes/builtin";
 import { applyTheme } from "@/lib/themes/apply";
 import { deleteThemeFile, ensureThemesDir, loadThemes, saveTheme } from "@/lib/themes/loader";
 import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/themes/types";
-import { ThemeColorField } from "./ThemeColorField";
+import { SettingInfo, ThemeColorField, settingRowHighlightHandlers } from "./ThemeColorField";
 import { ThemePreview } from "./ThemePreview";
 
-// Mirrors AccountMenu.tsx's own `SYSTEM_THEME_VALUE` export (same sentinel
-// value, used the same way AppShell.tsx's refresh logic excludes it from
-// user-theme lists). Duplicated here as a literal, rather than imported,
-// because AccountMenu.tsx imports THIS component - importing back from it
-// would create a circular module dependency.
+// Duplicated from AccountMenu rather than imported: AccountMenu imports this
+// file, so importing back would be circular.
 const SYSTEM_THEME_VALUE = "__system__";
 
-// A pending close/switch action that's blocked on the unsaved-changes
-// confirmation prompt below (spec.md M7 subtask 17) - captures just enough
-// to resume once the user picks Save/Discard/Cancel. "close" covers every
-// way the dialog itself can be dismissed (X button, Escape, outside click,
-// and the footer's own Discard button); "switch" covers clicking a
-// different theme in the left sidebar's list while the current draft is
-// dirty.
+// A close or theme switch waiting on the unsaved-changes prompt. "close" covers
+// every way to dismiss the dialog; "switch" is picking another theme while the
+// draft is dirty.
 type PendingAction =
   | { type: "close" }
   | { type: "switch"; theme: Theme }
   | { type: "paste"; theme: Theme };
 
-// A single undo step for subtask 18's in-session Ctrl+Z history: a snapshot
-// of every piece of state a value edit, a delete, or a theme-values paste
-// can touch, captured right BEFORE that action runs. Undo just restores all
-// of it verbatim - simpler and more robust than inverse-operations given how
-// small this data is (a handful of themes, ~31 string values each).
-// `restoreFile`, set only by the delete action, additionally re-persists the
-// deleted theme's file to disk on undo (its file is really gone after
-// delete, unlike everything else here which is purely in-memory).
+// Everything an edit, delete or paste can change, captured right before it
+// runs; undo restores it as-is. restoreFile is set only by delete, whose file
+// really is gone from disk.
 interface UndoSnapshot {
   editingThemeId: string | null;
   draftVariables: Partial<Record<ThemeVariableKey, string>>;
@@ -72,106 +61,141 @@ interface UndoSnapshot {
 
 const MAX_UNDO_HISTORY = 50;
 
-// Human-readable label for a ThemeVariableKey, e.g. "sidebar-primary-foreground"
-// -> "Sidebar Primary Foreground". Used by the right sidebar's field list
-// (subtask 15) so the raw kebab-case CSS variable names aren't shown as-is.
-function labelForKey(key: ThemeVariableKey): string {
-  return key
-    .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+// Built-in themes use 0.625rem; above about 2rem corners are fully rounded
+// anyway.
+const RADIUS_MIN_REM = 0;
+const RADIUS_MAX_REM = 2;
+const RADIUS_STEP_REM = 0.025;
+
+const RADIUS_DEFAULT = { num: 0.625, unit: "rem" };
+
+// Falls back to RADIUS_DEFAULT for blank, non-rem or out-of-range values, so a
+// hand-edited theme file can't put the slider in a bad state.
+function parseRadiusValue(value: string | undefined): { num: number; unit: string } {
+  const match = value?.match(/^(-?[\d.]+)(\D*)$/);
+  if (!match) return RADIUS_DEFAULT;
+  const num = parseFloat(match[1]);
+  const unit = match[2] || "rem";
+  if (unit !== "rem" || !Number.isFinite(num)) return RADIUS_DEFAULT;
+  return { num: Math.min(RADIUS_MAX_REM, Math.max(RADIUS_MIN_REM, num)), unit };
 }
+
+// Display text only: the keys are CSS variable names saved in theme files, so
+// they never change.
+const THEME_VARIABLE_INFO = {
+  background: {
+    name: "Background",
+    description: "Main background behind notes and the canvas",
+  },
+  foreground: { name: "Text", description: "Default text color" },
+  card: {
+    name: "Card background",
+    description: "Background of cards, such as sticky note previews",
+  },
+  "card-foreground": { name: "Card text", description: "Text on cards" },
+  primary: {
+    name: "Accent color",
+    description: "Buttons, selected items and other highlights",
+  },
+  border: { name: "Border", description: "Borders and dividing lines" },
+  radius: { name: "Corner rounding", description: "How rounded corners are" },
+  sidebar: { name: "Sidebar background", description: "Background of the sidebars" },
+  "sidebar-foreground": { name: "Sidebar text", description: "Text in the sidebars" },
+  "sidebar-primary": {
+    name: "Sidebar highlight",
+    description: "Shown in the preview; not used by the app yet",
+  },
+  "sidebar-accent": {
+    name: "Sidebar hover",
+    description: "Hovered and selected items in the sidebars",
+  },
+  "sidebar-border": {
+    name: "Sidebar border",
+    description: "Edges and dividers in the sidebars",
+  },
+} satisfies Partial<Record<ThemeVariableKey, { name: string; description: string }>>;
+
+type EditableThemeVariableKey = keyof typeof THEME_VARIABLE_INFO;
+
+// Only keys the mini preview renders, in render order.
+const THEME_VARIABLE_GROUPS: { label: string; keys: EditableThemeVariableKey[] }[] = [
+  { label: "Page", keys: ["background", "foreground"] },
+  { label: "Cards & text boxes", keys: ["card", "card-foreground"] },
+  { label: "Accent", keys: ["primary"] },
+  { label: "Borders", keys: ["border"] },
+  { label: "Corners", keys: ["radius"] },
+  {
+    label: "Sidebar",
+    keys: [
+      "sidebar",
+      "sidebar-foreground",
+      "sidebar-primary",
+      "sidebar-accent",
+      "sidebar-border",
+    ],
+  },
+];
 
 interface ThemeEditorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-// Structural shell for the Theme Editor (spec.md M7 subtask 13). Establishes
-// the four-region layout (left sidebar theme list, right sidebar color
-// editor, center live preview, footer Save/Discard) that subtasks 14-19 fill
-// in with real behavior - each region below is a clearly-labeled placeholder,
-// not functional yet. Opened from AccountMenu.tsx's "Edit themes..." item.
+// Theme list on the left, color editor on the right, live preview in the
+// middle, and Save/Discard in the footer. Opened from the account menu.
 export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   const availableThemes = useAppStore((s) => s.availableThemes);
   const selectedThemeId = useAppStore((s) => s.selectedThemeId);
   const setAvailableThemes = useAppStore((s) => s.setAvailableThemes);
   const setUserThemesLoaded = useAppStore((s) => s.setUserThemesLoaded);
 
-  // Which theme is currently loaded for editing. The theme list below lets
-  // the user change this by clicking a row; it's also seeded once per
-  // dialog-open below.
   const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
 
-  // Working copy of the loaded theme's variables. Subtask 15's color editor
-  // reads/writes this, and subtask 17's Save persists it (discarding it on
-  // Discard/close instead). Kept as a plain draft object - not written back
-  // into `availableThemes` - so edits don't leak into the live app theme
-  // until an explicit Save.
+  // Edits stay in this draft, not availableThemes, so they don't reach the app
+  // until Save.
   const [draftVariables, setDraftVariables] = useState<
     Partial<Record<ThemeVariableKey, string>>
   >({});
 
-  // Subtask 14: a "create new theme" button clones a default palette into a
-  // brand-new, not-yet-persisted Theme. It's deliberately NOT written into
-  // `availableThemes` (stores/appStore.ts) - that store reflects only
-  // themes actually persisted to disk via lib/themes/loader.ts, and other
-  // consumers (e.g. AccountMenu.tsx's theme picker) read straight from it,
-  // so leaking an unsaved draft in there would make it selectable app-wide
-  // before it's ever saved. Kept as separate local state instead; the
-  // rendered list is availableThemes UNION this optional entry. This also
-  // sets up cleanly for subtask 17's "discard the unsaved new theme if the
-  // editor closes without saving" behavior - just drop this state.
+  // Kept out of availableThemes because other components read that store
+  // directly, which would make an unsaved theme selectable app-wide.
   const [unsavedNewTheme, setUnsavedNewTheme] = useState<Theme | null>(null);
 
-  // A close/theme-switch attempt that's been blocked pending the user's
-  // answer to the unsaved-changes confirmation prompt below. `null` when no
-  // prompt is showing.
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
-  // Subtask 18's left-sidebar "copy theme values" clipboard: an in-memory,
-  // this-ThemeEditor-instance-only copy of one theme's full `variables`
-  // object (NOT the OS clipboard, not persisted). "Paste theme values"
-  // below reads this; the paste item is disabled while it's null.
+  // In-memory copy for "Copy/Paste theme values" (not the OS clipboard).
   const [copiedVariables, setCopiedVariables] = useState<Partial<
     Record<ThemeVariableKey, string>
   > | null>(null);
 
-  // Subtask 18's in-session Ctrl+Z history: a plain stack of UndoSnapshots,
-  // pushed to right before each undoable action (a value edit, a delete, or
-  // a theme-values paste) runs. A ref (not state) since pushing/popping it
-  // shouldn't itself trigger a re-render - only the state it restores does.
-  // Built fresh each time the dialog opens and discarded on close, per
-  // spec.md's "hand-rolled, in-session-only history stack" decision -
-  // deliberately not persisted, and entirely unrelated to tldraw's/Tiptap's
-  // own undo/redo.
+  // Undo stack for this dialog session; a ref so pushing doesn't re-render.
+  // Cleared on close and unrelated to tldraw's and Tiptap's own undo.
   const undoHistoryRef = useRef<UndoSnapshot[]>([]);
 
-  // Coalescing for `handleVariableChange` below: react-colorful's wheel
-  // fires `onChange` continuously on every pointer-move during a single
-  // drag, and its hex input fires on every keystroke - without coalescing,
-  // each of those raw events would push its own UndoSnapshot, flooding
-  // `undoHistoryRef` and (via MAX_UNDO_HISTORY's `shift()` eviction)
-  // silently bumping older, unrelated undoable actions (a delete, a paste)
-  // out of history. Tracks the key of the most recent edit; consecutive
-  // edits to the SAME key reuse the snapshot already sitting on top of the
-  // stack (it already captured the pre-edit state) instead of pushing a new
-  // one. Reset to null - so the next edit of ANY key pushes fresh - by
-  // `loadThemeForEditing` (a different theme is now being edited),
-  // `pushUndoSnapshot` itself (a delete/paste just pushed its own snapshot),
-  // and `handleUndo` (an undo just happened).
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(THEME_VARIABLE_GROUPS.map((g) => [g.label, true])),
+  );
+
+  // Coalesces a run of edits to the same key (one color-wheel drag, or typing a
+  // hex) into one undo step; otherwise each event would push a snapshot and
+  // evict older actions from the capped history. Reset when another theme
+  // loads, a delete or paste pushes its own snapshot, or an undo runs.
   const lastEditedKeyRef = useRef<ThemeVariableKey | null>(null);
 
-  // All themes selectable in the left sidebar's list: real (persisted)
-  // themes plus the in-progress unsaved one, if any.
+  // The setting row being hovered or keyboard-focused, outlined in the preview.
+  const [hoveredKey, setHoveredKey] = useState<ThemeVariableKey | null>(null);
+
+  // A row only clears its own key, so a late leave from the previous row
+  // can't wipe out the row that's now hovered.
+  const handleHighlightChange = useCallback((key: ThemeVariableKey, active: boolean) => {
+    setHoveredKey((prev) => (active ? key : prev === key ? null : prev));
+  }, []);
+
   const themeList = unsavedNewTheme
     ? [...availableThemes, unsavedNewTheme]
     : availableThemes;
 
-  // Loads `theme` into the editor for viewing/editing - shared by the
-  // dialog-open seeding effect below and by the theme list's row clicks
-  // (subtask 14) so there's a single source of truth for "what does
-  // selecting a theme do".
+  // Shared by the open-time seeding and row clicks.
   function loadThemeForEditing(theme: Theme | undefined) {
     setEditingThemeId(theme?.id ?? null);
     setDraftVariables(theme ? { ...theme.variables } : {});
@@ -180,20 +204,15 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     lastEditedKeyRef.current = null;
   }
 
-  // Seed editingThemeId/draftVariables whenever the dialog opens: default to
-  // whichever theme is currently active in the app (selectedThemeId), or
-  // fall back to the first available theme if nothing's active (e.g.
-  // "System" is selected, or availableThemes hasn't loaded any yet). This
-  // deliberately re-seeds on every open (rather than persisting edits across
-  // opens) since there's no "unsaved draft" concept until subtask 17 adds
-  // real save/discard semantics. Also clears any unsaved new theme from a
-  // previous session, for the same reason.
+  // On open, load the active theme, or the first theme if none is active (for
+  // example "System"). Re-seeds on every open and clears any unsaved new theme.
   useEffect(() => {
     if (!open) return;
 
     setUnsavedNewTheme(null);
     setPendingAction(null);
     setCopiedVariables(null);
+    setHoveredKey(null);
     undoHistoryRef.current = [];
 
     const fallback = availableThemes[0]?.id ?? null;
@@ -208,18 +227,9 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Subtask 18: Ctrl+Z (Cmd+Z on Mac) undo, scoped to only fire while the
-  // Theme Editor dialog is open - listener is added/removed alongside
-  // `open` itself, so nothing fires once it's closed. `handleUndo` only
-  // reads `undoHistoryRef` (a ref) and calls the state setters (which are
-  // referentially stable), so this doesn't need `handleUndo` in its
-  // dependency array - it's never stale.
-  //
-  // Deliberately ignores keydowns whose target is an `<input>`/`<textarea>`
-  // (e.g. the hex color input, the radius text field) so this doesn't
-  // hijack those elements' own native undo - the safest way to tell "this
-  // keydown was meant for a text field's own undo, not this dialog's"
-  // without trying to guess at cursor/selection state.
+  // Ctrl+Z / Cmd+Z, only while the dialog is open. handleUndo only touches a
+  // ref and stable setters, so it doesn't need to be a dependency. Skips inputs
+  // so they keep their own native undo.
   useEffect(() => {
     if (!open) return;
 
@@ -241,11 +251,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Creates a new, unsaved theme (cloning LIGHT_THEME's palette as a
-  // sensible default starting point) and immediately selects it for
-  // editing. Clicking "create new theme" again while one already exists
-  // replaces it - this app doesn't support multiple concurrent unsaved
-  // drafts (not asked for by spec.md's Non-Goals here).
+  // Starts from LIGHT_THEME's palette. Only one unsaved new theme at a time.
   function handleCreateNewTheme() {
     const newTheme: Theme = {
       id: crypto.randomUUID(),
@@ -256,14 +262,8 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     loadThemeForEditing(newTheme);
   }
 
-  // Left sidebar's bottom "Open themes folder" button (subtask 19): opens
-  // the on-disk themes directory (lib/themes/loader.ts's
-  // `<app-config-dir>/themes`) in the OS's file explorer, via
-  // @tauri-apps/plugin-opener's `openPath`. `ensureThemesDir()` (rather than
-  // `getThemesDir()`) is used here so this doesn't fail on a fresh install
-  // where no user theme has ever been saved and the directory doesn't exist
-  // yet - it creates the directory first, same as `loadThemes()`/
-  // `saveTheme()` already do.
+  // ensureThemesDir rather than getThemesDir, so this works on a fresh install
+  // where the folder doesn't exist yet.
   async function handleOpenThemesFolder() {
     try {
       const dir = await ensureThemesDir();
@@ -273,17 +273,10 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     }
   }
 
-  // Updates a single variable in the working draft (subtask 15's color
-  // editor and radius field both call this). Deliberately only ever touches
-  // `draftVariables` - never lib/themes/apply.ts - so edits stay local to
-  // this dialog's draft until subtask 17's Save applies them for real.
+  // Only touches the draft; nothing is applied until Save.
   function handleVariableChange(key: ThemeVariableKey, value: string) {
-    // Only push a fresh snapshot when this edit starts a new run (a
-    // different key than the immediately-prior edit, or no prior edit since
-    // the last delete/paste/undo) - see `lastEditedKeyRef`'s comment above.
-    // A run of same-key edits (one color-wheel drag's stream of onChange
-    // events, or one hex-input's keystrokes) reuses the snapshot already on
-    // top of the stack instead of pushing a new one per event.
+    // A new snapshot only when this edit starts a new run; see
+    // lastEditedKeyRef.
     if (lastEditedKeyRef.current !== key) {
       pushUndoSnapshot();
       lastEditedKeyRef.current = key;
@@ -291,10 +284,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     setDraftVariables((prev) => ({ ...prev, [key]: value }));
   }
 
-  // Captures the current, pre-action state as an UndoSnapshot and pushes it
-  // onto this session's history stack - call this right before making any
-  // undoable change (a value edit, a delete, or a paste). `restoreFile` is
-  // only ever passed by the delete action (see `handleDeleteTheme` below).
+  // Call right before any undoable change.
   function pushUndoSnapshot(restoreFile?: Theme) {
     // A delete/paste is pushing its own snapshot right now - any run of
     // same-key edit-coalescing tracked above no longer applies to whatever
@@ -312,15 +302,9 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     }
   }
 
-  // Ctrl+Z (Cmd+Z on Mac): pops the last snapshot and restores every field
-  // it captured verbatim. If that snapshot was captured right before a
-  // delete, also writes the deleted theme's file back to disk FIRST - unlike
-  // everything else here (purely in-memory), the deleted theme's file is
-  // really gone, so `setAvailableThemes` below would otherwise make it
-  // reappear in the UI while its on-disk file is still missing (it'd then
-  // silently vanish again the next time `loadThemes()` runs, e.g. next Save
-  // or dialog reopen). Async so this write can be awaited - see the keydown
-  // handler above, which now calls this with `void`.
+  // Restores the last snapshot. After a delete it first writes the theme file
+  // back to disk; otherwise the theme would reappear in the UI and then vanish
+  // on the next reload.
   async function handleUndo() {
     const snapshot = undoHistoryRef.current.pop();
     if (!snapshot) return;
@@ -332,14 +316,9 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
       try {
         await saveTheme(snapshot.restoreFile);
       } catch (err) {
-        // The restore write failed - put the snapshot back so the user can
-        // retry Ctrl+Z, and don't touch any state below: the theme's data
-        // isn't lost (it's still sitting in this snapshot), only its
-        // on-disk restore is, so the UI must NOT claim it's back until that
-        // actually succeeds. This app has no toast/alert convention yet for
-        // surfacing a save failure to the user (checked ThemeEditor.tsx and
-        // its callers), so this is logged only; wiring up a visible error
-        // indication here is a reasonable follow-up if one gets added.
+        // Put the snapshot back so Ctrl+Z can be retried, and leave the UI
+        // alone: the file isn't restored yet. There's no error UI to report
+        // this to.
         console.error("Theme editor: failed to restore deleted theme file on undo", err);
         undoHistoryRef.current.push(snapshot);
         return;
@@ -354,11 +333,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
 
   const editingTheme = themeList.find((t) => t.id === editingThemeId);
 
-  // Whether `draftVariables` currently differs from `editingTheme`'s
-  // last-saved/loaded values - a never-saved `unsavedNewTheme` counts as
-  // dirty too (it has zero on-disk representation yet, regardless of
-  // whether its cloned starting palette has been touched). Backs the
-  // close/switch confirmation prompt below.
+  // A never-saved new theme always counts as dirty.
   function isDraftDirty(): boolean {
     if (!editingTheme) return false;
     if (unsavedNewTheme && unsavedNewTheme.id === editingTheme.id) return true;
@@ -367,27 +342,12 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     );
   }
 
-  // Persists `draftVariables` (merged onto the loaded theme's id/name) to
-  // disk via lib/themes/loader.ts's `saveTheme`, then refreshes
-  // stores/appStore.ts's `availableThemes` from disk so the saved theme -
-  // new or updated - is reflected everywhere else that reads it (e.g.
-  // AccountMenu.tsx's theme picker), mirroring how AppShell.tsx populates
-  // that same field on boot. If the saved theme is the app's
-  // currently-active theme, also applies it live so the open app UI updates
-  // immediately to match the just-saved edit, instead of waiting for the
-  // next reload.
+  // Saves the draft, refreshes availableThemes from disk, and applies it live
+  // if it's the active theme.
   //
-  // Built-in themes (BUILTIN_THEMES) are never written to directly: they're
-  // hard-coded, so any `<id>.json` saved over a built-in id would just be
-  // discarded again by the `usableUserThemes` filter right below (it exists
-  // to drop a *user* theme file that happens to collide with a built-in id -
-  // AppShell.tsx's boot-time restore does the same thing, and explicitly
-  // ignores user files for built-in ids too), and permanently orphaned on
-  // disk after that. So editing a built-in instead forks it into a brand-new
-  // theme (fresh id, same id-generation approach as handleCreateNewTheme)
-  // that *is* a real, persisted, reloadable entry - the edit is never lost,
-  // it just lands as a new custom theme based on the built-in rather than
-  // overwriting it.
+  // Built-in themes are never overwritten: a user file with a built-in's id is
+  // ignored on load, so the edit would be lost. Editing a built-in instead
+  // saves it as a new custom theme.
   async function persistDraft(): Promise<Theme | null> {
     if (!editingTheme) return null;
 
@@ -414,26 +374,15 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     setAvailableThemes([...BUILTIN_THEMES, ...usableUserThemes]);
     setUserThemesLoaded(true);
 
-    // It's no longer an unsaved draft - it's now a real, persisted entry
-    // that'll show up via the refreshed `availableThemes` above. Note this
-    // compares against `editingTheme.id` (the theme that was loaded into the
-    // editor), not `themeToSave.id` - those differ for the built-in-fork case
-    // above, but `unsavedNewTheme` (created only by handleCreateNewTheme)
-    // never has a built-in's id anyway, so this only ever matches in the
-    // non-fork case.
+    // Compares against editingTheme.id (not themeToSave.id, which differs for a
+    // fork); an unsaved new theme never has a built-in's id.
     if (unsavedNewTheme && unsavedNewTheme.id === editingTheme.id) {
       setUnsavedNewTheme(null);
     }
 
     if (isBuiltin) {
-      // Follow the fork: the editor now shows/edits the new custom theme
-      // instead of continuing to point at the built-in (which stays exactly
-      // as it was - its in-editor entry, if re-selected, will show its
-      // original, unmodified defaults again). Deliberately does NOT
-      // live-apply here even if the built-in being forked is the currently
-      // active theme - the fork is a distinct, not-yet-selected theme, and
-      // applying it live would change the app's active appearance without
-      // the user ever having picked it in AccountMenu.tsx's theme picker.
+      // Follow the fork in the editor, but don't apply it live: the user hasn't
+      // chosen it in the theme picker.
       setEditingThemeId(themeToSave.id);
       setDraftVariables({ ...themeToSave.variables });
     } else if (selectedThemeId === themeToSave.id) {
@@ -443,43 +392,28 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     return themeToSave;
   }
 
-  // Reverts `draftVariables` back to `editingTheme`'s last-saved/loaded
-  // values by re-running the same seeding logic `loadThemeForEditing`
-  // already uses for this theme (for a never-saved `unsavedNewTheme`, that
-  // just re-clones its original starting palette - the new theme itself
-  // isn't deleted here, only its in-editor edits are reverted; it's only
-  // ever dropped entirely when the dialog actually closes without saving,
-  // see `finishClose` below).
+  // Reverts the edits; an unsaved new theme is only dropped when the dialog
+  // closes.
   function revertDraft() {
     loadThemeForEditing(editingTheme);
   }
 
-  // Drops `unsavedNewTheme` if it was never saved - called whenever the
-  // dialog is about to close without that theme having been persisted, so
-  // it doesn't linger in local state (it was never written to disk, so
-  // there's nothing to clean up there).
   function discardUnsavedNewThemeIfAny() {
     setUnsavedNewTheme(null);
   }
 
-  // Footer "Save": persists the current draft and closes the dialog.
   async function handleSave() {
     await persistDraft();
     onOpenChange(false);
   }
 
-  // Footer "Discard": reverts the current draft's edits, drops an unsaved
-  // new theme entirely (nothing was ever written to disk for it), and
-  // closes the dialog - same "discard and leave" semantics as answering
-  // Discard on the confirmation prompt below when closing.
+  // Same as answering Discard on the prompt when closing.
   function handleDiscard() {
     revertDraft();
     discardUnsavedNewThemeIfAny();
     onOpenChange(false);
   }
 
-  // Resolves whichever close/switch/paste action the confirmation prompt is
-  // blocking on.
   function resolvePendingAction() {
     const action = pendingAction;
     setPendingAction(null);
@@ -493,20 +427,13 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     }
   }
 
-  // Subtask 18's left-sidebar context menu: "Copy theme values" - copies
-  // `theme`'s full `variables` object (the theme the menu was opened on,
-  // not necessarily the currently-loaded draft) into this session's
-  // in-memory clipboard. Not undoable itself (it doesn't touch any theme's
-  // data), so it deliberately doesn't push an undo snapshot.
+  // Not undoable, since it changes no theme data.
   function handleCopyTheme(theme: Theme) {
     setCopiedVariables({ ...theme.variables });
   }
 
-  // Applies the copied clipboard onto `theme`: loads `theme` into the
-  // editor with the copied variables as its new draft, so it's immediately
-  // marked dirty by the existing `isDraftDirty` comparison against
-  // `theme.variables` - Save/Discard/the confirmation prompt all then work
-  // unchanged, with no extra plumbing.
+  // Loads the theme with the pasted values as its draft, so the usual dirty
+  // check, Save and Discard all apply.
   function applyPasteToTheme(theme: Theme) {
     if (!copiedVariables) return;
     pushUndoSnapshot();
@@ -514,12 +441,8 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     setDraftVariables({ ...copiedVariables });
   }
 
-  // Subtask 18's left-sidebar context menu: "Paste theme values" - pastes
-  // the last-copied variables onto `theme` (the row the menu was opened
-  // on). Routed through the same dirty-check the theme list's row clicks
-  // use (`requestLoadTheme`) so an unsaved edit on a DIFFERENT theme isn't
-  // silently discarded by a paste - if the current draft is dirty, the
-  // existing Save/Discard/Cancel prompt below blocks first.
+  // Goes through requestLoadTheme so pasting can't silently discard a dirty
+  // draft of another theme.
   function requestPasteTheme(theme: Theme) {
     if (!copiedVariables) return;
     if (isDraftDirty()) {
@@ -529,14 +452,8 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     applyPasteToTheme(theme);
   }
 
-  // Subtask 18's left-sidebar context menu: "Delete" - removes `theme`'s
-  // on-disk file and drops it from `availableThemes`, mirroring
-  // `persistDraft`'s own pattern for refreshing that store field from disk
-  // afterwards. Built-in themes have no on-disk file and are never offered
-  // this action (hidden in the menu below) - guarded here too as a
-  // belt-and-suspenders check. If the deleted theme was the one currently
-  // loaded in the editor, falls back to loading whatever theme is now
-  // first in the refreshed list (or clears the editor if none remain).
+  // Built-in themes have no file and never show this action; checked here too.
+  // If the deleted theme was loaded, load the first remaining theme.
   async function handleDeleteTheme(theme: Theme) {
     if (BUILTIN_THEMES.some((b) => b.id === theme.id)) return;
 
@@ -571,10 +488,8 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     setPendingAction(null);
   }
 
-  // Wired to the Dialog's own `onOpenChange` (X button, Escape, outside
-  // click) below - intercepts an attempted close while the draft is dirty
-  // and routes it through the confirmation prompt instead of closing
-  // immediately.
+  // Dialog close (X, Escape, outside click) while dirty goes through the
+  // prompt.
   function handleDialogOpenChange(nextOpen: boolean) {
     if (nextOpen) {
       onOpenChange(true);
@@ -588,9 +503,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     onOpenChange(false);
   }
 
-  // Wired to the left sidebar's theme-row clicks below - intercepts
-  // switching to a different theme while the current draft is dirty and
-  // routes it through the same confirmation prompt.
+  // Switching themes while dirty goes through the same prompt.
   function requestLoadTheme(theme: Theme) {
     if (theme.id === editingThemeId) return;
     if (isDraftDirty()) {
@@ -612,10 +525,6 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
           </DialogHeader>
 
           <div className="flex min-h-0 flex-1">
-            {/* Left sidebar - theme list: built-in + user-created themes, plus
-                a "create new theme" button (spec.md M7 subtask 14). Each row
-                also has a right-click context menu (subtask 18) offering
-                copy/paste theme values and delete. */}
             <div className="flex w-48 shrink-0 flex-col overflow-y-auto border-r border-border bg-sidebar p-2">
               <div className="flex flex-1 flex-col gap-0.5">
                 {themeList.map((theme) => {
@@ -685,66 +594,102 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
               </button>
             </div>
 
-            {/* Center - live preview (subtask 16: bounded mock canvas with a
-                movable/editable text box). Reads the same draftVariables/
-                editingTheme state the right sidebar's color editor below
-                writes to, so it re-renders live for free as colors change -
-                no extra plumbing needed. */}
             <div className="flex min-w-0 flex-1 items-center justify-center bg-muted/30 p-3">
               {editingTheme ? (
-                <ThemePreview editingTheme={editingTheme} draftVariables={draftVariables} />
+                <ThemePreview
+                  editingTheme={editingTheme}
+                  draftVariables={draftVariables}
+                  hoveredKey={hoveredKey}
+                />
               ) : (
                 <div className="text-xs text-muted-foreground">No theme selected</div>
               )}
             </div>
 
-            {/* Right sidebar - color editor (subtask 15: color-wheel editor
-                for all 31 ThemeVariableKey values). Reads each value from
-                draftVariables, falling back to the loaded theme's own value
-                when the draft hasn't overridden it yet (in practice
-                loadThemeForEditing above always seeds the full theme into
-                draftVariables, but this fallback keeps the field correct even
-                if that ever changes). Edits only ever update draftVariables -
-                not the live app theme (lib/themes/apply.ts isn't called
-                here). */}
             <div className="flex w-64 shrink-0 flex-col overflow-y-auto border-l border-border bg-sidebar p-3">
               {editingTheme ? (
-                <div className="flex flex-col divide-y divide-border">
-                  {THEME_VARIABLE_KEYS.map((key) => {
-                    const value = draftVariables[key] ?? editingTheme.variables[key];
-                    const label = labelForKey(key);
+                <div className="flex flex-col gap-3">
+                  {THEME_VARIABLE_GROUPS.map((group) => (
+                    <Collapsible
+                      key={group.label}
+                      open={expandedGroups[group.label] ?? true}
+                      onOpenChange={(next) =>
+                        setExpandedGroups((prev) => ({ ...prev, [group.label]: next }))
+                      }
+                      className="flex flex-col"
+                    >
+                      <CollapsibleTrigger className="px-0.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {group.label}
+                      </CollapsibleTrigger>
+                      <CollapsiblePanel>
+                        <div className="flex flex-col divide-y divide-border">
+                          {group.keys.map((key) => {
+                            const value = draftVariables[key] ?? editingTheme.variables[key];
+                            const { name, description } = THEME_VARIABLE_INFO[key];
 
-                    if (key === "radius") {
-                      return (
-                        <div key={key} className="flex items-center justify-between gap-2 py-1">
-                          <label
-                            htmlFor="theme-editor-radius"
-                            className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground"
-                          >
-                            {label}
-                          </label>
-                          <input
-                            id="theme-editor-radius"
-                            type="text"
-                            value={value ?? ""}
-                            onChange={(e) => handleVariableChange(key, e.target.value)}
-                            placeholder="0.625rem"
-                            className="h-6 w-20 shrink-0 rounded-md border border-input bg-transparent px-1.5 text-xs text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-                          />
+                            if (key === "radius") {
+                              const { num, unit } = parseRadiusValue(value);
+                              return (
+                                <div
+                                  key={key}
+                                  className="flex flex-col gap-1 py-1.5"
+                                  {...settingRowHighlightHandlers(key, handleHighlightChange)}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex min-w-0 flex-1 items-center gap-1">
+                                      <label
+                                        htmlFor="theme-editor-radius"
+                                        className="truncate text-xs text-sidebar-foreground"
+                                      >
+                                        {name}
+                                      </label>
+                                      <SettingInfo
+                                        label={name}
+                                        description={description}
+                                        descriptionId="theme-editor-radius-description"
+                                      />
+                                    </div>
+                                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                                      {num}
+                                      {unit}
+                                    </span>
+                                  </div>
+                                  <input
+                                    id="theme-editor-radius"
+                                    aria-describedby="theme-editor-radius-description"
+                                    type="range"
+                                    min={RADIUS_MIN_REM}
+                                    max={RADIUS_MAX_REM}
+                                    step={RADIUS_STEP_REM}
+                                    value={num}
+                                    onChange={(e) =>
+                                      handleVariableChange(
+                                        key,
+                                        `${Number(e.target.value).toFixed(3)}${unit}`,
+                                      )
+                                    }
+                                    className="h-1.5 w-full cursor-pointer accent-primary"
+                                  />
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <ThemeColorField
+                                key={key}
+                                varKey={key}
+                                label={name}
+                                description={description}
+                                value={value}
+                                onChange={handleVariableChange}
+                                onHighlightChange={handleHighlightChange}
+                              />
+                            );
+                          })}
                         </div>
-                      );
-                    }
-
-                    return (
-                      <ThemeColorField
-                        key={key}
-                        varKey={key}
-                        label={label}
-                        value={value}
-                        onChange={handleVariableChange}
-                      />
-                    );
-                  })}
+                      </CollapsiblePanel>
+                    </Collapsible>
+                  ))}
                 </div>
               ) : (
                 <div className="text-xs text-muted-foreground">No theme selected</div>
@@ -761,10 +706,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
         </DialogContent>
       </Dialog>
 
-      {/* Unsaved-changes confirmation prompt (spec.md M7 subtask 17):
-          shown instead of immediately closing/switching when the current
-          draft is dirty, so an edit in progress can't be silently lost by
-          an accidental X/Escape/outside-click or theme-row click. */}
+      {/* Shown instead of closing or switching while the draft is dirty. */}
       <AlertDialog open={pendingAction !== null} onOpenChange={(next) => { if (!next) handleConfirmCancel(); }}>
         <AlertDialogContent>
           <AlertDialogHeader>

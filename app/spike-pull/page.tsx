@@ -14,14 +14,8 @@ import { pushDirtyFolders } from "@/lib/sync/push";
 import { startPullSync } from "@/lib/sync/pull";
 import { getSyncConflicts } from "@/lib/db/syncConflicts";
 
-// M3 spike route (spec.md subtask 12). Verifies lib/sync/pull.ts end-to-end
-// against real Firestore + real SQLite, exercising every branch of
-// decidePull(): plain insert (no local row), ordinary remote-is-newer
-// overwrite, both flavors of the "both sides touched since last sync"
-// conflict (remote-wins and local-wins), and a deletedAt tombstone pull.
-// Signs in with a throwaway test account solely to satisfy firestore.rules
-// (same pattern as app/spike-push/page.tsx) - "Delete test account + docs"
-// below tears everything down again. Not production UI.
+// Dev-only verification page covering every branch of lib/sync/pull.ts's
+// decidePull. Not production UI.
 
 const TEST_EMAIL = "skylines-pull-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -34,11 +28,7 @@ export default function SpikePull() {
   const [log, setLog] = useState<string[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [unsubscribe, setUnsubscribe] = useState<(() => void) | null>(null);
-  // A plain local array here would get silently reset to empty on every
-  // re-render - and `append()` (setLog) re-renders this component after
-  // every single log line - so cleanup would never see anything pushed by
-  // earlier renders. useRef persists across renders without itself
-  // triggering one.
+  // A ref, because every log line re-renders and a plain array would reset.
   const createdFolderIdsRef = useRef<string[]>([]);
 
   function append(line: string) {
@@ -141,9 +131,7 @@ export default function SpikePull() {
       const dirtyLocal = await getFolderRowById(folderId);
       append(`local edited (dirty, unpushed) -> updatedAt=${dirtyLocal?.updatedAt} dirty=${dirtyLocal?.dirty}`);
 
-      // Remote write with updatedAt AFTER both syncedAt and the local edit's
-      // updatedAt - both sides touched since last sync, and remote is the
-      // later one, so remote should win.
+      // Remote changed after the local edit, so remote should win.
       const remoteUpdatedAt = (dirtyLocal?.updatedAt ?? Date.now()) + 10_000;
       await setDoc(
         doc(db, "folders", folderId),
@@ -190,10 +178,8 @@ export default function SpikePull() {
       const dirtyLocal = await getFolderRowById(folderId);
       append(`local edited (dirty, unpushed) -> updatedAt=${dirtyLocal?.updatedAt} dirty=${dirtyLocal?.dirty}`);
 
-      // Remote write with updatedAt strictly between syncedAt and the local
-      // edit's updatedAt - remote DID move since last sync (so this is
-      // still a genuine conflict), but local's edit is the later one, so
-      // local should win and stay dirty for a future push.
+      // Remote changed after the last sync but before the local edit: still a
+      // conflict, and local wins.
       const remoteUpdatedAt = Math.floor(((synced?.syncedAt ?? 0) + (dirtyLocal?.updatedAt ?? 0)) / 2);
       await setDoc(
         doc(db, "folders", folderId),

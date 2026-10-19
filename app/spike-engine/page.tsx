@@ -20,26 +20,12 @@ import {
 } from "@/lib/sync/engine";
 import type { SyncStatus } from "@/types";
 
-// M3 spike route (spec.md subtask 14). Verifies lib/sync/engine.ts end-to-end
-// against real Firestore + real SQLite: debounced push actually coalesces
-// repeated calls into one push pass, offline/online events flip syncStatus
-// and trigger an immediate retry on reconnect, app-resume
-// (visibilitychange) does the same, and a genuine push failure (forced via
-// signing the test user out mid-test, which makes Firestore reject the
-// write as permission-denied) drives a real capped-backoff retry ->
-// recovery sequence. Signs in with a throwaway test account solely to
-// satisfy firestore.rules (same pattern as app/spike-pull/page.tsx,
-// app/spike-cleanup/page.tsx) - "Cleanup" below tears everything down
-// again, remote docs before the auth account, always. Not production UI.
+// Dev-only verification page for lib/sync/engine.ts against real Firestore and
+// SQLite. Not production UI.
 //
-// navigator.onLine/document.visibilityState are read-only browser-reported
-// properties with no real "go offline" browser API available to a CDP-
-// driven test - `Object.defineProperty` here overrides them for the
-// duration of this page only, then dispatches the same `online`/`offline`/
-// `visibilitychange` events lib/sync/engine.ts's real listeners react to.
-// This is exactly the tradeoff spec.md subtask 14's own verification
-// section calls out as acceptable: it's the engine's LISTENER wiring being
-// tested, not real OS-level connectivity.
+// navigator.onLine and document.visibilityState are overridden on this page and
+// the matching events dispatched by hand, which tests the engine's listeners
+// rather than real connectivity.
 
 const TEST_EMAIL = "skylines-engine-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -99,13 +85,8 @@ export default function SpikeEngine() {
   }
 
   /**
-   * Verifies debounced push (item 1 of spec.md subtask 14's verification
-   * list): 5 rapid `scheduleDirtyPush` calls, well within the debounce
-   * window, must coalesce into exactly one push pass. Deliberately run
-   * with the engine NOT started (no pull listener active) so the only
-   * source of `syncStatus` "syncing"/"saved" transitions during this test
-   * is the push debounce logic itself, not pull reacting to this same
-   * write's own Firestore snapshot echoing back.
+   * Rapid scheduleDirtyPush calls must coalesce into one push. Runs with the
+   * engine stopped so pull can't cause status changes.
    */
   async function runDebounceTest() {
     if (!user) return append("sign in first");
@@ -145,11 +126,8 @@ export default function SpikeEngine() {
   }
 
   /**
-   * Verifies offline detection + immediate retry on reconnect (item 2):
-   * dispatches a synthetic `offline` event, confirms a scheduled push stays
-   * pending (folder stays dirty, `syncStatus` becomes `"offline"`, nothing
-   * errors), then dispatches `online` and confirms an immediate retry fires
-   * without waiting out the rest of the debounce window.
+   * A push scheduled while offline stays pending, then retries immediately when
+   * the browser comes back online.
    */
   async function runOfflineReconnectTest() {
     if (!user) return append("sign in first");
@@ -191,13 +169,7 @@ export default function SpikeEngine() {
     }
   }
 
-  /**
-   * Verifies app-resume retry (item 6 / "app-resume retry" in the subtask
-   * text): queues a push while offline, then brings connectivity back via
-   * ONLY `visibilitychange` -> visible (never dispatching an `online`
-   * event), isolating that this path alone triggers the same immediate
-   * retry as reconnect.
-   */
+  /** Becoming visible again triggers the same immediate retry as reconnecting. */
   async function runAppResumeTest() {
     if (!user) return append("sign in first");
     if (!engineRunning) return append("start the engine first (this test needs the visibilitychange listener)");
@@ -229,20 +201,8 @@ export default function SpikeEngine() {
   }
 
   /**
-   * Verifies the fix for the "push scheduled while another push is already
-   * in-flight" bug: folder A's push is started (not awaited), then - while
-   * `attemptPush` is still inside its `await pushDirtyRows(...)` for A -
-   * folder B is created and its own push is requested. Before the fix, that
-   * second request hit the `pushInFlight` early-return and was silently
-   * dropped: `pendingPushUserId` got unconditionally cleared once A's push
-   * resolved, `syncStatus` reported "saved", and folder B stayed dirty in
-   * SQLite forever with nothing left to push it. This test polls
-   * `syncStatus`/folder B's `dirty` flag throughout and fails immediately if
-   * "saved" is ever observed while folder B is still dirty, then confirms
-   * folder B eventually gets pushed for real (not silently dropped).
-   *
-   * Deliberately does not require the engine to be running - push/backoff
-   * are independent of the pull side, same as the debounce test above.
+   * Regression check: a push requested while another is in flight must not be
+   * dropped. Fails if status reads "saved" while folder B is still dirty.
    */
   async function runMidFlightPushTest() {
     if (!user) return append("sign in first");
@@ -297,13 +257,8 @@ export default function SpikeEngine() {
   }
 
   /**
-   * Verifies capped-backoff retry on a genuine failure (item 3): signs the
-   * test user out mid-test so Firestore rejects the push with a real
-   * permission-denied error (not a network/offline condition -
-   * `navigator.onLine` stays `true` throughout), confirms `syncStatus`
-   * becomes `"error"` and a backoff retry is scheduled, then signs back in
-   * before the next scheduled retry fires and confirms that retry succeeds
-   * on its own - a genuine observed failure -> retry -> recovery sequence.
+   * Signing out makes Firestore reject the push with a real error; the backoff
+   * retry must then succeed after signing back in.
    */
   async function runBackoffRetryTest() {
     if (!user) return append("sign in first");
@@ -369,9 +324,8 @@ export default function SpikeEngine() {
         await auth.currentUser.delete();
         append("deleted test auth user");
       } else if (user) {
-        // Backoff test may have left the account signed out at cleanup time
-        // in a failure case - sign back in once more so it can be deleted
-        // instead of leaving an orphaned throwaway account behind.
+        // The backoff test can leave the account signed out; sign in so it can
+        // still be deleted.
         const cred = await signInWithEmailAndPassword(auth, TEST_EMAIL, TEST_PASSWORD);
         await cred.user.delete();
         append("re-signed-in and deleted test auth user");

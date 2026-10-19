@@ -1,14 +1,8 @@
 "use client";
 
-// M0 nav spike probe (spec.md subtask 3).
-//
-// This module-scope constant is evaluated exactly once per JS module
-// instantiation. A client-side (SPA) navigation via <Link>/router.push does
-// NOT re-run this module, so window.__instanceId stays identical across
-// such navigations. A full document reload (fresh page load) re-executes
-// this module and produces a new id. Comparing window.__instanceId before
-// and after a navigation is how the spike distinguishes SPA nav from a full
-// reload.
+// Evaluated once per module instance: client-side navigation keeps the same id,
+// a full reload creates a new one. Used by the /spike-a and /spike-b navigation
+// checks.
 const instanceId =
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()

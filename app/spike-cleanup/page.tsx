@@ -20,14 +20,8 @@ import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { pushDirtyRows } from "@/lib/sync/push";
 import { cleanupOldTombstones } from "@/lib/sync/cleanup";
 
-// M3 spike route (spec.md subtask 13). Verifies lib/sync/cleanup.ts
-// end-to-end against real Firestore + real SQLite: old tombstones get
-// genuinely hard-deleted on both sides, young tombstones are left alone,
-// and a folder+child-note tombstone pair with an FK relationship cleans up
-// without an FK constraint error. Signs in with a throwaway test account
-// solely to satisfy firestore.rules (same pattern as app/spike-pull/
-// page.tsx) - "Cleanup" below tears everything down again. Not production
-// UI.
+// Dev-only verification page for lib/sync/cleanup.ts against real Firestore and
+// SQLite. Not production UI.
 
 const TEST_EMAIL = "skylines-cleanup-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -39,16 +33,8 @@ function sleep(ms: number) {
 }
 
 /**
- * `getDoc()` on an already-hard-deleted document under this project's
- * `firestore.rules` (`allow read: if ... request.auth.uid ==
- * resource.data.userId`) throws `permission-denied`, not "not found" -
- * `resource` is null for a nonexistent doc, so `resource.data.userId`
- * itself throws inside rule evaluation, and Firestore reports that as
- * permission-denied to the client. Deterministic consequence of this
- * ruleset, unrelated to lib/sync/cleanup.ts's correctness - this treats
- * that specific error as "confirmed gone" so cases that assert a doc no
- * longer exists can actually complete, while still surfacing any other
- * unexpected error (wrong project, network, etc).
+ * Under firestore.rules, reading a deleted doc throws permission-denied rather
+ * than "not found" (resource is null), so treat that as gone.
  */
 async function docGone(collectionName: "folders" | "notes", id: string): Promise<boolean> {
   try {
@@ -63,10 +49,7 @@ async function docGone(collectionName: "folders" | "notes", id: string): Promise
 export default function SpikeCleanup() {
   const [log, setLog] = useState<string[]>([]);
   const [user, setUser] = useState<User | null>(null);
-  // Ids this harness has pushed to Firestore, tracked so "Cleanup" can
-  // delete anything left over (e.g. from a FAILed case) before deleting the
-  // test auth account - deleting the account first would orphan the docs
-  // permanently (per project history, avoid repeating that mistake).
+  // Delete leftover docs before the test account, or they're orphaned for good.
   const pushedFolderIdsRef = useRef<string[]>([]);
   const pushedNoteIdsRef = useRef<string[]>([]);
 
@@ -173,15 +156,9 @@ export default function SpikeCleanup() {
   }
 
   /**
-   * Case 3 from lib/sync/cleanup.ts's hardDeleteTombstone: a note that was
-   * live-and-pushed at some point (non-null syncedAt), then soft-deleted
-   * locally, but that soft-delete itself was NEVER pushed (dirty stays
-   * true, syncedAt stays stale/pre-deletion). Deliberately skips the
-   * `pushDirtyRows` call after `deleteNote` - that's the whole point of this
-   * scenario. Cleanup must leave both sides alone: hard-deleting the remote
-   * doc here would desync every other device (they still believe it's
-   * live), and hard-deleting the local row would destroy the only pending
-   * record of this deletion.
+   * A pushed note whose soft-delete was never pushed. Cleanup must leave both
+   * sides alone: other devices still think it's live, and the local row is the
+   * only record of the pending delete.
    */
   async function runStaleSyncedAtCase() {
     if (!user) return append("sign in first");

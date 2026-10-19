@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
 import { useAppStore } from "@/stores/appStore";
 import {
   isSidebarDragEvent,
@@ -24,44 +25,19 @@ import {
 } from "@/lib/dnd/sidebar";
 import type { Note } from "@/types";
 
-// Ported from ../note_taking_app/components/sidebar/NoteItem.tsx (spec.md
-// subtask 16). Mutations now go through the SQLite-backed lib/db/notes.ts
-// instead of lib/firestore/notes.ts. The note/canvas `href` is built with
-// the query-param routing form (/note?id=..., /canvas?id=...) per subtask 5
-// instead of /note/[id] / /canvas/[id]. The "···" trigger uses
-// `<DropdownMenuTrigger render={<button .../>} />` instead of the
-// reference's `asChild` - see components/sidebar/Sidebar.tsx's header
-// comment for why.
+// Note row. Draggable, and a drop target for reordering among sibling notes.
+// Moving a note into a folder happens by dropping it on the folder.
 //
-// M4 (spec.md subtask 7, "Sidebar drag-and-drop"): this row is now
-// draggable, and is a drop target for reordering among sibling notes
-// (`siblingNoteIds`, the other notes in the same folder/root level, passed
-// down from the parent level) - dropping near the top/bottom half of the
-// row reorders. Notes can't contain children, so unlike `FolderItem` there
-// is no "drop inside" band here; moving a note into a folder happens by
-// dropping it on that folder's row instead.
-//
-// M4 (spec.md subtask 8, "Right-click context menu"): this row now also
-// opens a real `onContextMenu`-triggered menu (via `ContextMenu`/
-// `ContextMenuTrigger`, components/ui/context-menu.tsx) with the same
-// actions as the existing "···" `DropdownMenu` trigger, plus Cut/Copy
-// against the generic clipboard mechanism (stores/appStore.ts's
-// `clipboard` field, executed by lib/clipboard/sidebarClipboard.ts). There
-// is no "Paste" here - per spec.md's paste UX, pasting only makes sense on
-// a container (a folder row or the notebook root), not on a note leaf.
+// The right-click menu repeats the "···" actions plus Cut and Copy. There's no
+// Paste on notes; only containers accept a paste. Copy reference writes a
+// skylines:// token to the OS clipboard, unlike Copy, which stays in the app.
 
 interface Props {
   note: Note;
   userId: string;
   depth: number;
-  /** Ordered ids of the sibling notes at this same level (same folder),
-   * including this note itself - used to compute the new order when a
-   * dragged note is dropped before/after this one. */
   siblingNoteIds: string[];
-  /** Called from this row's own `handleDragOver` (in addition to its own
-   * `e.stopPropagation()`) so the root `FolderTree` container can clear its
-   * "drop to root" highlight while a specific row is being hovered - see
-   * `FolderTree.tsx`'s `handleRowDragOver` comment for why this is needed. */
+  /** Lets FolderTree clear its root-drop highlight; see FolderTree. */
   onDragOverRow: () => void;
 }
 
@@ -73,15 +49,10 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
   const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const setClipboard = useAppStore((s) => s.setClipboard);
+  const { actionsRef, contextActionsRef, closeMenus } = useMenuCloser();
 
-  // spec.md subtask 6 ("Merge note creation UI"): every note - old
-  // `type: "note"` rows included - now opens through the merged free-form-
-  // canvas editor at /canvas?id=... . An old-format note (real Tiptap
-  // `content`, no `canvasData` yet) is safely, minimally, idempotently
-  // migrated to a single RichTextShape inline the moment it's opened there
-  // (see components/canvas/CanvasEditor.tsx), so this never renders as a
-  // blank canvas - see this repo's spec.md subtask 6/8 notes for the full
-  // data-safety reasoning.
+  // Every note opens in the canvas editor, which migrates old Tiptap-only notes
+  // on open.
   const href = `/canvas?id=${note.id}`;
   const isActive = pathname === href;
   const paddingLeft = depth * 12 + 20;
@@ -154,8 +125,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
     }
   }
 
-  // Shared between the "···" `DropdownMenu` trigger and the right-click
-  // `ContextMenu` trigger below (spec.md subtask 8).
+  // Used by both the "···" menu and the right-click menu.
   function menuItems() {
     return (
       <>
@@ -169,6 +139,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
         <DropdownMenuItem onClick={handleCopy}>
           <Copy className="mr-2 h-4 w-4" /> Copy
         </DropdownMenuItem>
+        <CopyReferenceItem reference={{ kind: "note", id: note.id }} onDone={closeMenus} />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleDelete} className="text-destructive">
           <Trash2 className="mr-2 h-4 w-4" /> Delete
@@ -182,7 +153,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
       {dropPosition === "before" && (
         <div className="mx-2 h-0.5 rounded-full bg-primary" style={{ marginLeft: paddingLeft }} />
       )}
-      <ContextMenu>
+      <ContextMenu actionsRef={contextActionsRef}>
         <ContextMenuTrigger
           render={
             <div
@@ -229,7 +200,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
                 </span>
               )}
 
-              <DropdownMenu>
+              <DropdownMenu actionsRef={actionsRef}>
                 <DropdownMenuTrigger
                   render={
                     <button

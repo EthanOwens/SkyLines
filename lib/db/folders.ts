@@ -2,18 +2,6 @@ import type { Folder } from "@/types";
 import { getDb } from "./client";
 import { notifyDataChange } from "./events";
 
-// Local SQLite data-access layer for `folders` (spec.md subtask 9), mirroring
-// the function names/shapes of the current Firestore-backed
-// `../note_taking_app/lib/firestore/folders.ts` so subtask 15 can rewire
-// stores/appStore.ts and hooks/useFolders.ts against this with minimal
-// changes. Unlike Firestore's onSnapshot, SQLite reads here are plain
-// one-shot async queries - there's no realtime listener model to fake
-// locally (subtask 15's job is wiring re-fetches, not this subtask's).
-//
-// Folder-delete recursion into child subfolders (spec.md subtask 10, fixing
-// the reference app's known bug where delete only cascaded one level) is
-// implemented below via `getDescendantFolderIds` + `deleteFolder`.
-
 const TABLE = "folders";
 
 type FolderRow = {
@@ -46,12 +34,7 @@ function rowToFolder(row: FolderRow): Folder {
   };
 }
 
-/**
- * Fetches the current (non-deleted) folders for a user, ordered the same
- * way the Firestore `subscribeFolders` query was (`order` ascending). This
- * replaces that subscription with a plain one-shot read - callers re-invoke
- * it after mutations rather than receiving push updates.
- */
+/** Plain one-shot reads: callers refetch after writes. */
 export async function getFolders(userId: string): Promise<Folder[]> {
   const db = await getDb();
   const rows = await db.select<FolderRow[]>(
@@ -61,11 +44,7 @@ export async function getFolders(userId: string): Promise<Folder[]> {
   return rows.map(rowToFolder);
 }
 
-/**
- * Fetches every folder for a user with `dirty = 1`, including soft-deleted
- * ones (deletedAt tombstones must be pushed too - see spec.md subtask 11).
- * Used by lib/sync/push.ts to find rows that need to go to Firestore.
- */
+/** Includes soft-deleted rows, since tombstones must be pushed too. */
 export async function getDirtyFolders(userId: string): Promise<Folder[]> {
   const db = await getDb();
   const rows = await db.select<FolderRow[]>(
@@ -75,11 +54,7 @@ export async function getDirtyFolders(userId: string): Promise<Folder[]> {
   return rows.map(rowToFolder);
 }
 
-/**
- * Marks a folder as successfully synced: clears `dirty` and stamps
- * `syncedAt` with the same client timestamp used for the Firestore write, so
- * local and remote agree on when the push happened.
- */
+/** Uses the same timestamp as the Firestore write, so both sides agree. */
 export async function markFolderSynced(folderId: string, syncedAt: number): Promise<void> {
   const db = await getDb();
   await db.execute(
@@ -89,17 +64,8 @@ export async function markFolderSynced(folderId: string, syncedAt: number): Prom
 }
 
 /**
- * Fetches every soft-deleted folder for a user whose `deletedAt` is older
- * than `cutoffMs` (a Unix-ms timestamp, i.e. `Date.now() - maxAgeMs` in
- * lib/sync/cleanup.ts). These are tombstones old enough to be hard-deleted
- * by the periodic cleanup pass (spec.md subtask 13) - includes both dirty
- * and non-dirty rows. Fetching a dirty row here does NOT by itself mean
- * it's safe to hard-delete: `hardDeleteTombstone` in lib/sync/cleanup.ts
- * decides per-row whether a fetched candidate is actually safe to purge
- * this pass, since "dirty" is ambiguous between "never synced at all" (safe
- * to clean up locally) and "was synced once but the soft-delete itself
- * hasn't been confirmed pushed yet" (must be skipped entirely - see that
- * file for the full reasoning).
+ * Old tombstones, dirty or not. Being returned here doesn't make a row safe to
+ * hard-delete; lib/sync/cleanup.ts decides per row.
  */
 export async function getOldTombstoneFolders(userId: string, cutoffMs: number): Promise<Folder[]> {
   const db = await getDb();
@@ -111,13 +77,8 @@ export async function getOldTombstoneFolders(userId: string, cutoffMs: number): 
 }
 
 /**
- * Genuinely `DELETE FROM`s a folder row - unlike every other write in this
- * file, this does not soft-delete. Only meant to be called by the periodic
- * tombstone cleanup pass (lib/sync/cleanup.ts, spec.md subtask 13) on rows
- * that are already tombstones old enough to purge; callers are responsible
- * for FK-safe ordering (child folders/notes before parents - see
- * lib/sync/cleanup.ts) since `folders.parent_id` and `notes.folder_id` are
- * enforced foreign keys.
+ * A real DELETE, for tombstone cleanup only. Callers must delete children
+ * first: parent_id and notes.folder_id are enforced foreign keys.
  */
 export async function hardDeleteFolder(folderId: string): Promise<void> {
   const db = await getDb();
@@ -135,11 +96,8 @@ export async function getFolderById(folderId: string): Promise<Folder | null> {
 }
 
 /**
- * Same as `getFolderById`, but does NOT filter out soft-deleted rows. Pull
- * sync (lib/sync/pull.ts, spec.md subtask 12) needs to find the local row
- * for LWW comparison even when it's a tombstone (e.g. a remote update to a
- * previously-deleted row, or vice versa) - `getFolderById` would silently
- * report "no local row" and cause an incorrect re-insert.
+ * Includes soft-deleted rows: pull sync must find tombstones, or it would
+ * re-insert them.
  */
 export async function getFolderRowById(folderId: string): Promise<Folder | null> {
   const db = await getDb();
@@ -147,12 +105,7 @@ export async function getFolderRowById(folderId: string): Promise<Folder | null>
   return rows.length > 0 ? rowToFolder(rows[0]) : null;
 }
 
-/**
- * Shape of a `folders` Firestore document as written by
- * lib/sync/push.ts's `folderToFirestoreDoc`, plus the Firestore doc id
- * (which is the same as the local `id` - both sides use the same
- * client-generated uuid as primary key).
- */
+/** The Firestore doc id is the local id. */
 export type RemoteFolderData = {
   id: string;
   name: string;
@@ -166,22 +119,8 @@ export type RemoteFolderData = {
 };
 
 /**
- * Inserts a new local folder row from remote (Firestore) data, or
- * overwrites an existing one, via `INSERT ... ON CONFLICT(id) DO UPDATE`.
- * This is the write primitive pull sync (lib/sync/pull.ts) uses once it has
- * already decided - via LWW/conflict comparison - that the remote data
- * should land locally; this function does not itself make that decision.
- *
- * `dirty`/`syncedAt` are supplied by the caller rather than hardcoded,
- * because the right values differ by outcome:
- *  - plain "no local row yet" or "remote is newer, not dirty" pulls: the
- *    row now matches Firestore exactly, so dirty=false, syncedAt=now.
- *  - the local-row-was-dirty-but-lost-the-conflict case: same thing, the
- *    row now holds the winning remote data and matches Firestore, so
- *    dirty=false, syncedAt=now.
- * (The local-wins-the-conflict case never calls this function at all -
- * see lib/sync/pull.ts - because the local row's content is already
- * correct and still needs a future push, so it must be left untouched.)
+ * Writes remote data that pull sync has already chosen to keep. dirty and
+ * syncedAt come from the caller (pull never calls this when local wins).
  */
 export async function upsertFolderFromRemote(
   remote: RemoteFolderData,
@@ -221,15 +160,7 @@ export async function upsertFolderFromRemote(
   notifyDataChange("remote");
 }
 
-/**
- * `notebookId` is a required parameter - every new folder must belong to a
- * notebook now (spec.md M1 subtask 2). The `folders.notebook_id` column
- * itself stays nullable at the SQLite schema level (see the migration 3
- * comment in src-tauri/src/lib.rs for why - no single sensible constant
- * `DEFAULT` exists for a per-user backfill), so this requirement is enforced
- * here at the application layer instead, by simply not offering a way to
- * omit it.
- */
+/** notebookId is required here because the column is nullable in the schema. */
 export async function createFolder(
   userId: string,
   name: string,
@@ -293,15 +224,7 @@ export async function updateFolder(
   notifyDataChange("local");
 }
 
-/**
- * Walks the folder tree starting at `folderId` and returns that folder's id
- * plus the ids of every descendant subfolder, at any depth. Implemented as a
- * read-only `WITH RECURSIVE` CTE over `folders.parent_id` rather than
- * fetching one level at a time in a loop - SQLite supports recursive CTEs
- * natively, so this is a single round-trip instead of one query per tree
- * level, and it keeps the tree-walk logic isolated from the write side of
- * `deleteFolder` (easier to reason about / test on its own).
- */
+/** One recursive CTE instead of a query per tree level. */
 async function getDescendantFolderIds(folderId: string): Promise<string[]> {
   const db = await getDb();
   const rows = await db.select<{ id: string }[]>(
@@ -317,46 +240,16 @@ async function getDescendantFolderIds(folderId: string): Promise<string[]> {
 }
 
 /**
- * Soft-deletes a folder and recursively cascades that soft-delete to every
- * descendant subfolder (any depth), every note inside the folder or any of
- * those descendants, AND every page under any of those notes (a three-level
- * cascade: folder -> notes -> pages). This fixes the reference app's known
- * bug (per spec.md subtask 10 / SPEC_iter1.md) where folder-delete cascaded
- * to direct child notes but never recursed into child subfolders at all,
- * and additionally reaches pages so that `pages.note_id REFERENCES
- * notes(id)` (an enforced FK with no `ON DELETE CASCADE`) never ends up
- * pointing at a note whose tombstone lib/sync/cleanup.ts eventually
- * hard-deletes while live `pages` rows still reference it.
+ * Soft-deletes the folder, every descendant folder, their notes, and those
+ * notes' pages, all with the same timestamp. Pages are included because
+ * pages.note_id is an enforced FK without ON DELETE CASCADE, so cleanup would
+ * otherwise fail to hard-delete the notes.
  *
- * All affected rows (the folder, its descendant folders, all notes under
- * any of them, and all pages under any of those notes) get the same
- * `deletedAt` timestamp, `dirty = 1`, and `updatedAt`, matching the
- * soft-delete pattern used elsewhere in this file and in lib/db/notes.ts.
- * Nothing is ever `DELETE FROM`-ed.
- *
- * All three `UPDATE`s below are sent as a SINGLE multi-statement
- * `db.execute()` call (one semicolon-joined `BEGIN; UPDATE ...; UPDATE ...;
- * UPDATE ...; COMMIT;` string) rather than as separate `db.execute()` calls
- * wrapping a `BEGIN`/`COMMIT` transaction. Separate calls don't work here:
- * `@tauri-apps/plugin-sql`'s SQLite backend pools connections, so a
- * `db.execute("BEGIN")` followed by further `db.execute(...)` calls isn't
- * guaranteed to reuse the same pooled connection, which surfaced as a real,
- * reproducible `cannot commit - no transaction is active` runtime error.
- * Each `db.execute()` call is exactly one `invoke()` IPC round-trip that
- * acquires exactly one pooled connection and streams the whole query string
- * through it, and sqlx-sqlite's `VirtualStatement` natively steps through
- * multiple `;`-separated statements sequentially on that one connection - so
- * folding all three `UPDATE`s (plus `BEGIN`/`COMMIT`) into one call restores
- * real atomicity without ever needing multiple calls to coordinate a
- * transaction across connections. The named `$N` placeholders resolve
- * directly from the literal number in the SQL text against the single flat
- * bind-values array regardless of which sub-statement they're in, so all
- * three `UPDATE`s can keep reusing `$1`/`$2` for the timestamps and
- * `$3...` for the folder ids against the same `[now, now, ...folderIds]`
- * array; the `pages` `UPDATE` reaches the affected notes via a `note_id IN
- * (SELECT id FROM notes WHERE folder_id IN (...))` subquery rather than a
- * separately-bound note-id list, since the note ids aren't known until the
- * `notes` `UPDATE` itself runs.
+ * The whole transaction is one execute() call. plugin-sql pools connections, so
+ * separate BEGIN/UPDATE/COMMIT calls can land on different connections ("cannot
+ * commit - no transaction is active"); sqlx runs all ;-separated statements of
+ * one call on one connection. $N placeholders resolve against the single bind
+ * array across statements.
  */
 export async function deleteFolder(folderId: string): Promise<void> {
   const db = await getDb();

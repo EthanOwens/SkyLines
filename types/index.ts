@@ -9,26 +9,20 @@ export interface Folder {
   id: string;
   name: string;
   parentId: string | null;
-  // Which notebook this folder (section) belongs to. Nullable at the SQLite
-  // schema level for backward-compat reasons (see the migration 3 comment
-  // in src-tauri/src/lib.rs), but every folder created going forward via
-  // `createFolder` is required to supply one, and pre-existing rows are
-  // backfilled - so in practice this is only ever null for a row that
-  // somehow slipped past the application-layer requirement.
+  // Nullable in the schema, but createFolder requires it and old rows were
+  // backfilled.
   notebookId: string | null;
   userId: string;
   order: number;
   createdAt: number;
   updatedAt: number;
-  // Sync bookkeeping (mirrors sqlite `folders` columns dirty/synced_at/deleted_at,
-  // added per spec.md subtask 7).
+  // Sync bookkeeping.
   dirty: boolean;
   syncedAt: number | null;
   deletedAt: number | null;
 }
 
-// Notebook (spec.md M1 subtask 2): same shape/sync-bookkeeping fields as
-// Folder, minus `parentId` - notebooks are top-level and don't nest.
+// Same shape as Folder without parentId: notebooks don't nest.
 export interface Notebook {
   id: string;
   name: string;
@@ -46,39 +40,24 @@ export interface Note {
   title: string;
   type: "note" | "canvas";
   folderId: string | null;
-  // Which notebook this note belongs to. Nullable at the SQLite schema
-  // level for backward-compat reasons (see the migration 4 comment in
-  // src-tauri/src/lib.rs), but every note created going forward via
-  // `createNote` is required to supply one, and pre-existing rows are
-  // backfilled - so in practice this is only ever null for a row that
-  // somehow slipped past the application-layer requirement. Mirrors
-  // `Folder.notebookId` exactly.
+  // Nullable in the schema, but createNote requires it and old rows were
+  // backfilled.
   notebookId: string | null;
   userId: string;
   content?: object | null;    // TipTap JSON doc
   canvasData?: object | null; // Tldraw snapshot
-  // Sibling display order within a folder (or within the notebook root for
-  // folder-less notes), mirroring `Folder.order` (spec.md M4 subtask 7,
-  // "Sidebar drag-and-drop reordering") - drives the sidebar's sort order,
-  // independent of `updatedAt`.
+  // Order among siblings in the sidebar.
   order: number;
   createdAt: number;
   updatedAt: number;
-  // Sync bookkeeping (mirrors sqlite `notes` columns dirty/synced_at/deleted_at,
-  // added per spec.md subtask 7).
+  // Sync bookkeeping.
   dirty: boolean;
   syncedAt: number | null;
   deletedAt: number | null;
 }
 
-// Page (spec.md M6 subtask 13): a Note becomes a lightweight container that
-// groups one or more Pages, each an independent canvas (its own
-// `RichTextShape`s, ink, etc.) - the actual editable content moves down one
-// level, from Note to Page. Mirrors `Note`'s shape exactly, minus the
-// notebook/folder/type fields (a page belongs to exactly one note, not a
-// folder/notebook), plus the required `noteId` FK. `userId` is kept (not
-// dropped in favor of a join through `notes`) so page queries/sync can use
-// the same flat `WHERE user_id = $1` pattern as every other synced entity.
+// A note groups one or more pages; each page is its own canvas. userId is kept
+// so sync can query pages by user like every other table.
 export interface Page {
   id: string;
   noteId: string;
@@ -90,8 +69,26 @@ export interface Page {
   order: number;
   createdAt: number;
   updatedAt: number;
-  // Sync bookkeeping (mirrors sqlite `pages` columns dirty/synced_at/deleted_at,
-  // added per spec.md subtask 13).
+  // Sync bookkeeping.
+  dirty: boolean;
+  syncedAt: number | null;
+  deletedAt: number | null;
+}
+
+// A top-level entity with its own window, outside the folder tree. A null
+// topBarColor means "use the theme's --primary". favorite is independent of
+// pinned (pinned means always on top).
+export interface StickyNote {
+  id: string;
+  userId: string;
+  title: string;
+  content?: object | null; // TipTap JSON doc
+  topBarColor: string | null;
+  pinned: boolean;
+  favorite: boolean;
+  createdAt: number;
+  updatedAt: number;
+  // Sync bookkeeping.
   dirty: boolean;
   syncedAt: number | null;
   deletedAt: number | null;

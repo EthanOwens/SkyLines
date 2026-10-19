@@ -1,8 +1,5 @@
-// Theme engine foundation (spec.md subtask 17, "Theme engine foundation").
-// This is the exact variable surface defined in app/globals.css's `:root`/
-// `.dark` blocks (minus the leading `--`) - a theme JSON file can override
-// any subset of these via `variables`, and undefined keys simply aren't
-// touched, falling through to whatever globals.css already defines for them.
+// The variables from globals.css's :root/.dark blocks (without the leading --).
+// A theme may override any subset.
 
 export type ThemeVariableKey =
   | "background"
@@ -23,11 +20,6 @@ export type ThemeVariableKey =
   | "border"
   | "input"
   | "ring"
-  | "chart-1"
-  | "chart-2"
-  | "chart-3"
-  | "chart-4"
-  | "chart-5"
   | "radius"
   | "sidebar"
   | "sidebar-foreground"
@@ -38,9 +30,8 @@ export type ThemeVariableKey =
   | "sidebar-border"
   | "sidebar-ring";
 
-// Kept in sync with the union above - used at runtime to validate a
-// hand-authored theme file's `variables` keys without trusting `as` casts on
-// arbitrary user JSON.
+// Keep in sync with the union above; used to validate user theme files at
+// runtime.
 export const THEME_VARIABLE_KEYS: readonly ThemeVariableKey[] = [
   "background",
   "foreground",
@@ -60,11 +51,6 @@ export const THEME_VARIABLE_KEYS: readonly ThemeVariableKey[] = [
   "border",
   "input",
   "ring",
-  "chart-1",
-  "chart-2",
-  "chart-3",
-  "chart-4",
-  "chart-5",
   "radius",
   "sidebar",
   "sidebar-foreground",
@@ -85,11 +71,8 @@ export interface Theme {
 }
 
 /**
- * Validates that `value` is a well-formed `Theme` - a hand-edited JSON file
- * can contain anything, so this is a real runtime check, not just a type
- * assertion. Unknown keys inside `variables` are rejected (rather than
- * silently ignored) so a typo'd variable name fails loudly enough to be
- * caught during loader validation, instead of being silently no-op forever.
+ * Unknown variable keys are rejected so a typo fails loudly instead of doing
+ * nothing.
  */
 export function isTheme(value: unknown): value is Theme {
   if (!value || typeof value !== "object") return false;

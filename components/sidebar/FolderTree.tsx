@@ -20,39 +20,12 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { FolderItem } from "./FolderItem";
 import { NoteItem } from "./NoteItem";
 
-// Ported from ../note_taking_app/components/sidebar/FolderTree.tsx (spec.md
-// subtask 16) - reads folders/notes from stores/appStore.ts, which
-// hooks/useFolders.ts and hooks/useNotes.ts populate from the SQLite layer
-// (subtask 15), instead of this component subscribing to Firestore directly.
+// The store holds every notebook's folders and notes, so this filters to one
+// notebook. Only the root level needs the filter, because nested items always
+// descend from a root folder in the same notebook.
 //
-// Notebook-scoped (spec.md subtask 7): `folders`/`notes` in the store are
-// NOT pre-filtered by notebook (useFolders/useNotes fetch everything for the
-// signed-in user across all notebooks), so this component itself restricts
-// what it renders to the given `notebookId`. Only the ROOT level needs an
-// explicit `notebookId` filter - `FolderItem`'s recursive descent below only
-// ever walks a folder's children by `parentId` within `allFolders`/
-// `allNotes`, and every folder's `parentId` chain necessarily bottoms out at
-// one of these already-notebook-scoped root folders (folders don't move
-// between notebooks by being nested - see `FolderItem.tsx`'s `addSubfolder`
-// comment), so a folder/note nested under a scoped root folder can never
-// belong to a different notebook. Filtering only the root level is
-// therefore sufficient; `FolderItem`/`NoteItem` don't need a `notebookId`
-// prop threaded down to them.
-//
-// M4 (spec.md subtask 7, "Sidebar drag-and-drop"): root/notes/folders are
-// now sorted by their persisted `order` field (previously just render
-// order), and this component's own outer container is itself a drop
-// target - dropping a dragged note/folder on the empty space below the
-// tree (not on a specific row) moves it out to the root of this notebook
-// (`parentId`/`folderId: null`), the root-level analogue of `FolderItem`'s
-// "drop onto a folder" re-parent behavior.
-//
-// M4 (spec.md subtask 8, "Right-click context menu"): the same outer
-// container also now has a right-click context menu offering "Paste"
-// (disabled/absent affordance-wise when the clipboard is empty) - the
-// notebook-root analogue of `FolderItem.tsx`'s "Paste" item, landing the
-// pasted note/folder at this notebook's root (`folderId: null`) via the
-// same generic `pasteClipboardEntry` (lib/clipboard/sidebarClipboard.ts).
+// The container is also a drop target and has a Paste menu: both put the item
+// at the notebook root.
 
 interface Props {
   userId: string;
@@ -67,11 +40,9 @@ export function FolderTree({ userId, notebookId }: Props) {
   const setSelectedFolder = useAppStore((s) => s.setSelectedFolder);
   const [rootDropActive, setRootDropActive] = useState(false);
 
-  // Notes not inside any folder, scoped to this notebook.
   const rootNotes = notes
     .filter((n) => !n.folderId && n.notebookId === notebookId)
     .sort((a, b) => a.order - b.order);
-  // Folders at the root level, scoped to this notebook.
   const rootFolders = folders
     .filter((f) => !f.parentId && f.notebookId === notebookId)
     .sort((a, b) => a.order - b.order);
@@ -91,17 +62,9 @@ export function FolderTree({ userId, notebookId }: Props) {
     setRootDropActive(false);
   }
 
-  // Passed down to every row (FolderItem/NoteItem, at any depth) and called
-  // from each row's own `handleDragOver`. Rows call `e.stopPropagation()` in
-  // their own `handleDragOver`, so once the pointer enters empty space in
-  // this container (setting `rootDropActive` true, above) and then moves
-  // onto a row, this container's own `dragover`/`dragleave` never fire again
-  // for that row - without this callback, `rootDropActive` would stay stuck
-  // true (glued-on "drop to root" highlight) for the rest of the drag even
-  // while hovering a row that's a legitimate reorder/reparent target. Rows
-  // are the only ones that can turn the highlight back off once it's on;
-  // this container's own `handleRootDragOver` is the only place that turns
-  // it on.
+  // Rows stop dragover propagation, so once the pointer moves onto a row this
+  // container never hears about it. Rows call this to clear the root-drop
+  // highlight, which would otherwise stay on.
   function handleRowDragOver() {
     setRootDropActive(false);
   }
@@ -126,8 +89,7 @@ export function FolderTree({ userId, notebookId }: Props) {
         order: nextOrderValue(rootNotes.map((n) => n.order)),
       });
     }
-    // A dragged page has no valid drop target here - the notebook root
-    // doesn't contain pages (pages only live inside a note) - so ignore.
+    // Pages can't be dropped on the notebook root.
   }
 
   async function handlePasteToRoot() {
@@ -155,12 +117,8 @@ export function FolderTree({ userId, notebookId }: Props) {
             onDragOver={handleRootDragOver}
             onDragLeave={handleRootDragLeave}
             onDrop={handleRootDrop}
-            // Clicking empty space in the tree (the notebook root, below/
-            // between rows) clears the selected-folder creation scope back
-            // to root-scoped (spec.md M2 subtask 4). Individual rows
-            // (FolderItem.tsx) stop propagation on their own row click, so
-            // this only fires for genuine empty-space clicks, not clicks
-            // that bubbled up from a row.
+            // Clicking empty space clears the selected folder (rows stop
+            // propagation).
             onClick={() => setSelectedFolder(null)}
           >
             {rootFolders.map((folder) => (

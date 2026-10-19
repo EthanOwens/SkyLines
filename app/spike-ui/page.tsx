@@ -13,9 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-// M4 shared-UI spike route (spec.md subtask 19). Verifies the newly ported
-// dialog.tsx and input.tsx primitives render and interact correctly with
-// the installed @base-ui/react version before any real consumer exists.
+// Dev-only check of the dialog and input primitives. Not production UI.
 export default function SpikeUi() {
   const [value, setValue] = useState("");
 

@@ -17,31 +17,9 @@ import { createFolder as dbCreateFolder } from "@/lib/db/folders";
 import { createNote as dbCreateNote } from "@/lib/db/notes";
 import { createNotebook, getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 
-// spec.md subtask 16 verification route (M4 "sidebar"), extended by spec.md
-// subtask 7 ("Sidebar rework") to also exercise notebook-scoping: `Sidebar`
-// now reads `selectedNotebookId` from stores/appStore.ts and only renders
-// the currently-open notebook's folders/notes (via `FolderTree`'s
-// `notebookId` prop), so this harness creates two distinct notebooks with
-// their own folders/notes and lets a tester swap the "open" notebook via
-// `setSelectedNotebook` to confirm notebook A never leaks notebook B's
-// folders/notes into the sidebar (and vice versa) - this route is the
-// designated verification surface per subtask 7's scope (no persistent
-// app-shell sidebar integration yet; that's subtask 8).
-//
-// Renders the real, ported Sidebar/FolderTree/FolderItem/NoteItem components
-// wired against the SQLite-backed useFolders/useNotes hooks (subtask 15) and
-// real Firebase Auth, so the sidebar's inline rename, create note/canvas/
-// folder, per-folder context menu, and recursive delete (subtask 10) can
-// still be exercised end to end in a real browser. There is no app/login or
-// app/home page yet (those land in later subtasks), so this route stands in
-// as the host page - same pattern as app/spike-hooks/page.tsx,
-// app/spike-engine/page.tsx. Signs in with a throwaway test account solely
-// to satisfy firestore.rules for the sync engine wiring that starts once a
-// user is present; this subtask's actual behavior under test is
-// local-SQLite-driven. Cleanup deletes Firestore test docs BEFORE the auth
-// account, always, and every created id is tracked in a ref (survives
-// re-renders, not page reloads - do not reload mid-session). Not production
-// UI.
+// Dev-only verification page for the sidebar, including notebook scoping:
+// switching notebooks must never show another notebook's folders or notes. Not
+// production UI.
 
 const TEST_EMAIL = "skylines-sidebar-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -86,8 +64,6 @@ function SpikeSidebarInner() {
     append("signed out");
   }
 
-  // Creates two distinct notebooks ("Notebook A"/"Notebook B") to verify
-  // notebook-scoping - see the file-level comment above.
   async function createTwoNotebooks() {
     if (!user) return append("sign in first");
     const idA = await createNotebook(user.uid, "Notebook A");
@@ -100,9 +76,7 @@ function SpikeSidebarInner() {
     append(`created notebookA=${idA} notebookB=${idB}, opened notebookA`);
   }
 
-  // Creates a folder directly via lib/db (bypassing the Sidebar UI) to
-  // sanity-check that the sidebar auto-updates off hooks/useFolders.ts's
-  // change-notification wiring, per this subtask's verification section.
+  // Created straight through lib/db, to check the sidebar updates on its own.
   async function createFolderDirectly(notebookId: string | null, label: string) {
     if (!user) return append("sign in first");
     const nbId = notebookId ?? (await getOrCreateDefaultNotebookId(user.uid));
@@ -120,11 +94,8 @@ function SpikeSidebarInner() {
   }
 
   function recordAllCurrentIds() {
-    // Tracks every folder/note currently in the store as "created by this
-    // session" so Cleanup below removes anything made through the Sidebar UI
-    // too (not just the direct-DB helpers above), surviving reloads by being
-    // re-derivable from the store at any time rather than only from create
-    // callbacks.
+    // Track everything in the store, so cleanup also catches items made through
+    // the sidebar UI.
     const state = useAppStore.getState();
     for (const f of state.folders) createdFolderIdsRef.current.add(f.id);
     for (const n of state.notes) createdNoteIdsRef.current.add(n.id);

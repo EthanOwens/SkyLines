@@ -1,43 +1,25 @@
 "use client";
 
-// Ported unchanged from ../note_taking_app/components/editor/RichTextEditor.tsx
-// (spec.md subtask 17, M4 "rich text editor"). This component has no direct
-// Firestore/SQLite coupling - it only takes `note`/`onChange`/`onTitleChange`
-// props - so autosave-to-SQLite-instead-of-Firestore is handled entirely by
-// the caller (app/note/page.tsx), not here.
+// Saving is up to the caller through onChange and onTitleChange.
 
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { isNodeSelection, isTextSelection } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import Link from "@tiptap/extension-link";
-import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
-import Placeholder from "@tiptap/extension-placeholder";
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
-import { createLowlight, common } from "lowlight";
-import { TextStyle, FontSize } from "@tiptap/extension-text-style";
-import FontFamily from "@tiptap/extension-font-family";
-import Color from "@tiptap/extension-color";
 import { useAppStore } from "@/stores/appStore";
+import { useAuthContext } from "@/components/AuthProvider";
 import type { Note } from "@/types";
 import { formatActions, selectFormatActionState } from "@/components/ribbon/formatActions";
 import { cn } from "@/lib/utils";
 import { Link as LinkIcon } from "lucide-react";
+import { InsertLinkDialog } from "./InsertLinkDialog";
+import { openImageEditorWindow } from "@/lib/imageEditorWindow";
+import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import "./editor.css";
 
-// Subset of the Format tab's actions (spec.md subtask 11, "Bubble menu") -
-// intentionally excludes headings/lists/blockquote/divider/undo/redo, which
-// are either block-level (don't make sense on a selection popover) or too
-// heavy for a small floating toolbar. Filtered from formatActions.ts's
-// shared list rather than hand-writing duplicate action definitions (see
-// that file's header comment, which anticipated this reuse).
+// Inline marks only: block-level actions don't fit a selection popover.
 const BUBBLE_MENU_ACTION_IDS = ["bold", "italic", "strike", "code"];
 const bubbleMenuActions = formatActions.filter((a) => BUBBLE_MENU_ACTION_IDS.includes(a.id));
-
-const lowlight = createLowlight(common);
 
 interface Props {
   note: Note;
@@ -48,31 +30,59 @@ interface Props {
 export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
   const [title, setTitle] = useState(note.title || "Untitled");
   const setActiveEditor = useAppStore((s) => s.setActiveEditor);
+  const { user } = useAuthContext();
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+
+  // Pending image-editor listeners, removed on unmount so a pop-out that never
+  // saves can't leak one or patch a destroyed view.
+  const pendingImageEditorUnlistens = useRef<Set<() => void>>(new Set());
+  useEffect(() => {
+    return () => {
+      pendingImageEditorUnlistens.current.forEach((fn) => fn());
+      pendingImageEditorUnlistens.current.clear();
+    };
+  }, []);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        codeBlock: false,
-      }),
-      Image.configure({ inline: false, allowBase64: true }),
-      Link.configure({ openOnClick: false }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Placeholder.configure({ placeholder: "Start writing…" }),
-      CodeBlockLowlight.configure({ lowlight }),
-      // TextStyle is a prerequisite for FontFamily/FontSize/Color (spec.md
-      // subtask 10, "Format tab") - all three attach `textStyle` mark
-      // attributes and require the base mark to be registered first, per
-      // Tiptap v3's docs.
-      TextStyle,
-      FontFamily,
-      FontSize,
-      Color,
-    ],
+    extensions: createEditorExtensions(),
     content: note.content as object ?? "",
     editorProps: {
       attributes: {
         class: "prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[60vh] px-1",
+      },
+      // Ctrl+K / Cmd+K opens the link dialog.
+      handleKeyDown(_view, event) {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+          event.preventDefault();
+          setLinkDialogOpen(true);
+          return true;
+        }
+        return false;
+      },
+      // Double-clicking an image opens it in the image editor window. On save,
+      // a one-shot listener scoped to this edit session patches the node at its
+      // exact pos (matching by src breaks with duplicate images).
+      handleDoubleClick(view, pos, event) {
+        const target = event.target as HTMLElement;
+        if (target.tagName !== "IMG") return false;
+        event.preventDefault();
+        const originalSrc = (target as HTMLImageElement).src;
+        void (async () => {
+          const sourceId = await openImageEditorWindow(originalSrc);
+          const { listen } = await import("@tauri-apps/api/event");
+          const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, (e) => {
+            pendingImageEditorUnlistens.current.delete(unlisten);
+            // The doc may have changed while the editor was open: make sure pos
+            // still holds the same image before patching.
+            const node = view.state.doc.nodeAt(pos);
+            if (node && node.type.name === "image" && node.attrs.src === originalSrc) {
+              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: e.payload }));
+            }
+            unlisten();
+          });
+          pendingImageEditorUnlistens.current.add(unlisten);
+        })();
+        return true;
       },
     },
     onUpdate({ editor }) {
@@ -80,19 +90,13 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
     },
   });
 
-  // Exposes the live Tiptap `editor` instance to the Ribbon's Format tab
-  // (spec.md subtask 10, "Format tab") via stores/appStore.ts - `Ribbon` is
-  // rendered by AppLayout.tsx as a sibling of this component, not a
-  // descendant, so it has no other way to reach `editor`. Clears back to
-  // `null` on unmount (e.g. navigating away from this note) so the Format
-  // tab correctly falls back to a neutral state instead of holding a stale
-  // reference to a torn-down editor.
+  // The Ribbon is a sibling, so it reaches this editor through the store.
+  // Cleared on unmount so it never holds a destroyed editor.
   useEffect(() => {
     setActiveEditor(editor);
     return () => setActiveEditor(null);
   }, [editor, setActiveEditor]);
 
-  // Load new content when note changes
   useEffect(() => {
     if (!editor) return;
     const current = JSON.stringify(editor.getJSON());
@@ -110,32 +114,31 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
     onTitleChange(trimmed);
   }, [title, onTitleChange]);
 
-  // Reactive state for the bubble menu's active/disabled button styling
-  // (spec.md subtask 11, "Bubble menu") - reused from formatActions.ts, same
-  // as Ribbon.tsx's FormatTab. Unlike FormatTab (a sibling of this
-  // component, subscribing to `editor` via stores/appStore.ts), the bubble
-  // menu lives right here with direct access to the local `editor` variable
-  // - but it still needs `useEditorState` rather than relying on this
-  // component's own render cycle, because selection changes (which flip
-  // isActive results) don't trigger Tiptap's `onUpdate` callback (that only
-  // fires on document/content changes), so nothing would otherwise cause a
-  // re-render when the user just moves the selection.
+  // useEditorState because selection changes don't fire onUpdate.
   const bubbleMenuState = useEditorState({
     editor,
     selector: ({ editor }) => (editor ? selectFormatActionState(editor) : null),
   });
 
+  // Opens on the Ribbon's link button, but only for the editor it targets.
+  const linkDialogRequest = useAppStore((s) => s.linkDialogRequest);
+  const seenLinkRequestRef = useRef(linkDialogRequest);
+  useEffect(() => {
+    if (seenLinkRequestRef.current === linkDialogRequest) return;
+    seenLinkRequestRef.current = linkDialogRequest;
+    if (editor && useAppStore.getState().activeEditor === editor) setLinkDialogOpen(true);
+  }, [linkDialogRequest, editor]);
+
+  const chipSelected = useEditorState({
+    editor,
+    selector: ({ editor }) =>
+      !!editor && isNodeSelection(editor.state.selection) && editor.state.selection.node.type.name === "reference",
+  });
+
   const setLink = useCallback(() => {
     if (!editor) return;
-    const prev = bubbleMenuState?.link ?? "https://";
-    const url = window.prompt("URL", prev);
-    if (url === null) return;
-    if (url === "") {
-      editor.chain().focus().extendMarkRange("link").unsetLink().run();
-    } else {
-      editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
-    }
-  }, [editor, bubbleMenuState]);
+    setLinkDialogOpen(true);
+  }, [editor]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -143,12 +146,8 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
         <BubbleMenu
           editor={editor}
           shouldShow={({ editor: shouldShowEditor, view, state, from, to }) => {
-            // Replicates Tiptap's default shouldShow (hidden when the editor
-            // isn't focused, the selection is empty, or it's an empty text
-            // block) and additionally hides the menu for a NodeSelection
-            // (e.g. clicking to select an inserted Image), since none of the
-            // bubble menu's mark-based actions (bold/italic/etc.) apply to a
-            // selected node - see reviewer finding on spec.md subtask 11.
+            // Tiptap's default rules, plus hidden for node selections such as
+            // an image, where the mark actions don't apply.
             const { doc, selection } = state;
             const { empty } = selection;
             const isEmptyTextBlock = !doc.textBetween(from, to).length && isTextSelection(selection);
@@ -157,13 +156,14 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
               return false;
             }
             if (isNodeSelection(selection)) {
-              return false;
+              return selection.node.type.name === "reference";
             }
             return true;
           }}
           className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
         >
           {bubbleMenuState &&
+            !chipSelected &&
             bubbleMenuActions.map((action) => (
               <button
                 key={action.id}
@@ -197,7 +197,6 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
         </BubbleMenu>
       )}
 
-      {/* Scrollable content area */}
       <div className="flex flex-1 flex-col overflow-y-auto px-8 py-6 md:px-16 md:py-10">
         <input
           className="mb-4 w-full bg-transparent text-3xl font-bold text-foreground outline-none placeholder:text-muted-foreground"
@@ -208,6 +207,14 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
         />
         <EditorContent editor={editor} className="flex-1" />
       </div>
+
+      <InsertLinkDialog
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        editor={editor}
+        currentUrl={bubbleMenuState?.link ?? null}
+        userId={user?.uid ?? null}
+      />
     </div>
   );
 }

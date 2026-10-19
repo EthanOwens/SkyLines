@@ -17,11 +17,6 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -66,11 +61,6 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.809 0.105 251.813);
-  --chart-2: oklch(0.623 0.214 259.815);
-  --chart-3: oklch(0.546 0.245 262.881);
-  --chart-4: oklch(0.488 0.243 264.376);
-  --chart-5: oklch(0.424 0.199 265.638);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -101,11 +91,6 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.809 0.105 251.813);
-  --chart-2: oklch(0.623 0.214 259.815);
-  --chart-3: oklch(0.546 0.245 262.881);
-  --chart-4: oklch(0.488 0.243 264.376);
-  --chart-5: oklch(0.424 0.199 265.638);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -116,34 +101,19 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* spec.md M5 subtask 12 ("canvas background theming") - tldraw's own canvas
-   background is painted via `--tl-color-background` (see
-   node_modules/tldraw/tldraw.css's `.tl-background { background-color:
-   var(--tl-color-background) }`), which tldraw sets itself inside the
-   `.tl-theme__light`/`.tl-theme__dark` classes it toggles on its own root
-   `.tl-container` element (see @tldraw/editor's TldrawEditor.tsx) to fixed
-   light/dark values baked into tldraw.css, entirely independent of this
-   app's own theme variables - so it stayed white regardless of the active
-   app theme. Rebinding `--tl-color-background` to this app's own
-   `--background` (the same variable `body` uses via `bg-background` below)
-   here, scoped to `.canvas-editor-container` (the wrapper div
-   components/canvas/CanvasEditor.tsx renders its `<Tldraw>` inside), makes
-   tldraw's canvas follow whichever theme is active - `--card` was
-   considered instead, but `--background` is the better match: it's what
-   `body` itself uses as the page backdrop, and the canvas is this app's
-   full-bleed page surface, not a raised/bordered "card" element. This is a
-   pure CSS `var()` reference, so it reacts live to lib/themes/apply.ts's
-   inline `--background` mutations on `document.documentElement` with no JS
-   needed here - custom properties inherit down the DOM tree, so this rule
-   picks up `--background` changes the instant `applyTheme`/
-   `clearThemeOverrides` mutate `<html>`'s inline style, including the
-   System/OS-following theme from subtask 11. The three-class selectors
-   below intentionally have higher specificity than tldraw.css's own
-   two-class `.tl-theme__light`/`.tl-theme__dark` selectors, so this wins
-   regardless of CSS import order. */
+/* tldraw paints its canvas with --tl-color-background, fixed per light/dark
+   theme and independent of the app's themes. Bind it to --background so the
+   canvas follows the active theme live. Three classes so this outranks
+   tldraw.css's two-class selectors regardless of import order. */
 .canvas-editor-container .tl-container.tl-theme__light,
 .canvas-editor-container .tl-container.tl-theme__dark {
   --tl-color-background: var(--background);
+}
+
+/* tldraw outlines the focused canvas with its light-theme --tl-color-low,
+   which shows as a white frame under dark app themes. */
+.canvas-editor-container .tl-container.tl-container__focused {
+  outline: none;
 }
 
 @layer base {
@@ -152,14 +122,9 @@
   }
   html,
   body {
-    /* Without a definite height here, any `h-full` descendant (e.g.
-       components/canvas/CanvasEditor.tsx's tldraw wrapper) resolves its
-       percentage height against an undefined ancestor and collapses to 0.
-       That's invisible on pages using `min-h-screen` (a definite length,
-       not a percentage - e.g. app/login/page.tsx), but it breaks
-       tldraw's container bounding-rect math outright: touch drags on
-       Android get spuriously cut short by a `pointercancel` partway
-       through the gesture, so no shape is ever committed. */
+    /* Without a definite height, h-full descendants (such as the tldraw
+       wrapper) collapse to 0, which breaks tldraw's bounding-rect math: touch
+       drags on Android get cut short by pointercancel. */
     height: 100%;
   }
   body {

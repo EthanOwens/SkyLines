@@ -1,19 +1,19 @@
-Things to add:
-- Auto bullet formatting when you have something like a "-" next to something then hitting enter should make another "-" on the next line like bullets. Should also have support for tabs and shift + tab changing the tab formatting.
-- The custom theme formatter is a bit cluttered, many of the options aren't distinct on what they do and many aren't on anything in the display gui template. 
-  - Add organization and ensure everything listed is a genuine visible change that we can see on the gui template (add it if it can be shown there, or remove it if it can't)\
--  In text boxes have a faded timestamp of last edit for that text box (as shortform date and time)
-   -  Include a longer form date for the last edit under the title (add a fixed length line under the page title and put the date/time stamp under the line) 
-      -  (EX: Wednesday, January 14, 2026   2:55 PM)
--  Add sticky notes option. I want the ability to open a sticky note from the main gui. 
-Functionality:
-   - The sticky note should be a 9x16 aspect ratio pop out window.
-   - It should be embeddable into text form. Meaning if you ctrl + k (link keybind, usually used for adding a hyperlink embedded into a word(s), but in this app should allow the option to create new or bind a sticky note) it will let you embed a sticky note that will pop up when the embed is clicked (this should work from a sticky note too, meaning I should be able to embed a sticky note inside a sticky note).
-   - Sticky notes should have the following gui that should appear on focusing on the window and dissappear when unfocused:
-     - Bottom bar should have basic text modifications (bold, italic, underline, strike through, bullets, check boxes (like bullets, but button next to line that auto strikes through the line when clicked))
-     - Top bar should have option to pin (make the note stay in the foreground, aka displays over other windows), exit (auto-saves when closed and modified), and 3 dots drop down menu (should include option to delete note, and change the top bar color)
-     - Top bar color should be by default based on the theme. It should minimize (shrink in height) as well when not focused
-   - Sticky note main button should be on far right of the ribbon where File, Format, and Draw are.
-     - Clicking this should make a sticky note home page pop up that lets you see a list of notes (preview of collapsed notes), screenshot (auto-screenshots the selected window and lets you double click to make this a new sticky note, where you can click to open the screenshot and draw on it)
-   - Should have the option to make a new sticky note from the menu to embed when highlighting texts for formatting options
-- All text areas should support bullet detection. When adding a "-" and pressing space after it should assume this is denoting a bullet. this should allow for bullet functionality of Enter/new line making a new bullet, tab indenting bullet, Shift + tab OR Backspace de-indenting bullet. This should work inside Sticky Notes
+Things to change:
+- Lock each account to its own data in Firestore. Write security rules so a signed-in user can only read, create, update or delete documents whose userId is their own uid (for folders, notes, notebooks, pages and sticky notes). Keep the rules in the repo (firestore.rules) so they're versioned, and deploy them with the Firebase CLI.
+- Leave the Dev Login button out of release builds. Show it only when running `npm run tauri dev`.
+- Sync sticky notes the same way as notes: push, live pull, cleanup of deleted ones, and security rules. The table already tracks unsynced changes, but nothing pushes them yet.
+- Keep pictures on this computer for now. Store pasted, uploaded and screenshot images as local files instead of inside the note, so synced notes stay small. On another computer, show a placeholder saying the image is on a different device. Later, Firebase Storage can sync the images themselves.
+- One note that fails to sync shouldn't block all the others. Skip it, keep syncing the rest, and say which note failed and why (too big, or data Firestore won't accept).
+- Fix "canvasData contains an invalid nested entity": Firestore can't store some canvas data as-is. Probably store the canvas as a JSON string instead.
+- One-step setup for friends. Add a setup script for macOS (`scripts/setup.sh`) and Windows (`scripts/setup.ps1`) that installs what's missing (Xcode Command Line Tools or Visual Studio C++ Build Tools, Rust via rustup, Node LTS), runs `npm ci`, checks that `.env.local` exists, and finishes with `npx tauri info`. Pin the Node and Rust versions so everyone builds with the same ones. Add a "Getting started" section at the top of the README for a new user, covering:
+  - what to install, or run the setup script
+  - cloning the repo
+  - getting `.env.local` from me and where to put it
+  - running `npm run tauri dev` to try the app
+  - running `npm run tauri build` and installing the app
+  - signing up for an account
+  - updating to a newer version (`git pull`, then rebuild)
+  - where the log file is and how to report a bug
+  - known limits (sticky notes and pictures stay on this computer for now)
+- Logs friends can send me. Write logs to a file with the official log plugin (tauri-plugin-log), including the webview's console errors, uncaught errors and sync failures. Rotate the file so it stays small, and never log note text. Add "Report a bug" to the account menu: it copies app version, OS, sync status and the recent log to the clipboard, and has a button that opens the logs folder so the file can be attached.
+- Versioning. Set the version to 0.9.1, kept only in `package.json`: point `tauri.conf.json`'s version at `"../package.json"` so there's one number to change. Bake the commit hash into each build (read from git when building, no commit needed) and show "v0.9.1 (abc1234)" in the account menu and in bug reports, so I know exactly which code a friend is running. Document `npm version patch|minor|major` in the README for releases.

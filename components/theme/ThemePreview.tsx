@@ -6,11 +6,50 @@ import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/th
 interface ThemePreviewProps {
   editingTheme: Theme;
   draftVariables: Partial<Record<ThemeVariableKey, string>>;
+  /** Setting whose elements get outlined; nothing is outlined when null. */
+  hoveredKey?: ThemeVariableKey | null;
 }
 
-// Fixed dimensions for the bounded mini-canvas and the draggable text box
-// inside it, used to clamp the box's position so it can't be dragged out of
-// view.
+type PreviewElement =
+  | "root"
+  | "rootText"
+  | "sidebarStrip"
+  | "sidebarText"
+  | "sidebarPrimaryBar"
+  | "sidebarAccentBar"
+  | "card"
+  | "cardText"
+  | "textBox"
+  | "textBoxHandle"
+  | "textBoxInput";
+
+const ELEMENTS_BY_KEY: Partial<Record<ThemeVariableKey, readonly PreviewElement[]>> = {
+  background: ["root"],
+  foreground: ["root", "rootText"],
+  border: ["root"],
+  radius: ["root"],
+  card: ["card", "textBox"],
+  "card-foreground": ["cardText", "textBoxInput"],
+  primary: ["textBoxHandle"],
+  sidebar: ["sidebarStrip"],
+  "sidebar-border": ["sidebarStrip"],
+  "sidebar-foreground": ["sidebarText"],
+  "sidebar-primary": ["sidebarPrimaryBar"],
+  "sidebar-accent": ["sidebarAccentBar"],
+};
+
+// A fixed color rather than a theme variable, so it stays visible whatever the
+// theme being edited looks like.
+const HIGHLIGHT_COLOR = "#ff2d95";
+
+// Drawn inside the element, because the preview root clips anything past its
+// edges and several elements sit flush against them.
+const HIGHLIGHT_STYLE: CSSProperties = {
+  outline: `2px solid ${HIGHLIGHT_COLOR}`,
+  outlineOffset: -2,
+};
+
+// The text box is clamped inside these bounds.
 const CANVAS_W = 420;
 const CANVAS_H = 280;
 const BOX_W = 180;
@@ -20,22 +59,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-// Center-region live preview (spec.md M7 subtask 16). A bounded, hand-built
-// mock mini-canvas - NOT a real embedded tldraw instance - that demonstrates
-// the theme's variables in miniature: its own background, a "sidebar" strip,
-// a "card", and a movable/editable default text box.
-//
-// Critically, this scopes the draft's CSS variables to ONLY this preview's
-// own root element via an inline `style` prop (`--background`, `--card`,
-// etc., the exact same names app/globals.css's `@theme` block maps Tailwind
-// colors from), rather than calling lib/themes/apply.ts or touching
-// `document.documentElement`. That keeps `draftVariables` - an unsaved,
-// in-progress draft - from leaking into the real app theme before Save; the
-// preview's own markup below then just uses `var(--...)` directly (not
-// Tailwind's `bg-background` utilities, since those resolve against
-// `:root`'s real variables, not this scoped subtree) so normal CSS
-// inheritance does the live-updating for free as draftVariables changes.
-export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps) {
+// A hand-built mini canvas, not a tldraw instance. The draft's variables are
+// set inline on this root only, so the unsaved draft never touches the real
+// theme. Children use var(--...) directly, because Tailwind's utilities resolve
+// against :root.
+export function ThemePreview({ editingTheme, draftVariables, hoveredKey = null }: ThemePreviewProps) {
   const [boxPos, setBoxPos] = useState({ x: 40, y: 100 });
   const [boxText, setBoxText] = useState("Edit me");
 
@@ -61,11 +89,14 @@ export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps
     e.currentTarget.releasePointerCapture(e.pointerId);
   }, []);
 
-  // Build the full set of scoped `--variable: value` inline styles from all
-  // 31 ThemeVariableKeys, mirroring the same `draftVariables[key] ??
-  // editingTheme.variables[key]` fallback the right sidebar's color editor
-  // already uses (ThemeEditor.tsx) so the preview always agrees with what
-  // the sidebar is showing as each field's current value.
+  const highlighted = new Set(hoveredKey ? ELEMENTS_BY_KEY[hoveredKey] ?? [] : []);
+  const highlight = (element: PreviewElement) =>
+    highlighted.has(element) ? HIGHLIGHT_STYLE : undefined;
+  // Outlined just outside the glyphs instead of over them.
+  const textHighlight = (element: PreviewElement) =>
+    highlighted.has(element) ? { ...HIGHLIGHT_STYLE, outlineOffset: 1 } : undefined;
+
+  // Same draft-then-theme fallback as the color editor, so they always agree.
   const scopedVariableStyle = THEME_VARIABLE_KEYS.reduce<Record<string, string>>((acc, key) => {
     const value = draftVariables[key] ?? editingTheme.variables[key];
     if (value !== undefined) {
@@ -89,23 +120,38 @@ export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps
         } as CSSProperties
       }
     >
+      {/* Inherits the root's color; nothing between it and the root sets one. */}
+      <p className="absolute left-[72px] top-3 text-xs leading-none">
+        <span style={textHighlight("rootText")}>Notes look like this</span>
+      </p>
+
       {/* Mock "sidebar" strip, demonstrating --sidebar/--sidebar-foreground. */}
       <div
-        className="absolute inset-y-0 left-0 w-14 border-r"
+        className="absolute inset-y-0 left-0 w-14 border-r text-[9px] leading-none"
         style={{
           background: "var(--sidebar)",
           color: "var(--sidebar-foreground)",
           borderColor: "var(--sidebar-border)",
+          ...highlight("sidebarStrip"),
         }}
       >
+        <div className="mx-2 mt-3 font-semibold">
+          <span style={textHighlight("sidebarText")}>Notes</span>
+        </div>
         <div
-          className="mx-2 mt-3 h-2 rounded-full"
-          style={{ background: "var(--sidebar-primary)" }}
+          className="mx-2 mt-2 h-2 rounded-full"
+          style={{ background: "var(--sidebar-primary)", ...highlight("sidebarPrimaryBar") }}
         />
         <div
           className="mx-2 mt-1.5 h-2 w-2/3 rounded-full"
-          style={{ background: "var(--sidebar-accent)" }}
+          style={{ background: "var(--sidebar-accent)", ...highlight("sidebarAccentBar") }}
         />
+        <div className="mx-2 mt-2.5">
+          <span style={textHighlight("sidebarText")}>Ideas</span>
+        </div>
+        <div className="mx-2 mt-1.5">
+          <span style={textHighlight("sidebarText")}>Tasks</span>
+        </div>
       </div>
 
       {/* Mock "card", demonstrating --card/--card-foreground. */}
@@ -116,15 +162,19 @@ export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps
           color: "var(--card-foreground)",
           borderColor: "var(--border)",
           borderRadius: "var(--radius)",
+          ...highlight("card"),
         }}
       >
-        Card
+        {/* Outlined outside the glyphs, inside the card's padding. */}
+        <span style={highlight("cardText") && { ...HIGHLIGHT_STYLE, outlineOffset: 1 }}>
+          Card
+        </span>
       </div>
 
-      {/* Movable, editable default text box - the required demo affordance.
-          Position is purely local UI state, not part of the theme itself.
-          The drag handle bar (top strip) owns the pointer-drag logic so it
-          doesn't fight with the input's own text-selection/caret dragging. */}
+      {/*
+        Position is local UI state. The handle bar owns dragging so it doesn't
+        fight the input's text selection.
+      */}
       <div
         className="absolute flex flex-col overflow-hidden border shadow-sm"
         style={{
@@ -135,11 +185,12 @@ export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps
           background: "var(--card)",
           borderColor: "var(--border)",
           borderRadius: "var(--radius)",
+          ...highlight("textBox"),
         }}
       >
         <div
           className="h-3 shrink-0 cursor-grab touch-none active:cursor-grabbing"
-          style={{ background: "var(--primary)" }}
+          style={{ background: "var(--primary)", ...highlight("textBoxHandle") }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -150,9 +201,20 @@ export function ThemePreview({ editingTheme, draftVariables }: ThemePreviewProps
           value={boxText}
           onChange={(e) => setBoxText(e.target.value)}
           className="min-w-0 flex-1 bg-transparent px-2 py-1 text-xs outline-none"
-          style={{ color: "var(--card-foreground)" }}
+          style={{ color: "var(--card-foreground)", ...highlight("textBoxInput") }}
         />
       </div>
+
+      {/*
+        The root's own outline would be painted under its positioned children,
+        and the sidebar strip covers its left edge, so it gets an overlay on top.
+      */}
+      {highlighted.has("root") && (
+        <div
+          className="pointer-events-none absolute inset-0 z-10"
+          style={{ borderRadius: "inherit", boxShadow: `inset 0 0 0 2px ${HIGHLIGHT_COLOR}` }}
+        />
+      )}
     </div>
   );
 }

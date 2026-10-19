@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
 import { useAppStore } from "@/stores/appStore";
 import {
   isSidebarDragEvent,
@@ -23,27 +24,18 @@ import {
 } from "@/lib/dnd/sidebar";
 import type { Page } from "@/types";
 
-// Row for a single Page inside PageSidebar.tsx (spec.md M6 subtask 17, "Page
-// sidebar"). Deliberately modeled on components/sidebar/NoteItem.tsx's exact
-// row structure/drag/context-menu pattern (reused, not reimplemented, per
-// spec.md's "reuse lib/dnd/sidebar.ts and lib/clipboard/sidebarClipboard.ts"
-// guidance) - the differences from NoteItem are only what pages genuinely
-// don't have: no router navigation (clicking a page row selects it via
-// `onSelect`/stores/appStore.ts's `selectedPageId` instead of routing to a
-// new URL - CanvasEditor.tsx re-renders in place), and no "Paste" item here
-// (same as NoteItem - pasting only makes sense on a container, which for
-// pages is the PageSidebar's own outer list, mirroring FolderTree.tsx's
-// root-level "Paste").
+// Page row, modeled on NoteItem. Clicking selects the page instead of
+// navigating, and there's no Paste item (the list itself accepts pastes).
 
 interface Props {
   page: Page;
   isActive: boolean;
   siblingPageIds: string[];
   onSelect: () => void;
-  /** Called after any mutation (rename/delete/reorder) that changes the
-   * page list or its order, so PageSidebar.tsx can refetch and - for a
-   * delete of the currently-selected page - fall back to selecting another
-   * page. */
+  /**
+   * Lets PageSidebar refetch, and pick another page if the selected one was
+   * deleted.
+   */
   onChanged: () => void;
 }
 
@@ -53,10 +45,10 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
   const [dropPosition, setDropPosition] = useState<RowDropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const setClipboard = useAppStore((s) => s.setClipboard);
+  const { actionsRef, contextActionsRef, closeMenus } = useMenuCloser();
 
-  // Resyncs from an external rename (e.g. the canvas title header) - not
-  // depended on `renaming` so it can't clobber an in-progress edit or the
-  // optimistic title commitRename() just set locally.
+  // Picks up renames made elsewhere (such as the canvas title). Doesn't depend
+  // on renaming, so it can't overwrite an edit in progress.
   useEffect(() => {
     if (!renaming) setTitle(page.title || "Untitled");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -140,6 +132,7 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
         <DropdownMenuItem onClick={handleCopy}>
           <Copy className="mr-2 h-4 w-4" /> Copy
         </DropdownMenuItem>
+        <CopyReferenceItem reference={{ kind: "page", id: page.id }} onDone={closeMenus} />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleDelete} className="text-destructive">
           <Trash2 className="mr-2 h-4 w-4" /> Delete
@@ -153,7 +146,7 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
       {dropPosition === "before" && (
         <div className="mx-2 h-0.5 rounded-full bg-primary" />
       )}
-      <ContextMenu>
+      <ContextMenu actionsRef={contextActionsRef}>
         <ContextMenuTrigger
           render={
             <div
@@ -190,7 +183,7 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
                 </span>
               )}
 
-              <DropdownMenu>
+              <DropdownMenu actionsRef={actionsRef}>
                 <DropdownMenuTrigger
                   render={
                     <button

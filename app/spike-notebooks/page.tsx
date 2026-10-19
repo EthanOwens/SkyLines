@@ -17,10 +17,7 @@ import {
 import { createFolder, getFolderById } from "@/lib/db/folders";
 import { createNote, getNoteById } from "@/lib/db/notes";
 
-// M1 spike route (spec.md subtask 2). Exercises lib/db/notebooks.ts
-// end-to-end against the real "sqlite:skylines.db" file, same pattern as
-// app/spike-db/page.tsx. Not production UI - a throwaway verification
-// harness.
+// Dev-only verification page for lib/db/notebooks.ts. Not production UI.
 export default function SpikeNotebooks() {
   const [log, setLog] = useState<string[]>([]);
 
@@ -56,10 +53,8 @@ export default function SpikeNotebooks() {
   }
 
   async function runCascadeDeleteCheck() {
-    // Verify: deleteNotebook soft-deletes the notebook itself, every folder
-    // with notebook_id = <id>, and every note in those folders - in a
-    // single atomic multi-statement db.execute() call (mirrors deleteFolder
-    // in lib/db/folders.ts and the atomicity bug fixed there).
+    // deleteNotebook must soft-delete the notebook, its folders and their notes
+    // in one atomic statement.
     const userId = "spike-notebook-cascade-user";
     try {
       const notebookId = await createNotebook(userId, "Cascade Notebook", 1);
@@ -105,7 +100,6 @@ export default function SpikeNotebooks() {
       const row = await getNotebookRowById(notebookId);
       append(`after markNotebookSynced: dirty=${row?.dirty} syncedAt=${row?.syncedAt}`);
 
-      // upsertNotebookFromRemote
       await upsertNotebookFromRemote(
         {
           id: notebookId,
@@ -122,7 +116,6 @@ export default function SpikeNotebooks() {
       const afterUpsert = await getNotebookById(notebookId);
       append(`after upsertNotebookFromRemote: name=${afterUpsert?.name} order=${afterUpsert?.order} dirty=${afterUpsert?.dirty}`);
 
-      // Old tombstone + hard delete
       await deleteNotebook(notebookId);
       const cutoffMs = Date.now() + 1000; // anything deleted before "now + 1s" counts as old
       const oldTombstones = await getOldTombstoneNotebooks(userId, cutoffMs);

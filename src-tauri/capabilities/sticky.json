@@ -1,0 +1,34 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sticky",
+  "description": "Sticky note windows (sticky-<id>): sticky note SQL, close, minimize, dragging, always-on-top and resize, the clipboard, opening web links and other sticky notes, and opening the image editor (writing its temp file under $APPDATA/image-editor/).",
+  "windows": ["sticky-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-size",
+    "core:window:allow-set-title",
+    "core:window:allow-set-focus",
+    "core:webview:allow-create-webview-window",
+    "opener:default",
+    "sql:default",
+    "sql:allow-execute",
+    "sql:allow-select",
+    "clipboard-manager:default",
+    "clipboard-manager:allow-read-image",
+    "clipboard-manager:allow-write-image",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$APPDATA/image-editor/*" }]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$APPDATA/image-editor" }, { "path": "$APPDATA/image-editor/*" }]
+    }
+  ]
+}

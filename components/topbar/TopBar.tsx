@@ -25,25 +25,12 @@ import { useAppStore, type NoteHistoryEntry } from "@/stores/appStore";
 import { ArrowLeft, ArrowRight, Redo, Settings, Undo } from "lucide-react";
 import { AccountMenu } from "./AccountMenu";
 
-// Quick access toolbar (spec.md subtask 13, "Quick access toolbar"). Full-
-// width bar above Sidebar+Ribbon+content (see AppLayout.tsx), matching
-// planning.md's "on the very top should be some customizable quick access
-// options" description. Back/Forward (spec.md subtask 14) are wired to the
-// note-visit history stack in stores/appStore.ts. Undo/Redo (spec.md
-// subtask 15, updated by subtask 7 of the merged note/canvas spec) act on
-// whichever "layer" actually has focus, not on route: `activeCanvasEditor`
-// (tldraw) is set whenever any canvas note is open at all, while
-// `activeEditor` (Tiptap) is set only while a specific text-box shape has
-// genuine editing focus within that canvas - so both CAN be non-null at
-// once. Undo/Redo prioritize `activeEditor` (undo the focused shape's text
-// edit) when it's set, falling back to `activeCanvasEditor` (undo the last
-// tldraw-level action - shape move/ink stroke/shape creation) otherwise -
-// rather than being two competing buttons. The settings popover's show/hide
-// toggling and its localStorage persistence (lib/quickAccessPrefs.ts) is fully real/
-// functional.
+// Quick access toolbar above the sidebar, ribbon and content. Back/Forward walk
+// the note history in the store.
 //
-// The right side of the `justify-between` split renders AccountMenu.tsx
-// (subtask 16, "Account icon + dropdown").
+// Undo/Redo act on whatever has focus. activeCanvasEditor (tldraw) is set while
+// any canvas note is open; activeEditor (Tiptap) only while a text shape is
+// being edited, so both can be set at once. The Tiptap editor wins when set.
 
 type QuickAccessKey = keyof QuickAccessVisibility;
 
@@ -59,15 +46,8 @@ const QUICK_ACCESS_ITEMS: {
 ];
 
 export function TopBar() {
-  // Initialized to the same default the static-export build-time render
-  // produces (`window` is undefined at build time, so
-  // getQuickAccessVisibility() would return DEFAULT_VISIBILITY anyway), then
-  // re-read from localStorage only after mounting in the browser. This
-  // matches lib/lastOpen.ts consumers' established pattern elsewhere in this
-  // app and avoids a hydration mismatch: calling getQuickAccessVisibility()
-  // eagerly in useState's initializer would make the very first client
-  // render reflect the user's stored prefs, which can differ from the
-  // baked-in static HTML.
+  // Starts at the default and reads localStorage after mount, so the first
+  // client render matches the static HTML (no hydration mismatch).
   const [visibility, setVisibility] = useState<QuickAccessVisibility>(DEFAULT_VISIBILITY);
   const router = useRouter();
   const noteHistory = useAppStore((s) => s.noteHistory);
@@ -78,30 +58,19 @@ export function TopBar() {
   const activeEditor = useAppStore((s) => s.activeEditor);
   const activeCanvasEditor = useAppStore((s) => s.activeCanvasEditor);
 
-  // Reactive Tiptap undo/redo availability (spec.md subtask 15). Mirrors the
-  // Format tab's own `useEditorState` usage (Ribbon.tsx) - `editor`'s
-  // identity doesn't change on doc updates, so this subscription is what
-  // actually re-renders TopBar when canUndo/canRedo flip.
+  // The editor's identity doesn't change on doc updates, so subscribe to
+  // canUndo/canRedo.
   const tiptapUndoState = useEditorState({
     editor: activeEditor,
-    // Guards against a real, observed race during /note <-> /canvas route
-    // transitions: Tiptap's `useEditorState` internals can still hold a
-    // reference to the just-destroyed previous editor for one more
-    // transaction-driven snapshot before `RichTextEditor.tsx`'s unmount
-    // effect clears `activeEditor` back to `null` - calling `.can()` on that
-    // torn-down instance throws. `isDestroyed` is Tiptap's own documented
-    // way to detect this and bail out to the neutral "no undo/redo" state.
+    // Tiptap can still hand the selector a just-destroyed editor during a route
+    // change, and .can() throws on it.
     selector: ({ editor }) =>
       editor && !editor.isDestroyed
         ? { canUndo: editor.can().undo(), canRedo: editor.can().redo() }
         : null,
   });
 
-  // Reactive tldraw undo/redo availability (spec.md subtask 15). tldraw's
-  // `getCanUndo`/`getCanRedo` are plain getters backed by its own reactive
-  // signals store, so `useValue`'s computed-signal form (name + fn + deps)
-  // is what actually re-renders TopBar when they flip - a one-time call
-  // here would go stale.
+  // useValue so canUndo/canRedo stay live; a one-time read would go stale.
   const canvasCanUndo = useValue(
     "topbar-canvas-can-undo",
     () => activeCanvasEditor?.getCanUndo() ?? false,
@@ -128,10 +97,8 @@ export function TopBar() {
     });
   }
 
-  // Navigates to a history-stack entry (spec.md subtask 14). Sets
-  // `isHistoryNavigation` immediately before router.push() so the
-  // note/canvas page's load effect knows to skip re-pushing a visit -
-  // goBack()/goForward() already moved `historyIndex` to the right place.
+  // Set isHistoryNavigation before navigating so the page doesn't push a new
+  // history entry; goBack/goForward already moved the index.
   function navigateToEntry(entry: NoteHistoryEntry) {
     setIsHistoryNavigation(true);
     router.push(`/canvas?id=${entry.noteId}`);
@@ -147,12 +114,7 @@ export function TopBar() {
     if (entry) navigateToEntry(entry);
   }
 
-  // Acts on "whichever editor is currently focused" (spec.md subtask 15,
-  // updated by subtask 7): checks `activeEditor` (Tiptap - only set while a
-  // specific shape has real editing focus) first, falling back to
-  // `activeCanvasEditor` (tldraw - set whenever any canvas note is open) so
-  // undo/redo affects the last tldraw-level action once no shape is
-  // focused. Reuses formatActions.ts's exact Tiptap undo/redo command.
+  // Tiptap first (only set while a shape is being edited), then tldraw.
   function handleUndo() {
     if (activeEditor) {
       activeEditor.chain().focus().undo().run();
@@ -169,11 +131,6 @@ export function TopBar() {
     }
   }
 
-  // Back/Forward (subtask 14) are enabled based on whether there's actually
-  // somewhere in the stack to go. Undo/Redo (subtask 15) reflect whichever
-  // editor is currently mounted's own reactive canUndo/canRedo state - both
-  // stay disabled when neither editor is mounted (e.g. the notebook-open
-  // placeholder page).
   const disabledByKey: Record<QuickAccessKey, boolean> = {
     back: historyIndex <= 0,
     forward: historyIndex >= noteHistory.length - 1,

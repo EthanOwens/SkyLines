@@ -4,23 +4,12 @@ import { createNote, getNotes, updateNote } from "@/lib/db/notes";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { isFolderOrDescendant, nextOrderValue } from "@/lib/dnd/sidebar";
 
-// Generic cut/copy/paste mechanism for the sidebar tree (spec.md M4 subtask
-// 8, "Right-click context menu with delete/rename/cut/copy/paste"). The
-// clipboard VALUE itself (`ClipboardEntry`) lives in stores/appStore.ts
-// (same transient-cross-component-signal pattern as `pendingEditClickPoint`
-// - read once by whichever row's "Paste" is clicked, not persisted data).
-// This module holds the logic that actually EXECUTES a paste against
-// lib/db/notes.ts / lib/db/folders.ts, kept deliberately generic (keyed off
-// `entry.type`/`entry.kind`, not "FolderItem internals") so it can be
-// reused as-is by M6's Page sidebar - see the "Key Decision" in spec.md.
+// Executes sidebar cut/copy/paste. The clipboard value itself lives in the
+// store.
 
 export type ClipboardEntry = {
   kind: "cut" | "copy";
-  // "page" (spec.md M6 subtask 17, "Page sidebar") reuses this same
-  // clipboard field/mechanism for a note's Pages - see
-  // `pastePageClipboardEntry` below, a sibling to `pasteClipboardEntry`
-  // rather than a branch inside it, since a page's paste target (a Note) is
-  // a fundamentally different kind of container than a folder/notebook.
+  // Pages paste into a note, so they use pastePageClipboardEntry instead.
   type: "note" | "folder" | "page";
   id: string;
 };
@@ -38,13 +27,7 @@ export interface PagePasteTarget {
   noteId: string;
 }
 
-/**
- * Duplicates a single note under `folderId`, copying its content/canvasData.
- * `createNote` itself never accepts content/canvasData (every note starts
- * empty), so this is a create-then-update - two writes are unavoidable
- * without a lower-level insert primitive, and this whole operation isn't on
- * any hot path.
- */
+/** createNote can't take content, so this creates then updates. */
 async function duplicateNote(
   userId: string,
   note: Note,
@@ -59,13 +42,7 @@ async function duplicateNote(
   return id;
 }
 
-/**
- * Recursively duplicates `folder` and everything inside it (subfolders,
- * notes, and their content, at any depth) under `parentId`, as genuinely new
- * rows/ids - not references. `allFolders`/`allNotes` are the full
- * already-loaded tree (from stores/appStore.ts), so no extra DB reads are
- * needed to walk the source subtree.
- */
+/** Copies the whole subtree as new rows, walking the already-loaded tree. */
 async function duplicateFolder(
   userId: string,
   folder: Folder,
@@ -95,14 +72,9 @@ async function duplicateFolder(
 }
 
 /**
- * Recursively retargets `folder` and everything inside it (subfolders,
- * notes, at any depth) to `notebookId`, in place - i.e. the same subtree
- * walk `duplicateFolder` does, but issuing `updateFolder`/`updateNote`
- * calls against the EXISTING rows instead of creating new ones. Used by a
- * cross-notebook folder Cut+Paste to keep every descendant's `notebookId`
- * consistent with its new location, since `notebook_id` is not derived from
- * `parent_id` anywhere else in the schema (e.g. `deleteNotebook` cascades by
- * `notebook_id` directly).
+ * Moves a cut folder's whole subtree to another notebook in place. notebook_id
+ * isn't derived from parent_id (deleteNotebook cascades by notebook_id), so
+ * every descendant has to be updated.
  */
 async function retargetFolderNotebook(
   folder: Folder,
@@ -124,15 +96,8 @@ async function retargetFolderNotebook(
 }
 
 /**
- * Returns the current `order` values of the siblings a pasted item would
- * land among, read FRESH from the DB rather than from the caller's
- * (possibly stale) `allFolders`/`allNotes` snapshot. Copy deliberately
- * leaves the clipboard populated to support repeated pastes, so two Paste
- * clicks fired in quick succession - before the store's async post-write
- * refetch resolves - would otherwise both compute `order` from the same
- * stale in-memory snapshot and land on an identical, ambiguous `order`
- * value. A one-shot re-read here closes that window without requiring a
- * larger architectural change (e.g. optimistic local order tracking).
+ * Read sibling orders fresh from the DB: Copy keeps the clipboard, so two quick
+ * pastes would otherwise compute the same order from a stale store.
  */
 async function freshSiblingOrders(
   userId: string,
@@ -151,17 +116,10 @@ async function freshSiblingOrders(
 }
 
 /**
- * Executes a paste of `entry` into `target`. Returns `true` if something was
- * actually written, `false` if the paste was a no-op (the source row no
- * longer exists, or - for a Cut - the target is the folder itself or one of
- * its own descendants, which would corrupt the tree). Callers are
- * responsible for clearing the clipboard afterward for a Cut (one-shot
- * move) and leaving it alone for a Copy (repeatable, normal clipboard
- * semantics) - this function only performs the write.
- *
- * A Copy of a folder pasted back inside itself (or one of its own copies) is
- * NOT blocked - it creates new ids, so it's not a cycle, just a legitimate
- * (if a little redundant) duplicate subfolder.
+ * Returns false for a no-op: the source is gone, or a Cut would move a folder
+ * into itself or a descendant. The caller clears the clipboard after a Cut, not
+ * after a Copy. Copying a folder into itself is allowed, because it creates new
+ * rows.
  */
 export async function pasteClipboardEntry(
   userId: string,
@@ -191,9 +149,7 @@ export async function pasteClipboardEntry(
         ...(movingNotebooks ? { notebookId: target.notebookId } : {}),
       });
       if (movingNotebooks) {
-        // Keep every descendant folder/note's notebookId consistent with
-        // the folder's new location - see retargetFolderNotebook's doc
-        // comment for why this can't be left to derive from parentId.
+        // See retargetFolderNotebook.
         const childFolders = allFolders.filter((f) => f.parentId === folder.id);
         const childNotes = allNotes.filter((n) => n.folderId === folder.id);
         for (const childFolder of childFolders) {
@@ -238,11 +194,7 @@ export async function pasteClipboardEntry(
   return true;
 }
 
-/**
- * Duplicates a single page under `noteId`, copying its title/content/
- * canvasData. Same create-then-update shape as `duplicateNote` above -
- * `createPage` never accepts content/canvasData directly either.
- */
+/** Same create-then-update as duplicateNote. */
 async function duplicatePage(
   page: Page,
   noteId: string,
@@ -256,17 +208,8 @@ async function duplicatePage(
 }
 
 /**
- * Page analogue of `pasteClipboardEntry` above (spec.md M6 subtask 17, "Page
- * sidebar") - kept as a sibling function rather than a branch inside
- * `pasteClipboardEntry` since a page's target is a Note (`PagePasteTarget`),
- * not a `PasteTarget` (folder/notebook); pages don't live in that tree at
- * all. Same return-value contract: `true` if something was written, `false`
- * for a no-op (source page no longer exists).
- *
- * Unlike folders, pages can't be re-parented onto themselves/descendants (no
- * nesting), so there's no `isFolderOrDescendant`-style guard needed for the
- * "cut" branch - moving a page to any note (including its own) is always
- * safe, it just lands at the end of that note's page order.
+ * Pages don't nest, so there's no cycle check. Returns false when the source
+ * page is gone.
  */
 export async function pastePageClipboardEntry(
   entry: ClipboardEntry,
@@ -283,12 +226,8 @@ export async function pastePageClipboardEntry(
     .map((p) => p.order);
 
   if (entry.kind === "cut") {
-    // Pages moving between notes isn't a feature this subtask builds -
-    // `updatePage` has no way to change which note a page belongs to (no
-    // `noteId` field in its update type), so a cross-note cut-paste would
-    // otherwise silently reorder the source page among ITS OWN note's
-    // siblings using an order value computed from an unrelated note. Reject
-    // it as a clean no-op instead, leaving the clipboard intact.
+    // updatePage can't change a page's note, so a cross-note cut is rejected
+    // rather than reordering the page within its old note.
     if (page.noteId !== target.noteId) return false;
     await updatePage(entry.id, { order: nextOrderValue(siblingOrders) });
     return true;

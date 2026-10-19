@@ -1,26 +1,14 @@
 import type { DragEvent } from "react";
 import type { Folder } from "@/types";
 
-// Shared drag-and-drop helpers for the sidebar folder/note tree (spec.md M4
-// subtask 7, "Sidebar drag-and-drop reordering"). Native HTML5 drag-and-drop
-// (`draggable`/`onDragStart`/`onDragOver`/`onDrop`) is used rather than a
-// third-party dnd library, since none is installed (confirmed via
-// package.json) and the interaction needed here - reorder within a sibling
-// list, or drop onto a folder to re-parent - doesn't need anything beyond
-// what the native API already provides.
-
-/** Custom MIME type used to carry the dragged item's identity through
- * `DataTransfer`. Kept distinct from `text/plain` so drags originating from
- * outside the sidebar (e.g. plain text dragged in from elsewhere) are never
- * misinterpreted as a sidebar item drop. */
+// Drag-and-drop helpers for the sidebar, using native HTML5 drag and drop.
+//
+// A custom MIME type, so text dragged in from elsewhere is never mistaken for a
+// sidebar item.
 export const SIDEBAR_DRAG_MIME = "application/x-skylines-sidebar-item";
 
 export type SidebarDragPayload = {
-  // "page" (spec.md M6 subtask 17, "Page sidebar") reuses this same generic
-  // payload/MIME mechanism for reordering a note's Pages - pages don't nest
-  // or re-parent (isFolderOrDescendant below is folder-only and doesn't
-  // apply to them), so they only ever use the reorder ("before"/"after")
-  // half of this module, never "inside".
+  // Pages only reorder; they never nest.
   type: "folder" | "note" | "page";
   id: string;
 };
@@ -31,12 +19,8 @@ export function setSidebarDragPayload(e: DragEvent, payload: SidebarDragPayload)
 }
 
 export function readSidebarDragPayload(e: DragEvent): SidebarDragPayload | null {
-  // `e.dataTransfer.getData` returns "" (not a thrown error) both when the
-  // MIME type isn't present at all and during `dragover` in some browsers
-  // (data is only readable in `drop` for security reasons) - callers that
-  // need to distinguish "is this a sidebar drag at all" during `dragover`
-  // should check `e.dataTransfer.types.includes(SIDEBAR_DRAG_MIME)` instead,
-  // since the payload itself isn't reliably readable until `drop`.
+  // getData returns "" during dragover in some browsers, because data is only
+  // readable on drop. Check dataTransfer.types during dragover instead.
   const raw = e.dataTransfer.getData(SIDEBAR_DRAG_MIME);
   if (!raw) return null;
   try {
@@ -61,14 +45,7 @@ export function isSidebarDragEvent(e: DragEvent): boolean {
   return e.dataTransfer.types.includes(SIDEBAR_DRAG_MIME);
 }
 
-/**
- * True if `targetFolderId` is `candidateFolderId` itself, or a descendant of
- * it - i.e. dropping `candidateFolderId` "into" `targetFolderId` would make
- * the folder its own descendant and corrupt the tree. Walks `parentId`
- * upward from `targetFolderId` rather than walking down from
- * `candidateFolderId`, since a folder only ever has one parent chain to
- * walk, regardless of how many descendants it has.
- */
+/** Walks up from the target, since a folder has a single parent chain. */
 export function isFolderOrDescendant(
   allFolders: Folder[],
   candidateFolderId: string,
@@ -89,13 +66,8 @@ export function nextOrderValue(siblingOrders: number[]): number {
 }
 
 /**
- * Given an ordered list of sibling ids (all of the same type as the dragged
- * item), returns a full reindex - one 0-based `order` per id - reflecting
- * `draggedId` moved to just before/after `targetId`. Reindexing every
- * sibling (rather than only the ones that moved) keeps the resulting order
- * values simple, small integers instead of needing fractional/gap-based
- * insertion - sidebar sibling lists are small, so the extra writes are
- * cheap.
+ * Reindexes every sibling to small integers instead of fractional orders;
+ * sibling lists are small.
  */
 export function reindexSiblings(
   orderedIds: string[],
@@ -114,11 +86,8 @@ export function reindexSiblings(
 export type RowDropPosition = "before" | "after" | "inside";
 
 /**
- * Resolves a `dragover` event's vertical position within `rect` to a
- * before/after/inside indicator. The middle band (25%-75% of the row's
- * height) resolves to "inside" only when `allowInside` is true (i.e. the
- * row is a folder that can accept a re-parent drop); otherwise the row is
- * split evenly into a "before" (top half) / "after" (bottom half) zone.
+ * The middle 25-75% band means "inside" only when allowInside is set; otherwise
+ * the row splits into top and bottom halves.
  */
 export function resolveRowDropPosition(
   e: DragEvent,

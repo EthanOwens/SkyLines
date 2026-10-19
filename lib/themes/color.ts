@@ -1,48 +1,18 @@
-// Color-space conversion helpers for the theme editor's color-wheel picker
-// (spec.md M7 subtask 15).
-//
-// This app's theme variables store COMPLETE CSS `<color>` values, not bare
-// component numbers - see lib/themes/builtin.ts: most built-in themes use
-// `oklch(...)` strings (with some using the `/ <alpha>` syntax for
-// translucent borders), while GRUVBOX_DARK_THEME uses plain hex. A prior
-// subtask (M5 #8) already hit a real bug from wrongly assuming these were
-// bare HSL components, so this module leans on a real, well-tested
-// color-conversion library (`culori`) rather than hand-rolling OKLCH<->sRGB
-// math.
-//
-// The color-wheel library chosen for this subtask (`react-colorful`) only
-// understands sRGB-ish formats (hex/rgb/hsl/hsv), not OKLCH, so every value
-// has to be converted to a picker-friendly hex string for display and
-// converted back on change. Design choice: regardless of a variable's
-// *original* stored format (hex or oklch), any value edited through the
-// picker is normalized to `oklch(...)` going forward - oklch is what the
-// large majority of this app's built-in themes already use, it's a
-// perceptually-uniform space well suited to a color-wheel UI, and it's a
-// valid standalone CSS `<color>` value, which is all lib/themes/apply.ts
-// requires (it just does `style.setProperty(--key, value)`).
+// Theme variables hold complete CSS colors (mostly oklch(...), some hex), so
+// conversion uses culori rather than hand-written OKLCH math. react-colorful
+// only understands sRGB formats: values become hex for display, and every edit
+// is written back as oklch(...), whatever its original format.
 
 import { converter, formatHex8, parse, toGamut } from "culori";
 
 const toOklch = converter("oklch");
-// Maps an arbitrary color into the sRGB gamut using perceptually-aware
-// gamut mapping (CSS Color 4's recommended approach: hold lightness/hue
-// fixed and reduce chroma until the color fits, falling back to a clip at
-// the gamut boundary), rather than `converter("rgb")`'s raw output, which
-// can have out-of-[0,1] channels for out-of-gamut OKLCH colors that
-// `formatHex8` would otherwise naively (and hue-shiftingly) clamp.
+// Gamut-maps by reducing chroma (CSS Color 4) instead of clamping channels,
+// which would shift the hue of out-of-gamut colors.
 const toGamutRgb = toGamut("rgb", "oklch");
 
-// Fallback shown when a stored value fails to parse (e.g. an empty string
-// for a not-yet-set variable) - opaque black, a safe default starting point.
 const FALLBACK_PICKER_HEX = "#000000ff";
 
-/**
- * Converts a theme variable's stored CSS color value (oklch(...), hex,
- * rgb(...), etc.) into the 8-digit hex string react-colorful's
- * `HexAlphaColorPicker`/`HexColorInput` expect for display. Values that fail
- * to parse (unset, malformed) fall back to opaque black rather than
- * throwing, since this is only ever used to seed a picker's displayed value.
- */
+/** Unparseable values fall back to opaque black instead of throwing. */
 export function themeColorToPickerHex(value: string | undefined): string {
   if (!value) return FALLBACK_PICKER_HEX;
   const parsed = parse(value);
@@ -50,9 +20,7 @@ export function themeColorToPickerHex(value: string | undefined): string {
   return formatHex8(toGamutRgb(parsed));
 }
 
-// Rounds to `digits` decimal places, used to keep the written-back oklch()
-// strings readable instead of carrying full floating-point noise through
-// the hex -> rgb -> oklch round trip.
+// Keeps written oklch() strings free of floating-point noise.
 function round(n: number, digits: number): number {
   const factor = 10 ** digits;
   return Math.round(n * factor) / factor;
@@ -72,9 +40,7 @@ export function pickerHexToThemeColor(hex: string): string {
   const oklch = toOklch(parsed);
   const l = round(oklch.l ?? 0, 4);
   const c = round(oklch.c ?? 0, 4);
-  // A fully achromatic color (chroma 0) has no meaningful hue - culori
-  // leaves `h` undefined in that case, matching CSS's "none" keyword, but a
-  // plain `0` is just as valid and simpler to read/round-trip.
+  // An achromatic color has no hue (culori leaves h undefined); write 0.
   const h = round(oklch.h ?? 0, 2);
   const alpha = oklch.alpha ?? 1;
 

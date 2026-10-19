@@ -7,14 +7,12 @@ import { createNotebook } from "@/lib/db/notebooks";
 import { setLastOpenNotebook } from "@/lib/lastOpen";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DropdownMenuContent } from "@/components/ui/dropdown-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
+import type { Notebook } from "@/types";
 
-// Notebook picker (spec.md subtask 6, "Notebook picker"): the landing UI
-// shown when there's no valid last-open note - either first login (no
-// notebooks/notes exist yet), or a stored last-open state that only got as
-// far as "a notebook is open, no note chosen yet" (AppShell.tsx's restore
-// effect populates `selectedNotebookId` from that stored state before this
-// component ever renders, so this component doesn't need to re-derive it
-// from localStorage itself).
+// Notebook picker, shown when there's no valid last-open note.
 export default function Home() {
   const { user } = useAuthContext();
   const notebooks = useAppStore((s) => s.notebooks);
@@ -53,10 +51,8 @@ export default function Home() {
     }
   }
 
-  // A `selectedNotebookId` that no longer matches any notebook in the store
-  // (e.g. it was deleted on another device, or restored from a stale
-  // localStorage entry) falls through to the picker below rather than
-  // rendering a confirmation for a notebook that doesn't exist.
+  // A selected notebook that no longer exists (deleted elsewhere, or a stale
+  // stored id) falls through to the picker.
   if (selectedNotebookId && selectedNotebook) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-2">
@@ -70,13 +66,8 @@ export default function Home() {
     );
   }
 
-  // `notebooks` is populated asynchronously (hooks/useNotebooks.ts's SQLite
-  // fetch). Until the first fetch resolves, neither "selectedNotebookId not
-  // found above" nor "notebooks is empty" below can be trusted - both just
-  // mean "not loaded yet", not "doesn't exist" / "user has none". Render a
-  // neutral loading state instead of falsely falling through to the
-  // "notebook not found" picker (in particular its "no notebooks yet"
-  // empty-state message).
+  // Until the first load finishes, "not found" and "empty" only mean "not
+  // loaded yet".
   if (!notebooksLoaded) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -98,13 +89,7 @@ export default function Home() {
           <ul className="flex flex-col gap-1">
             {notebooks.map((notebook) => (
               <li key={notebook.id}>
-                <button
-                  type="button"
-                  onClick={() => openNotebook(notebook.id)}
-                  className="w-full rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-muted"
-                >
-                  {notebook.name}
-                </button>
+                <NotebookRow notebook={notebook} onOpen={() => openNotebook(notebook.id)} />
               </li>
             ))}
           </ul>
@@ -131,5 +116,27 @@ export default function Home() {
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>
     </div>
+  );
+}
+
+function NotebookRow({ notebook, onOpen }: { notebook: Notebook; onOpen: () => void }) {
+  const { contextActionsRef, closeMenus } = useMenuCloser();
+  return (
+    <ContextMenu actionsRef={contextActionsRef}>
+      <ContextMenuTrigger
+        render={
+          <button
+            type="button"
+            onClick={onOpen}
+            className="w-full rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-muted"
+          >
+            {notebook.name}
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-44">
+        <CopyReferenceItem reference={{ kind: "notebook", id: notebook.id }} onDone={closeMenus} />
+      </DropdownMenuContent>
+    </ContextMenu>
   );
 }

@@ -9,14 +9,7 @@ import { createNote, getNoteById, updateNote } from "@/lib/db/notes";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { pushDirtyRows } from "@/lib/sync/push";
 
-// M3 spike route (spec.md subtask 11). Verifies lib/sync/push.ts end-to-end:
-// sign in (Firestore's rules require request.auth.uid == userId - see
-// ../note_taking_app/firestore.rules - and this repo has no auth flow yet,
-// so this route signs in with a throwaway test account solely to exercise
-// the push path), create dirty local rows, push them, then read the
-// Firestore docs back with getDoc() and re-read the local rows to confirm
-// dirty/syncedAt got cleared. Not production UI - a throwaway verification
-// harness, same pattern as app/spike-db/page.tsx.
+// Dev-only verification page for lib/sync/push.ts. Not production UI.
 export default function SpikePush() {
   const [log, setLog] = useState<string[]>([]);
 

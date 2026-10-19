@@ -27,33 +27,15 @@ import { getSystemTheme, watchSystemThemeChanges } from "@/lib/themes/system";
 import { ThemeEditor } from "@/components/theme/ThemeEditor";
 import { LogOut, Palette, Cloud, CloudOff, Loader2, CheckCircle2 } from "lucide-react";
 
-// "System" sentinel for the theme radio group (spec.md subtask 11, "Rename
-// 'Default' theme to 'System'" - formerly `DEFAULT_THEME_VALUE`/"Default",
-// which just cleared theme overrides). Selecting it now applies
-// `LIGHT_THEME`/`DARK_THEME` based on the OS's live `prefers-color-scheme`
-// setting and stores this sentinel (not `null`) as `selectedThemeId`, so a
-// dedicated effect below can tell "System is the active selection" apart
-// from "an explicit theme is active" and gate its `matchMedia` listener
-// accordingly. Exported so AppShell.tsx's theme-merge effect can filter out
-// any user theme file that happens to reuse this reserved id (which would
-// otherwise collide with the "System" radio item and make the user's theme
-// unreachable) using the same single source of truth rather than a second
-// hardcoded copy.
+// The "System" theme: applies the light or dark theme to match the OS and keeps
+// following it. Stored as this sentinel rather than null so the effect below
+// can tell it apart from an explicit theme. Exported so AppShell can drop user
+// themes that reuse the id.
 export const SYSTEM_THEME_VALUE = "__system__";
 
-// Account icon + dropdown (spec.md subtask 16). Rendered into TopBar.tsx's
-// previously-empty right-side slot. This component only ever mounts inside
-// AppLayout.tsx's authenticated shell (it's gated on both a selected
-// notebook AND a real `user`), so there's no reachable state where this
-// dropdown renders while signed out - a "login" action here would be dead
-// UI, which is why only "Sign out" is offered (matching the spec's actual
-// intent: surface account actions for the currently-signed-in user).
-//
-// Sync-status line reflects the same `syncStatus` enum Sidebar.tsx's
-// SyncBadge already renders live (wired via hooks/useSyncEngine.ts) - kept
-// as a human-readable label rather than a precise last-synced-at timestamp,
-// since lib/sync/engine.ts doesn't track one and touching its core logic to
-// add one is explicitly out of scope for this subtask.
+// Only mounts for a signed-in user inside the app shell, so the only account
+// action is Sign out. The engine doesn't track a last-synced time, so sync
+// status is shown as a label.
 const SYNC_STATUS_DISPLAY: Record<
   string,
   { label: string; icon: typeof Cloud; className: string }
@@ -71,30 +53,14 @@ export function AccountMenu() {
   const availableThemes = useAppStore((s) => s.availableThemes);
   const selectedThemeId = useAppStore((s) => s.selectedThemeId);
   const setSelectedThemeId = useAppStore((s) => s.setSelectedThemeId);
-  // Open/closed state for the Theme Editor (spec.md M7 subtask 12), kept
-  // local to this component since no other part of the app needs to read or
-  // trigger it - it's opened solely from the "Edit themes..." item below.
   const [themeEditorOpen, setThemeEditorOpen] = useState(false);
 
-  // Keeps "System" dynamically in sync with the OS while it remains the
-  // active selection (spec.md subtask 11's key decision: a live
-  // `matchMedia` listener, not a one-time read at selection time). Gated on
-  // `selectedThemeId === SYSTEM_THEME_VALUE` so the listener is torn down
-  // (via this effect's cleanup) the moment the user switches to a different,
-  // explicit theme - re-running this effect on every `selectedThemeId`
-  // change naturally removes the old listener before any new one is
-  // attached, so there's never more than one live listener, and none at all
-  // once "System" is no longer selected or this component unmounts. Placed
-  // above the `if (!user) return null` guard below since hooks must run
-  // unconditionally on every render.
+  // Follows OS light/dark changes while "System" is selected; the cleanup
+  // removes the listener on any other selection. Placed above the early return
+  // because hooks must always run.
   //
-  // `null` is also treated as "System" here (not just SYSTEM_THEME_VALUE):
-  // `null` is the store's actual initial value (stores/appStore.ts) for any
-  // user who has never touched the theme picker, and the radio group below
-  // already renders it as "System" checked (`value={selectedThemeId ??
-  // SYSTEM_THEME_VALUE}`) - without this, that visual selection would be a
-  // lie, since neither the live matchMedia listener nor the initial
-  // getSystemTheme() application would ever run for that state.
+  // null counts as "System" too: it's the initial store value, and the radio
+  // group already shows it as "System".
   useEffect(() => {
     if (selectedThemeId !== SYSTEM_THEME_VALUE && selectedThemeId !== null) return;
 
@@ -126,16 +92,9 @@ export function AccountMenu() {
     router.replace("/login");
   }
 
-  // Theme picker (spec.md subtask 19): applies the selection immediately
-  // (clear any prior overrides first so switching to a theme that overrides
-  // fewer variables than the last one doesn't leave stale inline properties
-  // behind - see lib/themes/apply.ts's clearThemeOverrides docs) and
-  // persists the choice to localStorage.
-  //
-  // "System" (spec.md subtask 11) applies whichever of LIGHT_THEME/
-  // DARK_THEME currently matches the OS's `prefers-color-scheme` setting,
-  // and persists/stores SYSTEM_THEME_VALUE itself (not `null`) so the effect
-  // below can recognize "System is active" and keep it live-synced.
+  // Clear old overrides first, so a theme that sets fewer variables doesn't
+  // leave stale ones behind. "System" stores the sentinel so the effect above
+  // keeps it in sync with the OS.
   function handleThemeChange(value: string) {
     if (value === SYSTEM_THEME_VALUE) {
       clearThemeOverrides();

@@ -4,12 +4,6 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
-// Ported unchanged from ../note_taking_app/components/AuthProvider.tsx
-// (spec.md subtask 15). See hooks/useAuth.ts for why this needed no
-// SQLite/sync coupling. Wiring the sync engine (hooks/useSyncEngine.ts) into
-// real app lifecycle happens alongside this provider, not inside it - kept
-// separate so this file stays an unchanged port.
-
 interface AuthContextValue {
   user: User | null;
   loading: boolean;

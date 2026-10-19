@@ -6,12 +6,8 @@ import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
 import { isTheme, type Theme, THEME_VARIABLE_KEYS } from "@/lib/themes/types";
 import { BUILTIN_THEMES } from "@/lib/themes/builtin";
 
-// M6 spike route (spec.md subtask 17, "Theme engine foundation"). Exercises
-// lib/themes/{types,loader,apply}.ts end-to-end against the real on-disk
-// themes directory - same pattern as app/spike-notebooks/page.tsx. Not
-// production UI - a throwaway verification harness. There is no real
-// theme-picker UI surface until spec.md subtask 19, so this is the only way
-// to prove the loader/apply mechanism genuinely works end-to-end for now.
+// Dev-only verification page for the theme loader against the real themes
+// directory. Not production UI.
 export default function SpikeThemes() {
   const [dir, setDir] = useState<string | null>(null);
   const [themes, setThemes] = useState<Theme[]>([]);

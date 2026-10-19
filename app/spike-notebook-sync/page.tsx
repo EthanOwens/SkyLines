@@ -21,13 +21,8 @@ import { startPullSync } from "@/lib/sync/pull";
 import { cleanupOldTombstones } from "@/lib/sync/cleanup";
 import { getSyncConflicts } from "@/lib/db/syncConflicts";
 
-// Throwaway verification harness for the notebooks-table extension to
-// lib/sync/push.ts / pull.ts / cleanup.ts, mirroring app/spike-push,
-// app/spike-pull, and app/spike-cleanup's exact patterns but scoped to a
-// single page since all three are "apply the same established pattern to a
-// third table." Signs in with a throwaway test account solely to satisfy
-// firestore.rules - "Cleanup" tears everything down again, remote docs
-// before the auth account, per project convention. Not production UI.
+// Dev-only verification page for notebook push, pull and cleanup. Not
+// production UI.
 
 const TEST_EMAIL = "skylines-notebook-sync-verify@example.com";
 const TEST_PASSWORD = "TestPassword123!";
@@ -153,9 +148,7 @@ export default function SpikeNotebookSync() {
       const dirtyLocal = await getNotebookRowById(notebookId);
       append(`local edited (dirty, unpushed) -> updatedAt=${dirtyLocal?.updatedAt} dirty=${dirtyLocal?.dirty}`);
 
-      // Remote write with updatedAt AFTER both syncedAt and the local edit's
-      // updatedAt - both sides touched since last sync, remote is later, so
-      // remote should win.
+      // Remote changed after the local edit, so remote should win.
       const remoteUpdatedAt = (dirtyLocal?.updatedAt ?? Date.now()) + 10_000;
       await setDoc(
         doc(db, "notebooks", notebookId),
@@ -218,12 +211,8 @@ export default function SpikeNotebookSync() {
   }
 
   /**
-   * Case 3 from lib/sync/cleanup.ts's hardDeleteTombstone: a notebook that
-   * was live-and-pushed at some point (non-null syncedAt), then soft-deleted
-   * locally, but that soft-delete itself was NEVER pushed (dirty stays
-   * true, syncedAt stays stale/pre-deletion). Deliberately skips the
-   * pushDirtyRows call after deleteNotebook - that's the whole point.
-   * Cleanup must leave both sides alone.
+   * A pushed notebook whose soft-delete was never pushed: cleanup must leave
+   * both sides alone.
    */
   async function runStaleSyncedAtCase() {
     if (!user) return append("sign in first");

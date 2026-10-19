@@ -6,20 +6,10 @@ import { getDirtyNotebooks, markNotebookSynced } from "@/lib/db/notebooks";
 import { getDirtyPages, markPageSynced } from "@/lib/db/pages";
 import type { Folder, Note, Notebook, Page } from "@/types";
 
-// Local -> Firestore push (spec.md subtask 11, M3 "sync engine": push side
-// only - pull/onSnapshot is subtask 12, tombstone cleanup is subtask 13,
-// offline/retry/syncStatus is subtask 14).
-//
-// Document shape matches the reference app's Firestore documents
-// (../note_taking_app/lib/firestore/notes.ts / folders.ts) field-for-field,
-// so both apps stay data-compatible against the same collections - with one
-// deliberate change per SPEC_iter1.md Part 2 "Sync engine": `updatedAt` is
-// written as a plain client-generated millisecond number instead of
-// `serverTimestamp()`, because LWW conflict resolution compares local and
-// remote `updatedAt` values directly and needs them on the same clock.
-// `deletedAt` (also a plain number, or null) is included so pull-side sync
-// can later detect soft-deletes as tombstones without diffing whole
-// collections.
+// Local -> Firestore push. Documents keep the reference app's field shape.
+// updatedAt is the client's edit time in milliseconds (not serverTimestamp()),
+// so last-write-wins compares local and remote on the same clock. deletedAt is
+// included so pull can detect tombstones.
 
 const FOLDERS_COLLECTION = "folders";
 const NOTES_COLLECTION = "notes";
@@ -81,14 +71,9 @@ function pageToFirestoreDoc(page: Page, updatedAt: number) {
 }
 
 /**
- * Pushes every dirty local folder for `userId` to Firestore, writing each
- * row's own `updatedAt` (its actual last-edit time, set locally by
- * createFolder/updateFolder) as the Firestore document's `updatedAt` -
- * NOT a fresh push-time timestamp, since a future pull-sync's
- * last-write-wins comparison needs `updatedAt` to reflect when the edit
- * actually happened, not when it happened to get pushed. `syncedAt` is
- * separate, purely local bookkeeping about when this push occurred, and
- * uses its own `Date.now()` per row.
+ * Writes each row's own updatedAt (when the edit happened, which
+ * last-write-wins needs), not the push time. syncedAt is local bookkeeping of
+ * the push.
  */
 export async function pushDirtyFolders(userId: string): Promise<void> {
   const dirtyFolders = await getDirtyFolders(userId);
@@ -103,16 +88,7 @@ export async function pushDirtyFolders(userId: string): Promise<void> {
   }
 }
 
-/**
- * Pushes every dirty local note for `userId` to Firestore, writing each
- * row's own `updatedAt` (its actual last-edit time, set locally by
- * createNote/updateNote) as the Firestore document's `updatedAt` - NOT a
- * fresh push-time timestamp, since a future pull-sync's last-write-wins
- * comparison needs `updatedAt` to reflect when the edit actually happened,
- * not when it happened to get pushed. `syncedAt` is separate, purely local
- * bookkeeping about when this push occurred, and uses its own `Date.now()`
- * per row.
- */
+/** Same updatedAt rule as pushDirtyFolders. */
 export async function pushDirtyNotes(userId: string): Promise<void> {
   const dirtyNotes = await getDirtyNotes(userId);
 
@@ -126,16 +102,7 @@ export async function pushDirtyNotes(userId: string): Promise<void> {
   }
 }
 
-/**
- * Pushes every dirty local notebook for `userId` to Firestore, writing each
- * row's own `updatedAt` (its actual last-edit time, set locally by
- * createNotebook/updateNotebook/deleteNotebook) as the Firestore document's
- * `updatedAt` - NOT a fresh push-time timestamp, since a future pull-sync's
- * last-write-wins comparison needs `updatedAt` to reflect when the edit
- * actually happened, not when it happened to get pushed. `syncedAt` is
- * separate, purely local bookkeeping about when this push occurred, and
- * uses its own `Date.now()` per row - mirrors `pushDirtyFolders`.
- */
+/** Same updatedAt rule as pushDirtyFolders. */
 export async function pushDirtyNotebooks(userId: string): Promise<void> {
   const dirtyNotebooks = await getDirtyNotebooks(userId);
 
@@ -149,16 +116,7 @@ export async function pushDirtyNotebooks(userId: string): Promise<void> {
   }
 }
 
-/**
- * Pushes every dirty local page for `userId` to Firestore, writing each
- * row's own `updatedAt` (its actual last-edit time, set locally by
- * createPage/updatePage/deletePage) as the Firestore document's `updatedAt` -
- * NOT a fresh push-time timestamp, since a future pull-sync's
- * last-write-wins comparison needs `updatedAt` to reflect when the edit
- * actually happened, not when it happened to get pushed. `syncedAt` is
- * separate, purely local bookkeeping about when this push occurred, and
- * uses its own `Date.now()` per row - mirrors `pushDirtyNotes`.
- */
+/** Same updatedAt rule as pushDirtyFolders. */
 export async function pushDirtyPages(userId: string): Promise<void> {
   const dirtyPages = await getDirtyPages(userId);
 
@@ -172,11 +130,7 @@ export async function pushDirtyPages(userId: string): Promise<void> {
   }
 }
 
-/**
- * Runs one push pass for a user: all dirty folders, notes, notebooks, and
- * pages.
- * No polling/scheduling/debouncing here - that's spec.md subtask 14.
- */
+/** One push pass; scheduling and debouncing live in lib/sync/engine.ts. */
 export async function pushDirtyRows(userId: string): Promise<void> {
   await pushDirtyFolders(userId);
   await pushDirtyNotes(userId);

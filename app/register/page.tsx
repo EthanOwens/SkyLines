@@ -8,10 +8,6 @@ import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-// Ported unchanged (besides rebranding) from
-// ../note_taking_app/app/register/page.tsx (spec.md subtask 21).
-// Email/password registration is untouched by the M5 auth rework - only
-// Google sign-in (app/login/page.tsx) changed.
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");

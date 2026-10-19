@@ -19,25 +19,10 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { PageItem } from "./PageItem";
 import type { Note } from "@/types";
 
-// New, dedicated sidebar for a note's Pages (spec.md M6 subtask 17, "Page
-// sidebar") - distinct from the notebook/folder tree Sidebar
-// (components/sidebar/Sidebar.tsx), which stays scoped to notes/folders/
-// notebooks and knows nothing about Pages. Mounted as a sibling of
-// CanvasEditor.tsx in app/canvas/page.tsx, so it only ever renders once a
-// note is genuinely open.
-//
-// Reads/writes stores/appStore.ts's `pages`/`selectedPageId`/`pagesLoading`
-// fields - the same fields CanvasEditor.tsx's note-load effect populates on
-// mount (lifted there from that component's own former local state, see its
-// header comment) - so selecting a row here immediately changes what
-// CanvasEditor renders, with no extra plumbing.
-//
-// Drag-and-drop reordering reuses lib/dnd/sidebar.ts's generic helpers
-// as-is (pages don't nest, so only the "before"/"after" reorder half is
-// used, never "inside" re-parenting), and cut/copy/paste reuses
-// lib/clipboard/sidebarClipboard.ts's `pastePageClipboardEntry` - both per
-// spec.md's Key Decision that M4's dnd/clipboard mechanisms are built
-// generically enough for M6 to reuse directly rather than reimplement.
+// Sidebar listing the open note's pages. Shares the store's pages and
+// selectedPageId with CanvasEditor, so selecting a row switches the canvas
+// directly. Reuses lib/dnd/sidebar.ts (reorder only; pages don't nest) and the
+// sidebar clipboard.
 
 interface Props {
   note: Note;
@@ -59,15 +44,9 @@ export function PageSidebar({ note }: Props) {
   const orderedPages = [...pages].sort((a, b) => a.order - b.order);
   const pageIds = orderedPages.map((p) => p.id);
 
-  // Refetches this note's pages from SQLite and updates the shared store,
-  // after any mutation performed by this sidebar or a row within it
-  // (rename/delete/reorder/cut/copy/paste all go through here) - PageSidebar
-  // is the sole owner of keeping `pages` fresh past CanvasEditor.tsx's
-  // initial note-load fetch. `preferId` (e.g. a just-created/pasted page's
-  // id) is selected if it's present in the refreshed list; otherwise, if the
-  // CURRENTLY selected page no longer exists (e.g. it was just deleted),
-  // this falls back to the new first remaining page - so CanvasEditor never
-  // stays pointed at a deleted page id.
+  // The only thing keeping pages fresh after CanvasEditor's initial load.
+  // Selects preferId when present; if the selected page is gone, falls back to
+  // the first page so the canvas never points at a deleted page.
   async function refresh(preferId?: string) {
     const fresh = await getPages(note.id);
     setPages(fresh);
@@ -121,8 +100,7 @@ export function PageSidebar({ note }: Props) {
     setRootDropActive(false);
     const payload = readSidebarDragPayload(e);
     if (!payload || payload.type !== "page") return;
-    // Dropped on empty space below the list - move to the end, mirroring
-    // FolderTree.tsx's root-drop-to-append behavior.
+    // Dropped below the list: move to the end.
     await updatePage(payload.id, { order: nextOrderValue(pages.map((p) => p.order)) });
     await refresh();
   }
