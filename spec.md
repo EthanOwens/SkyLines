@@ -323,7 +323,7 @@ Test steps:
 
 ### T8 Version 0.9.1 with the build's commit shown in the app
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes, the account menu text is visible in the DOM
 
@@ -447,3 +447,4 @@ Test steps (manual):
 - [x] T5 Pictures in text boxes and sticky notes are saved as local files
 - [x] T6 Pictures placed directly on the canvas are saved as local files
 - [x] T7 Sync sticky notes
+- [x] T8 Version 0.9.1 with the build's commit shown in the app

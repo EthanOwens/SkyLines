@@ -178,6 +178,9 @@ export function AccountMenu() {
             <LogOut className="mr-2 h-4 w-4" />
             Sign out
           </DropdownMenuItem>
+          <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+            SkyLines v{process.env.NEXT_PUBLIC_APP_VERSION} ({process.env.NEXT_PUBLIC_BUILD_COMMIT})
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <ThemeEditor open={themeEditorOpen} onOpenChange={setThemeEditorOpen} />
