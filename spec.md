@@ -395,7 +395,7 @@ Test steps:
 
 ### T11 Setup scripts and a Getting started README
 
-Status: todo
+Status: done
 Depends on: T1, T2, T7, T8, T9, T10
 Tester: no, installing toolchains and reading docs can't be checked in the running app
 
@@ -450,3 +450,4 @@ Test steps (manual):
 - [x] T8 Version 0.9.1 with the build's commit shown in the app
 - [x] T9 Write logs to a file in every window
 - [x] T10 Report a bug from the account menu
+- [x] T11 Setup scripts and a Getting started README
