@@ -9,6 +9,7 @@ import {
   subscribeSyncFailures,
   subscribeSyncStatus,
 } from "@/lib/sync/engine";
+import { STICKY_NOTE_CHANGED_EVENT } from "@/lib/db/stickyNotes";
 import { subscribeDataChange } from "@/lib/db/events";
 import { useAppStore } from "@/stores/appStore";
 
@@ -37,7 +38,21 @@ export function useSyncEngine(userId: string | undefined) {
       if (origin === "local") scheduleDirtyPush(userId);
     });
 
+    // Sticky windows don't run the engine; their writes reach here by event.
+    // Pulled changes are tagged remote and already match Firestore.
+    let cancelled = false;
+    let unlistenSticky: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const fn = await listen<{ remote?: boolean }>(STICKY_NOTE_CHANGED_EVENT, (e) => {
+        if (!e.payload.remote) scheduleDirtyPush(userId);
+      });
+      if (cancelled) fn();
+      else unlistenSticky = fn;
+    });
+
     return () => {
+      cancelled = true;
+      unlistenSticky?.();
       unsubscribeDataChange();
       unsubscribeStatus();
       unsubscribeFailures();

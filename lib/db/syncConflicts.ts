@@ -7,7 +7,7 @@ const TABLE = "sync_conflicts";
 
 /** Stored as an opaque JSON blob: it's a backup, not queried by column. */
 export async function recordSyncConflict(
-  tableName: "folders" | "notes" | "notebooks" | "pages",
+  tableName: "folders" | "notes" | "notebooks" | "pages" | "stickyNotes",
   rowId: string,
   losingRow: unknown,
 ): Promise<void> {
@@ -40,7 +40,7 @@ export type SyncConflict = {
 
 /** Not used by sync itself; for inspection and verification pages. */
 export async function getSyncConflicts(
-  tableName: "folders" | "notes" | "notebooks" | "pages",
+  tableName: "folders" | "notes" | "notebooks" | "pages" | "stickyNotes",
   rowId: string,
 ): Promise<SyncConflict[]> {
   const db = await getDb();

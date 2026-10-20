@@ -10,10 +10,10 @@ export const STICKY_NOTE_CHANGED_EVENT = "sticky-note:changed";
 
 // notifyDataChange stays inside one window; this tells the others (the main
 // window's sticky notes home) that a sticky note changed.
-async function emitStickyNoteChanged(id: string): Promise<void> {
+async function emitStickyNoteChanged(id: string, remote = false): Promise<void> {
   try {
     const { emit } = await import("@tauri-apps/api/event");
-    await emit(STICKY_NOTE_CHANGED_EVENT, { id });
+    await emit(STICKY_NOTE_CHANGED_EVENT, { id, remote });
   } catch {
     // Best-effort: the write already succeeded.
   }
@@ -120,14 +120,13 @@ export async function getStickyNoteRowById(id: string): Promise<StickyNote | nul
   return rows.length > 0 ? rowToStickyNote(rows[0]) : null;
 }
 
-/** content is an object here and stringified on write. */
+/** content is an object here and stringified on write. pinned is ignored on upsert. */
 export type RemoteStickyNoteData = {
   id: string;
   userId: string;
   title: string;
   content: object | null;
   topBarColor: string | null;
-  pinned: boolean;
   favorite: boolean;
   createdAt: number;
   updatedAt: number;
@@ -144,13 +143,12 @@ export async function upsertStickyNoteFromRemote(
   await db.execute(
     `INSERT INTO ${TABLE}
        (id, user_id, title, content, top_bar_color, pinned, favorite, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8, $9, $10, $11)
      ON CONFLICT(id) DO UPDATE SET
        user_id = excluded.user_id,
        title = excluded.title,
        content = excluded.content,
        top_bar_color = excluded.top_bar_color,
-       pinned = excluded.pinned,
        favorite = excluded.favorite,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
@@ -163,7 +161,6 @@ export async function upsertStickyNoteFromRemote(
       remote.title,
       remote.content === null ? null : JSON.stringify(remote.content),
       remote.topBarColor,
-      remote.pinned ? 1 : 0,
       remote.favorite ? 1 : 0,
       remote.createdAt,
       remote.updatedAt,
@@ -173,6 +170,7 @@ export async function upsertStickyNoteFromRemote(
     ],
   );
   notifyDataChange("remote");
+  void emitStickyNoteChanged(remote.id, true);
 }
 
 export async function createStickyNote(

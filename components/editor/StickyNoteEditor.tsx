@@ -40,6 +40,7 @@ interface Props {
 
 export function StickyNoteEditor({ note }: Props) {
   const [title, setTitle] = useState(note.title || "Untitled");
+  const [liveNote, setLiveNote] = useState(note);
   const [focused, setFocused] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const { user } = useAuthContext();
@@ -156,12 +157,16 @@ export function StickyNoteEditor({ note }: Props) {
       pendingContentRef.current = content;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
+        saveTimer.current = null;
         if (deletedRef.current) return;
         void updateStickyNote(note.id, { content });
         pendingContentRef.current = null;
       }, SAVE_DELAY_MS);
     },
   });
+
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
 
   // Window focus listener for both bars, and applies the saved pinned state to
   // the OS window on mount.
@@ -243,9 +248,19 @@ export function StickyNoteEditor({ note }: Props) {
 
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      const fn = await listen<{ id: string }>(STICKY_NOTE_CHANGED_EVENT, async (e) => {
+      const fn = await listen<{ id: string; remote?: boolean }>(STICKY_NOTE_CHANGED_EVENT, async (e) => {
         if (e.payload.id !== note.id || deletedRef.current) return;
         const current = await getStickyNoteById(note.id).catch(() => undefined);
+        // A pulled change: reload unless this window has an unsaved edit.
+        if (current && e.payload.remote && !saveTimer.current && !pendingContentRef.current) {
+          setTitle(current.title || "Untitled");
+          setLiveNote(current);
+          editorRef.current?.commands.setContent((current.content as object) ?? "", { emitUpdate: false });
+          void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+            getCurrentWindow().setTitle(current.title || "Untitled"),
+          );
+          return;
+        }
         if (current !== null || deletedRef.current) return;
         discardPendingSave();
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -340,7 +355,7 @@ export function StickyNoteEditor({ note }: Props) {
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden">
       <StickyNoteTopBar
-        note={note}
+        note={liveNote}
         title={title}
         focused={focused}
         collapsed={collapsed}

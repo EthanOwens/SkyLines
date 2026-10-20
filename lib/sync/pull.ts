@@ -20,8 +20,13 @@ import {
   type RemoteNotebookData,
 } from "@/lib/db/notebooks";
 import { getPageRowById, upsertPageFromRemote, type RemotePageData } from "@/lib/db/pages";
+import {
+  getStickyNoteRowById,
+  upsertStickyNoteFromRemote,
+  type RemoteStickyNoteData,
+} from "@/lib/db/stickyNotes";
 import { recordSyncConflict } from "@/lib/db/syncConflicts";
-import type { Folder, Note, Notebook, Page } from "@/types";
+import type { Folder, Note, Notebook, Page, StickyNote } from "@/types";
 
 // Firestore -> local pull. onSnapshot + docChanges() so each callback only
 // handles the incremental diff, upserted into SQLite with an updatedAt
@@ -31,6 +36,7 @@ const FOLDERS_COLLECTION = "folders";
 const NOTES_COLLECTION = "notes";
 const NOTEBOOKS_COLLECTION = "notebooks";
 const PAGES_COLLECTION = "pages";
+const STICKY_NOTES_COLLECTION = "stickyNotes";
 
 /** Just the sync fields, so decidePull is shared by every table. */
 type LocalSyncState = {
@@ -145,6 +151,20 @@ function toRemotePageData(id: string, data: DocumentData): RemotePageData {
   };
 }
 
+function toRemoteStickyNoteData(id: string, data: DocumentData): RemoteStickyNoteData {
+  return {
+    id,
+    userId: data.userId as string,
+    title: (data.title as string) ?? "Untitled",
+    content: parseJsonField(data.contentJson, null),
+    topBarColor: (data.topBarColor as string | null) ?? null,
+    favorite: (data.favorite as boolean) ?? false,
+    createdAt: data.createdAt as number,
+    updatedAt: data.updatedAt as number,
+    deletedAt: (data.deletedAt as number | null) ?? null,
+  };
+}
+
 /**
  * "removed" changes are skipped. The doc's old data is still attached, and
  * applying it would resurrect a hard-deleted row. Firestore deletes only come
@@ -240,6 +260,31 @@ async function applyPageChange(change: DocumentChange<DocumentData>): Promise<vo
   );
 }
 
+/** Same as applyFolderChange, for sticky notes. */
+async function applyStickyNoteChange(change: DocumentChange<DocumentData>): Promise<void> {
+  if (change.type === "removed") {
+    return;
+  }
+
+  const data = change.doc.data();
+  if (!data) return;
+
+  const remote = toRemoteStickyNoteData(change.doc.id, data);
+  const local = await getStickyNoteRowById(remote.id);
+  const decision = decidePull(
+    local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
+    remote.updatedAt,
+  );
+
+  await applyDecision<StickyNote, RemoteStickyNoteData>(
+    decision,
+    "stickyNotes",
+    local,
+    remote,
+    (r, dirty, syncedAt) => upsertStickyNoteFromRemote(r, dirty, syncedAt),
+  );
+}
+
 /**
  * conflict-local-wins never upserts: the local row already holds the winning
  * content and stays dirty for the next push; only the losing remote copy is
@@ -247,7 +292,7 @@ async function applyPageChange(change: DocumentChange<DocumentData>): Promise<vo
  */
 async function applyDecision<TLocal, TRemote>(
   decision: PullDecision,
-  tableName: "folders" | "notes" | "notebooks" | "pages",
+  tableName: "folders" | "notes" | "notebooks" | "pages" | "stickyNotes",
   local: TLocal | null,
   remote: TRemote,
   upsert: (remote: TRemote, dirty: boolean, syncedAt: number | null) => Promise<void>,
@@ -417,16 +462,48 @@ export function subscribePagePull(userId: string, hooks?: PullHooks): Unsubscrib
   );
 }
 
+/** Same as `subscribeFolderPull`, for the `stickyNotes` collection. */
+export function subscribeStickyNotePull(userId: string, hooks?: PullHooks): Unsubscribe {
+  const q = query(collection(db, STICKY_NOTES_COLLECTION), where("userId", "==", userId));
+  let queue: Promise<void> = Promise.resolve();
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const changes = snapshot.docChanges();
+      if (changes.length > 0) hooks?.onActivity?.();
+      queue = queue
+        .then(async () => {
+          for (const change of changes) {
+            await applyStickyNoteChange(change);
+          }
+        })
+        .catch((err) => {
+          console.error("[sync/pull] failed to apply sticky note changes", err);
+          hooks?.onApplyError?.(err);
+        })
+        .finally(() => {
+          if (changes.length > 0) hooks?.onIdle?.();
+        });
+    },
+    (err) => {
+      console.error("[sync/pull] stickyNotes onSnapshot error", err);
+      hooks?.onListenError?.(err);
+    },
+  );
+}
+
 /** Starts every pull listener and returns one combined unsubscribe. */
 export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
   const unsubscribeFolders = subscribeFolderPull(userId, hooks);
   const unsubscribeNotes = subscribeNotePull(userId, hooks);
   const unsubscribeNotebooks = subscribeNotebookPull(userId, hooks);
   const unsubscribePages = subscribePagePull(userId, hooks);
+  const unsubscribeStickyNotes = subscribeStickyNotePull(userId, hooks);
   return () => {
     unsubscribeFolders();
     unsubscribeNotes();
     unsubscribeNotebooks();
     unsubscribePages();
+    unsubscribeStickyNotes();
   };
 }

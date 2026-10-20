@@ -4,7 +4,8 @@ import { getDirtyFolders, markFolderSynced } from "@/lib/db/folders";
 import { getDirtyNotes, markNoteSynced } from "@/lib/db/notes";
 import { getDirtyNotebooks, markNotebookSynced } from "@/lib/db/notebooks";
 import { getDirtyPages, markPageSynced } from "@/lib/db/pages";
-import type { Folder, Note, Notebook, Page, SyncFailure } from "@/types";
+import { getDirtyStickyNotes, markStickyNoteSynced } from "@/lib/db/stickyNotes";
+import type { Folder, Note, Notebook, Page, StickyNote, SyncFailure } from "@/types";
 
 // Local -> Firestore push. Documents keep the reference app's field shape.
 // updatedAt is the client's edit time in milliseconds (not serverTimestamp()),
@@ -15,6 +16,7 @@ const FOLDERS_COLLECTION = "folders";
 const NOTES_COLLECTION = "notes";
 const NOTEBOOKS_COLLECTION = "notebooks";
 const PAGES_COLLECTION = "pages";
+const STICKY_NOTES_COLLECTION = "stickyNotes";
 
 function folderToFirestoreDoc(folder: Folder, updatedAt: number) {
   return {
@@ -71,6 +73,20 @@ function pageToFirestoreDoc(page: Page, updatedAt: number) {
     createdAt: page.createdAt,
     updatedAt,
     deletedAt: page.deletedAt,
+  };
+}
+
+// pinned is deliberately absent: it stays per computer.
+function stickyNoteToFirestoreDoc(sticky: StickyNote, updatedAt: number) {
+  return {
+    userId: sticky.userId,
+    title: sticky.title,
+    contentJson: sticky.content ? JSON.stringify(sticky.content) : null,
+    topBarColor: sticky.topBarColor,
+    favorite: sticky.favorite,
+    createdAt: sticky.createdAt,
+    updatedAt,
+    deletedAt: sticky.deletedAt,
   };
 }
 
@@ -132,6 +148,10 @@ export async function pushDirtyPages(userId: string): Promise<SyncFailure[]> {
   return pushRows("pages", PAGES_COLLECTION, await getDirtyPages(userId), pageToFirestoreDoc, (p) => p.title, markPageSynced);
 }
 
+export async function pushDirtyStickyNotes(userId: string): Promise<SyncFailure[]> {
+  return pushRows("stickyNotes", STICKY_NOTES_COLLECTION, await getDirtyStickyNotes(userId), stickyNoteToFirestoreDoc, (s) => s.title, markStickyNoteSynced);
+}
+
 /** One push pass; scheduling and debouncing live in lib/sync/engine.ts. */
 export async function pushDirtyRows(userId: string): Promise<SyncFailure[]> {
   const failures: SyncFailure[] = [];
@@ -139,5 +159,6 @@ export async function pushDirtyRows(userId: string): Promise<SyncFailure[]> {
   failures.push(...(await pushDirtyNotes(userId)));
   failures.push(...(await pushDirtyNotebooks(userId)));
   failures.push(...(await pushDirtyPages(userId)));
+  failures.push(...(await pushDirtyStickyNotes(userId)));
   return failures;
 }

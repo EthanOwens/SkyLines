@@ -293,7 +293,7 @@ Test steps:
 
 ### T7 Sync sticky notes
 
-Status: todo
+Status: done
 Depends on: T2, T3, T4, T5
 Tester: yes, docs can be read and written with the Firebase SDK from the webview, and the home list and sticky windows observed
 
@@ -446,3 +446,4 @@ Test steps (manual):
 - [x] T4 One note that can't sync doesn't block the rest
 - [x] T5 Pictures in text boxes and sticky notes are saved as local files
 - [x] T6 Pictures placed directly on the canvas are saved as local files
+- [x] T7 Sync sticky notes
