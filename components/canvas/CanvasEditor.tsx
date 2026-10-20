@@ -16,12 +16,21 @@ import {
   useEditor,
   useValue,
   type Editor,
+  type TLAssetStore,
   type TLEditorSnapshot,
   type TLShapeId,
   type TLUiContextMenuProps,
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
-import { convertDataUrlsInDoc } from "@/lib/images/localImages";
+import {
+  convertDataUrlsInDoc,
+  imageExists,
+  isImageToken,
+  resolveImageSrc,
+  saveDataUrl,
+  saveImageBytes,
+  stripAssetPrefix,
+} from "@/lib/images/localImages";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { revealImage } from "@/lib/tiptap/imageId";
 import { useAppStore } from "@/stores/appStore";
@@ -37,6 +46,20 @@ import {
 // registries otherwise.
 const shapeUtils = [RichTextShapeUtil];
 const tools = [RichTextTool];
+// Module-level for a stable identity. Files are never deleted, so remove is a no-op.
+const assetStore: TLAssetStore = {
+  async upload(_asset, file) {
+    const ext = file.type.split("/")[1]?.replace("svg+xml", "svg").replace("jpeg", "jpg") || "png";
+    return { src: "asset:" + (await saveImageBytes(new Uint8Array(await file.arrayBuffer()), ext)) };
+  },
+  async resolve(asset) {
+    const src = asset.props.src;
+    const token = src ? stripAssetPrefix(src) : "";
+    if (!isImageToken(token)) return src;
+    return (await imageExists(token)) ? resolveImageSrc(token) : null;
+  },
+  async remove() {},
+};
 // Backstop so tldraw can never create its native text shape on double-click.
 const tldrawOptions = { createTextOnCanvasDoubleClick: false };
 
@@ -336,6 +359,13 @@ export function CanvasEditor({ note }: Props) {
             changed = true;
           }
         }
+        for (const asset of editor.store.allRecords()) {
+          if (asset.typeName !== "asset") continue;
+          const src = (asset.props as { src?: string | null }).src;
+          if (!src?.startsWith("data:")) continue;
+          editor.store.put([{ ...asset, props: { ...asset.props, src: "asset:" + (await saveDataUrl(src)) } } as typeof asset]);
+          changed = true;
+        }
         if (changed) {
           await updatePage(page.id, { canvasData: editor.getSnapshot() as unknown as object });
         }
@@ -446,6 +476,7 @@ export function CanvasEditor({ note }: Props) {
       <Tldraw
         key={selectedPage.id}
         shapeUtils={shapeUtils}
+        assets={assetStore}
         tools={tools}
         onMount={handleMount}
         options={tldrawOptions}

@@ -23,8 +23,15 @@ const dirReady: Promise<void> | null =
       })
     : null;
 
+// tldraw only accepts http/https/data/asset URLs in asset props.src, so canvas assets store the token as "asset:<token>".
+export const ASSET_TOKEN_PREFIX = "asset:" + IMAGE_TOKEN_PREFIX;
+
 export const isImageToken = (src: unknown): src is string =>
   typeof src === "string" && src.startsWith(IMAGE_TOKEN_PREFIX);
+
+/** "asset:skylines-image:x" -> "skylines-image:x"; anything else is unchanged. */
+export const stripAssetPrefix = (src: string): string =>
+  src.startsWith(ASSET_TOKEN_PREFIX) ? src.slice("asset:".length) : src;
 
 function filePath(token: string): string {
   const sep = imagesDir!.includes("\\") ? "\\" : "/";
@@ -33,6 +40,7 @@ function filePath(token: string): string {
 
 /** Display URL for a token; any other src is returned unchanged. */
 export function resolveImageSrc(src: string): string {
+  src = stripAssetPrefix(src);
   return isImageToken(src) && imagesDir ? convertFileSrc(filePath(src)) : src;
 }
 

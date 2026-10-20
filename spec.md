@@ -268,7 +268,7 @@ Test steps:
 
 ### T6 Pictures placed directly on the canvas are saved as local files
 
-Status: todo
+Status: done
 Depends on: T5
 Tester: yes, assets can be created through the tldraw editor and their stored `src` checked
 
@@ -282,13 +282,13 @@ Tester: yes, assets can be created through the tldraw editor and their stored `s
 Files: `components/canvas/CanvasEditor.tsx`, `lib/images/localImages.ts`, `lib/references/resolve.ts`
 
 Acceptance:
-- Dropping or pasting a picture on the canvas stores an asset whose `props.src` starts with `skylines-image:`, and the picture shows.
+- Dropping or pasting a picture on the canvas stores an asset whose `props.src` is `asset:skylines-image:<file>` (tldraw only accepts http, https, data and asset: URLs), and the picture shows.
 - Opening a page that has a `data:` asset rewrites it to a token and saves.
 - A token with a missing file doesn't crash the canvas.
 
 Test steps:
 1. In a test note's page, create an image asset and shape with a small PNG data URL through the editor API, then reload and reopen the page.
-2. The asset's `props.src` is a `skylines-image:` token, the file exists, and the image shape renders.
+2. The asset's `props.src` is an `asset:skylines-image:` token, the file exists, and the image shape renders.
 3. Delete the test note.
 
 ### T7 Sync sticky notes
@@ -445,3 +445,4 @@ Test steps (manual):
 - [x] T3 Store canvas and content as JSON strings in Firestore
 - [x] T4 One note that can't sync doesn't block the rest
 - [x] T5 Pictures in text boxes and sticky notes are saved as local files
+- [x] T6 Pictures placed directly on the canvas are saved as local files
