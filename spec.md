@@ -343,7 +343,7 @@ Test steps:
 
 ### T9 Write logs to a file in every window
 
-Status: todo
+Status: done
 Depends on: T4
 Tester: yes, errors can be raised in each window with `webview_execute_js` and the log file read from disk
 
@@ -448,3 +448,4 @@ Test steps (manual):
 - [x] T6 Pictures placed directly on the canvas are saved as local files
 - [x] T7 Sync sticky notes
 - [x] T8 Version 0.9.1 with the build's commit shown in the app
+- [x] T9 Write logs to a file in every window
