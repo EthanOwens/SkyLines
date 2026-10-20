@@ -231,7 +231,7 @@ Test steps:
 
 ### T5 Pictures in text boxes and sticky notes are saved as local files
 
-Status: todo
+Status: done
 Depends on: T4
 Tester: yes, pictures can be inserted through the editor API and checked in the DOM, in the saved content and on disk
 
@@ -444,3 +444,4 @@ Test steps (manual):
 - [x] T2 Lock each account's data with Firestore security rules
 - [x] T3 Store canvas and content as JSON strings in Firestore
 - [x] T4 One note that can't sync doesn't block the rest
+- [x] T5 Pictures in text boxes and sticky notes are saved as local files

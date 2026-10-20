@@ -19,6 +19,7 @@
       }
     ],
     "security": {
+      "assetProtocol": { "enable": true, "scope": ["$APPDATA/images/**"] },
       "csp": {
         "default-src": "'self'",
         "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost https://*.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com",

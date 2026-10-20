@@ -21,6 +21,7 @@ import {
   type TLUiContextMenuProps,
 } from "@tldraw/tldraw";
 import "@tldraw/tldraw/tldraw.css";
+import { convertDataUrlsInDoc } from "@/lib/images/localImages";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { revealImage } from "@/lib/tiptap/imageId";
 import { useAppStore } from "@/stores/appStore";
@@ -321,6 +322,24 @@ export function CanvasEditor({ note }: Props) {
         const snapshot = editor.getSnapshot();
         void updatePage(page.id, { canvasData: snapshot as unknown as object });
       }
+
+      // Text boxes that aren't being edited have no editor to convert old
+      // data: pictures, so do it here.
+      void (async () => {
+        let changed = false;
+        for (const shape of editor.getCurrentPageShapes()) {
+          const content = (shape.props as { content?: unknown }).content;
+          if (shape.type !== "rich-text" || !content) continue;
+          const copy = structuredClone(content);
+          if (await convertDataUrlsInDoc(copy)) {
+            editor.updateShape({ id: shape.id, type: "rich-text", props: { content: copy } });
+            changed = true;
+          }
+        }
+        if (changed) {
+          await updatePage(page.id, { canvasData: editor.getSnapshot() as unknown as object });
+        }
+      })().catch((e) => console.error("[images] could not convert old pictures", e));
 
       const target = revealTargetRef.current;
       if (target?.pageId === page.id) {

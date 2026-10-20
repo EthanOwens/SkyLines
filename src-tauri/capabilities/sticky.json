@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "sticky",
   "description": "Sticky note windows (sticky-<id>): sticky note SQL, close, minimize, dragging, always-on-top and resize, the clipboard, opening web links and other sticky notes, and opening the image editor (writing its temp file under $APPDATA/image-editor/).",
-  "windows": ["sticky-*"],
+  "windows": [
+    "sticky-*"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-close",
@@ -24,11 +26,66 @@
     "clipboard-manager:allow-write-text",
     {
       "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "$APPDATA/image-editor/*" }]
+      "allow": [
+        {
+          "path": "$APPDATA/image-editor/*"
+        }
+      ]
     },
     {
       "identifier": "fs:allow-mkdir",
-      "allow": [{ "path": "$APPDATA/image-editor" }, { "path": "$APPDATA/image-editor/*" }]
+      "allow": [
+        {
+          "path": "$APPDATA/image-editor"
+        },
+        {
+          "path": "$APPDATA/image-editor/*"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        {
+          "path": "$APPDATA/images"
+        },
+        {
+          "path": "$APPDATA/images/*"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "$APPDATA/images"
+        },
+        {
+          "path": "$APPDATA/images/*"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        {
+          "path": "$APPDATA/images"
+        },
+        {
+          "path": "$APPDATA/images/*"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        {
+          "path": "$APPDATA/images"
+        },
+        {
+          "path": "$APPDATA/images/*"
+        }
+      ]
     }
   ]
 }

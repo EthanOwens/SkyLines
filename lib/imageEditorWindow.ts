@@ -1,3 +1,5 @@
+import { isImageToken, tokenToDataUrl } from "@/lib/images/localImages";
+
 // Opens a fresh image editor window per edit.
 //
 // The image goes through a temp file under $APPDATA/image-editor/ and only its
@@ -6,7 +8,8 @@
 //
 // Returns the id (also the temp file's name), so the caller can listen for
 // image-editor:saved:<id>, which is emitted to every window.
-export async function openImageEditorWindow(dataUrl: string): Promise<string> {
+export async function openImageEditorWindow(src: string): Promise<string> {
+  const dataUrl = isImageToken(src) ? await tokenToDataUrl(src) : src;
   const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
   const { writeFile, mkdir } = await import("@tauri-apps/plugin-fs");
   const { appDataDir, join } = await import("@tauri-apps/api/path");

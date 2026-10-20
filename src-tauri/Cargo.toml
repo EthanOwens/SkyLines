@@ -38,10 +38,10 @@ url = "2"
 # builds, but on desktop it would expose the app's JS/IPC context to anyone
 # with local access.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset", "devtools"] }
 
 # Sets sticky note windows' AppUserModelID so they get their own taskbar group.
 # Same major version as Tauri's, so HWND types line up.

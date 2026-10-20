@@ -42,6 +42,7 @@ import { isNodeSelection, isTextSelection } from "@tiptap/core";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthContext } from "@/components/AuthProvider";
 import { InsertLinkDialog } from "@/components/editor/InsertLinkDialog";
+import { saveDataUrl } from "@/lib/images/localImages";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import { copyReference } from "@/lib/references/copy";
@@ -361,19 +362,21 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
           const target = event.target as HTMLElement;
           if (target.tagName !== "IMG") return false;
           event.preventDefault();
-          const originalSrc = (target as HTMLImageElement).src;
+          const originalSrc = view.state.doc.nodeAt(pos)?.attrs.src as string | undefined;
+          if (!originalSrc) return true;
           void (async () => {
             const sourceId = await openImageEditorWindow(originalSrc);
             const { listen } = await import("@tauri-apps/api/event");
-            const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, (e) => {
+            const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, async (e) => {
               pendingImageEditorUnlistens.current.delete(unlisten);
+              unlisten();
+              const token = await saveDataUrl(e.payload);
               // The doc may have changed while the editor was open: make sure
               // pos still holds the same image before patching.
               const node = view.state.doc.nodeAt(pos);
               if (node && node.type.name === "image" && node.attrs.src === originalSrc) {
-                view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: e.payload }));
+                view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: token }));
               }
-              unlisten();
             });
             pendingImageEditorUnlistens.current.add(unlisten);
           })();
@@ -587,7 +590,7 @@ function RichTextShapeComponent({ shape }: { shape: RichTextShape }) {
                 // event, and ProseMirror only reads it on the later
                 // selectionchange; focus() writes the editor's selection back.
                 tiptapEditor?.view.focus();
-                const img = e.target instanceof Element ? e.target.closest("img[data-image-id]") : null;
+                const img = e.target instanceof Element ? e.target.closest("[data-image-id]") : null;
                 const linkEl =
                   e.target instanceof Element
                     ? e.target.closest("[data-reference-token], a[href]")

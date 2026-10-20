@@ -13,6 +13,7 @@ import { formatActions, selectFormatActionState } from "@/components/ribbon/form
 import { cn } from "@/lib/utils";
 import { Link as LinkIcon } from "lucide-react";
 import { InsertLinkDialog } from "./InsertLinkDialog";
+import { saveDataUrl } from "@/lib/images/localImages";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { createEditorExtensions } from "@/lib/tiptap/extensions";
 import "./editor.css";
@@ -66,19 +67,21 @@ export function RichTextEditor({ note, onChange, onTitleChange }: Props) {
         const target = event.target as HTMLElement;
         if (target.tagName !== "IMG") return false;
         event.preventDefault();
-        const originalSrc = (target as HTMLImageElement).src;
+        const originalSrc = view.state.doc.nodeAt(pos)?.attrs.src as string | undefined;
+        if (!originalSrc) return true;
         void (async () => {
           const sourceId = await openImageEditorWindow(originalSrc);
           const { listen } = await import("@tauri-apps/api/event");
-          const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, (e) => {
+          const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, async (e) => {
             pendingImageEditorUnlistens.current.delete(unlisten);
+            unlisten();
+            const token = await saveDataUrl(e.payload);
             // The doc may have changed while the editor was open: make sure pos
             // still holds the same image before patching.
             const node = view.state.doc.nodeAt(pos);
             if (node && node.type.name === "image" && node.attrs.src === originalSrc) {
-              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: e.payload }));
+              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: token }));
             }
-            unlisten();
           });
           pendingImageEditorUnlistens.current.add(unlisten);
         })();
