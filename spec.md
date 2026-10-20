@@ -372,7 +372,7 @@ Test steps:
 
 ### T10 Report a bug from the account menu
 
-Status: todo
+Status: done
 Depends on: T4, T8, T9
 Tester: yes, the copied text can be read back through the clipboard plugin, though opening the folder is OS-level
 
@@ -449,3 +449,4 @@ Test steps (manual):
 - [x] T7 Sync sticky notes
 - [x] T8 Version 0.9.1 with the build's commit shown in the app
 - [x] T9 Write logs to a file in every window
+- [x] T10 Report a bug from the account menu
