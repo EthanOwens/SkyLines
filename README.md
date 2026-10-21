@@ -78,7 +78,7 @@ The release build needs a real signing keystore before it will install (the debu
 
 ## Maintainers
 
-Google sign-in needs a manually-created "Desktop app" OAuth client in Google Cloud Console first (see `lib/auth/googleOAuth.ts`); email/password sign-in works as-is.
+Google sign-in needs a manually-created "Desktop app" OAuth client in Google Cloud Console first. It needs no redirect URIs; put its ID and secret in `.env.local` (`NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_ID` and `NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_SECRET`). The Google provider must be enabled in Firebase Authentication, and a client from another Google Cloud project must be added to the provider's safelisted client IDs. Email/password sign-in works as-is.
 
 ### Deploying Firestore rules
 

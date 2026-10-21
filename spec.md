@@ -448,7 +448,7 @@ Test steps (manual):
 
 ### T12 Google sign-in works on desktop
 
-Status: todo
+Status: done
 Depends on: none
 Tester: partly. The local redirect can be driven with a `fetch` to the loopback port from `webview_execute_js`, but the real Google consent screen needs the user's own account in the system browser.
 
@@ -508,3 +508,4 @@ Test steps:
 - [x] T9 Write logs to a file in every window
 - [x] T10 Report a bug from the account menu
 - [x] T11 Setup scripts and a Getting started README
+- [x] T12 Google sign-in works on desktop

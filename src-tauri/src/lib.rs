@@ -1,3 +1,4 @@
+mod google_oauth;
 mod link_preview;
 
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -525,13 +526,10 @@ pub fn run() {
         },
     ];
 
-    // Google sign-in finishes in the system browser and returns through a
-    // skylines:// deep link, because Google blocks OAuth inside embedded
-    // webviews (see lib/auth/googleOAuth.ts).
-    //
     // single-instance must be registered first: on Windows and Linux the OS
-    // delivers a deep link by starting a second process, which this plugin
-    // forwards to the running instance before exiting.
+    // delivers a skylines:// deep link by starting a second process, which this
+    // plugin forwards to the running instance before exiting. Google sign-in no
+    // longer uses deep links (see google_oauth.rs).
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -626,7 +624,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, setup_sticky_window, focus_main_window, link_preview::fetch_page_head, link_preview::fetch_image])
+        .invoke_handler(tauri::generate_handler![greet, setup_sticky_window, focus_main_window, link_preview::fetch_page_head, link_preview::fetch_image, google_oauth::google_oauth_listen, google_oauth::google_oauth_exchange])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -12,20 +12,20 @@ import {
 } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 import { open as openInBrowser } from "@tauri-apps/plugin-shell";
-import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  buildGoogleAuthUrl,
-  isGoogleAuthCallbackUrl,
+  GOOGLE_OAUTH_CLIENT_ID,
+  GOOGLE_OAUTH_CLIENT_SECRET,
+  buildGoogleAuthRequest,
+  idTokenHasNonce,
   isGoogleSignInConfigured,
-  parseGoogleCallbackUrl,
-  shouldProcessCallbackUrl,
-  verifyAndConsumeNonce,
 } from "@/lib/auth/googleOAuth";
 
-// Google sign-in runs through the system browser and a deep link; see
+// Google sign-in runs through the system browser and a loopback redirect; see
 // lib/auth/googleOAuth.ts.
 export default function LoginPage() {
   const router = useRouter();
@@ -39,45 +39,6 @@ export default function LoginPage() {
   const [devLoginLoading, setDevLoginLoading] = useState(false);
 
   const anyActionInFlight = loading || resetLoading || googleLoading || devLoginLoading;
-
-  async function finishGoogleSignIn(callbackUrl: string) {
-    try {
-      const { idToken } = parseGoogleCallbackUrl(callbackUrl);
-      if (!verifyAndConsumeNonce(idToken)) {
-        throw new Error("Google sign-in response failed validation (nonce mismatch).");
-      }
-      const credential = GoogleAuthProvider.credential(idToken);
-      await signInWithCredential(auth, credential);
-      router.replace("/");
-    } catch {
-      setError("Google sign-in failed.");
-      setResetMessage("");
-    } finally {
-      setGoogleLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    // Deep-link callback while the app is running (forwarded by the
-    // single-instance plugin).
-    const unlistenPromise = onOpenUrl((urls) => {
-      const callbackUrl = urls.find(isGoogleAuthCallbackUrl);
-      if (callbackUrl && shouldProcessCallbackUrl(callbackUrl)) void finishGoogleSignIn(callbackUrl);
-    });
-
-    // Callback that launched the app fresh. getCurrent() keeps returning the
-    // same URL, so shouldProcessCallbackUrl guards against reprocessing it on a
-    // later mount.
-    void getCurrent().then((urls) => {
-      const callbackUrl = urls?.find(isGoogleAuthCallbackUrl);
-      if (callbackUrl && shouldProcessCallbackUrl(callbackUrl)) void finishGoogleSignIn(callbackUrl);
-    });
-
-    return () => {
-      void unlistenPromise.then((unlisten) => unlisten());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
@@ -115,18 +76,56 @@ export default function LoginPage() {
     setResetMessage("");
     if (!isGoogleSignInConfigured()) {
       setError(
-        "Google sign-in isn't configured yet (missing NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_ID).",
+        "Google sign-in isn't configured yet (missing NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_ID or NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_SECRET).",
       );
       return;
     }
     setGoogleLoading(true);
-    try {
-      const url = buildGoogleAuthUrl();
-      // Must be the OS browser: Google blocks OAuth inside embedded webviews.
-      await openInBrowser(url);
-    } catch {
-      setError("Could not open the system browser for Google sign-in.");
+    let unlisten: (() => void) | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      unlisten?.();
+      clearTimeout(timeout);
       setGoogleLoading(false);
+    };
+    try {
+      const redirect = new Promise<string>((resolve, reject) => {
+        void listen<string>("google-oauth:redirect", (e) => resolve(e.payload)).then((fn) => {
+          unlisten = fn;
+        });
+        // Matches the Rust listener's own 5-minute limit.
+        timeout = setTimeout(() => reject(new Error("timeout")), 5 * 60 * 1000);
+      });
+      redirect.catch(() => {});
+      const port = await invoke<number>("google_oauth_listen");
+      const redirectUri = `http://127.0.0.1:${port}`;
+      const req = await buildGoogleAuthRequest(redirectUri);
+      // Must be the OS browser: Google blocks OAuth inside embedded webviews.
+      await openInBrowser(req.url);
+
+      const params = new URLSearchParams(await redirect);
+      const googleError = params.get("error");
+      const code = params.get("code");
+      if (params.get("state") !== req.state || googleError || !code) {
+        if (googleError) console.error("Google sign-in error:", googleError);
+        setError(googleError === "access_denied" ? "Google sign-in cancelled." : "Google sign-in failed.");
+        return;
+      }
+      const idToken = await invoke<string>("google_oauth_exchange", {
+        code,
+        codeVerifier: req.codeVerifier,
+        redirectUri,
+        clientId: GOOGLE_OAUTH_CLIENT_ID,
+        clientSecret: GOOGLE_OAUTH_CLIENT_SECRET,
+      });
+      if (!idTokenHasNonce(idToken, req.nonce)) throw new Error("nonce mismatch");
+      await signInWithCredential(auth, GoogleAuthProvider.credential(idToken));
+      router.replace("/");
+    } catch (err) {
+      console.error("Google sign-in failed:", err instanceof Error ? err.message : err);
+      setError("Google sign-in failed.");
+    } finally {
+      stop();
     }
   }
 
