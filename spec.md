@@ -86,7 +86,7 @@ Test steps:
 
 ### T2 Google sign-in brings SkyLines back to the front
 
-Status: todo
+Status: done
 Depends on: none
 Tester: no. The steps need a real Google account in the system browser and native window focus, which the tester can't drive.
 
@@ -166,3 +166,4 @@ Test steps:
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Show/hide passwords and confirm the password on sign-up
+- [x] T2 Google sign-in brings SkyLines back to the front

@@ -185,7 +185,7 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 #[cfg(desktop)]
-fn show_main_window(app: &tauri::AppHandle) {
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
     use tauri::Manager;
 
     if let Some(window) = app.get_webview_window("main") {

@@ -7,7 +7,8 @@ use tauri::{AppHandle, Emitter};
 const TIMEOUT: Duration = Duration::from_secs(300);
 const PAGE: &str = "<!doctype html><meta charset=utf-8><title>SkyLines</title>\
 <body style=\"font-family:sans-serif;text-align:center;margin-top:20vh\">\
-<h2>You can close this tab and return to SkyLines.</h2></body>";
+<h2>You can close this tab and return to SkyLines.</h2>\
+<script>window.close()</script></body>";
 
 // Bumped by every listen call; an older listener sees the change and stops.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -49,6 +50,8 @@ pub fn google_oauth_listen(app: AppHandle) -> Result<u16, String> {
             );
             let _ = stream.write_all(response.as_bytes());
             let _ = app.emit_to("main", "google-oauth:redirect", query.to_string());
+            #[cfg(desktop)]
+            crate::show_main_window(&app);
             break;
         }
     });
