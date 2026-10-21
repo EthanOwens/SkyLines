@@ -64,6 +64,11 @@ Get SkyLines ready for friends to build from the codebase and use with their own
   - `0.1.0` is in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
   - `next.config.ts` has no `env` block. The README's Windows install paths hardcode `0.1.0`.
 - **Local toolchain.** Node 26.10, Rust 1.99. There's no `.nvmrc`, `rust-toolchain.toml` or `engines`.
+- **Google sign-in today** (added 2026-10-21, never worked).
+  - `lib/auth/googleOAuth.ts` builds an implicit-flow URL (`response_type=id_token`, nonce in localStorage) with `redirect_uri=skylines://auth-callback`. `app/login/page.tsx` opens it with `openInBrowser` and waits for the deep link through `onOpenUrl` / `getCurrent`, then calls `signInWithCredential(GoogleAuthProvider.credential(idToken))`.
+  - Google answers "Error 400: invalid_request … doesn't comply with Google's OAuth 2.0 policy" for that `redirect_uri`. For Desktop-app clients Google only accepts a loopback redirect (`http://127.0.0.1:<port>`) with the authorization-code flow and PKCE, and the token exchange must include the Desktop client's secret, which Google says may ship in installed apps.
+  - The `skylines://` scheme, `tauri-plugin-deep-link` and its `register_all()` in `src-tauri/src/lib.rs` exist only for this. `tauri-plugin-single-instance` is also needed for single-instance behaviour.
+  - `reqwest` (rustls) is already a dependency, used by `src-tauri/src/link_preview.rs`.
 
 ## Decisions
 
@@ -119,6 +124,10 @@ Get SkyLines ready for friends to build from the codebase and use with their own
   - `scripts/setup.sh` (macOS) and `scripts/setup.ps1` (Windows) install only what's missing and can be re-run safely.
   - Node is pinned with `.nvmrc` `24` (the LTS that `winget` and installers give) and `engines.node` `>=24`. Rust is pinned with `rust-toolchain.toml` channel `1.99`.
   - On macOS, Node comes from Homebrew when `brew` exists. Otherwise the script prints the nodejs.org link and stops.
+- **Google sign-in** (added 2026-10-21).
+  - Use a loopback redirect and the authorization-code flow with PKCE (S256), `state` and `nonce`. Don't add a dependency: Rust's `std::net` / tokio listener and the existing `reqwest` are enough.
+  - The token exchange runs in Rust, so there's no CORS question about Google's token endpoint. The client secret comes from `NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_SECRET` in `.env.local` and is passed to the command from JS.
+  - The deep-link plugin and the `skylines://` scheme stay registered for now. Removing them is a separate clean-up.
 
 ## Out of scope
 
@@ -436,6 +445,54 @@ Test steps (manual):
 1. On this Mac, run `bash scripts/setup.sh`. It reports each tool as already installed and ends with `npx tauri info` output.
 2. On a Windows machine (or VM), run `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`, then `npm run tauri dev`.
 3. Read "Getting started" as a new user and follow it to a signed-up account.
+
+### T12 Google sign-in works on desktop
+
+Status: todo
+Depends on: none
+Tester: partly. The local redirect can be driven with a `fetch` to the loopback port from `webview_execute_js`, but the real Google consent screen needs the user's own account in the system browser.
+
+- **Rust (`src-tauri/src/lib.rs`, or a small `src-tauri/src/google_oauth.rs` like `link_preview.rs`).** Add two commands to `generate_handler!`:
+  - **`google_oauth_listen`** binds `127.0.0.1:0` and returns the port. In the background it:
+    - accepts one HTTP GET, answers with a tiny HTML page ("You can close this tab and return to SkyLines") and emits the Tauri event `google-oauth:redirect` to the `main` window with the request's query string
+    - gives up after 5 minutes
+    - is replaced if `google_oauth_listen` is called again, so a second click doesn't leave two listeners
+    - ignores requests for other paths, such as `/favicon.ico`, without ending the wait
+  - **`google_oauth_exchange(code, code_verifier, redirect_uri, client_id, client_secret)`** POSTs form data to `https://oauth2.googleapis.com/token` with `grant_type=authorization_code` and returns the `id_token`. On a non-2xx response it returns Google's `error` / `error_description`, never the tokens.
+- **`lib/auth/googleOAuth.ts`.** Switch to code + PKCE:
+  - Generate a `code_verifier` and its S256 `code_challenge` with `crypto.subtle`, plus `state` and `nonce`. Keep them in memory: the flow now finishes in the same process, so the localStorage nonce, `shouldProcessCallbackUrl`, `parseGoogleCallbackUrl` and `isGoogleAuthCallbackUrl` go away.
+  - Build the URL with `response_type=code`, `redirect_uri=http://127.0.0.1:<port>`, `code_challenge`, `code_challenge_method=S256`, `state`, `nonce`, `scope=openid email profile` and `prompt=select_account`.
+  - Check `state` on the redirect, and check `nonce` in the returned `id_token`'s payload.
+  - `isGoogleSignInConfigured` requires both the client ID and the secret.
+  - Rewrite the file's header comment to describe the new flow.
+- **`app/login/page.tsx`.** `handleGoogle`:
+  1. listens for `google-oauth:redirect`, calls `google_oauth_listen`, builds the URL and opens it with `openInBrowser`, as now
+  2. on the redirect, checks `state`, surfaces Google's `error` param (for example `access_denied` when the user cancels), calls `google_oauth_exchange`, checks the nonce, then `signInWithCredential` and `router.replace("/")`
+  3. clears "Waiting for browser…" on success, failure and the 5-minute timeout
+
+  Remove the `onOpenUrl` / `getCurrent` effect. The missing-config message names both env vars.
+- **Config and docs.**
+  - Add `NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_CLIENT_SECRET` to `.env.local.example` and replace its custom-scheme comment.
+  - Update the README Maintainers line: the Desktop client needs no redirect URIs, the secret goes in `.env.local`, the Google provider must be enabled in Firebase Authentication, and a client from another Google Cloud project must be added to the provider's safelisted client IDs.
+  - Update the deep-link comments in `lib.rs` so they no longer say sign-in uses it.
+- **Logging.** Log only failures, with Google's error code. Never log the code, the tokens or the secret.
+
+Files: `src-tauri/src/lib.rs`, possibly new `src-tauri/src/google_oauth.rs`, `lib/auth/googleOAuth.ts`, `app/login/page.tsx`, `.env.local.example`, `README.md`
+
+Acceptance:
+- Clicking "Continue with Google" opens the system browser on Google's consent screen with a `redirect_uri` of `http://127.0.0.1:<port>`, and Google no longer shows "invalid_request".
+- After choosing an account, the browser tab shows the "you can close this tab" page and the app lands on `/`, signed in as that Google account.
+- A redirect with a wrong `state`, or with `error=access_denied`, shows "Google sign-in failed." (or a cancel message) and re-enables the button, without exchanging anything.
+- Clicking twice, or waiting out the timeout, leaves no stuck "Waiting for browser…" and no extra listening port.
+- Without the client secret in `.env.local`, the button shows the missing-config message.
+- Email/password sign-in and sign-up still work. No code, token or secret appears in the log file.
+
+Test steps:
+1. Precondition (manual): the user signs out so the login page shows. The tester never signs in or out itself.
+2. Start `ipc_monitor`, click "Continue with Google" (a browser tab opens; leave it), and read the port from the captured `google_oauth_listen` result and the `state` from the URL passed to the opener. Then, from `webview_execute_js`, fire `fetch("http://127.0.0.1:<port>/?state=wrong&code=x")`. The page shows the failure message, the button is enabled again, and no `google_oauth_exchange` call was captured.
+3. Click again and fire `?error=access_denied&state=<the real state>`. The cancel or failure message shows, and `google_oauth_exchange` isn't called.
+4. Manual: click "Continue with Google", pick your Google account, see the close-this-tab page, and the app opens signed in. Then sign out and sign back in to `dev@skylines.local` for testing.
+5. Manual: click "Continue with Google", then close the browser tab without choosing. After 5 minutes the button is usable again (or click it again straight away and finish the flow).
 
 ## Progress
 
