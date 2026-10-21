@@ -48,3 +48,7 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 - Every window created at runtime needs a capability file in `src-tauri/capabilities/` matching its label (`main`, `sticky-*`, `image-editor-*`), or its webview gets no permissions.
 - The app is built on both Windows and macOS. On macOS, Rust linking needs `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk` because of a stray beta SDK.
 - `.env.local` holds the Firebase `NEXT_PUBLIC_*` config, which is baked in at build time.
+
+## Preferences and notes
+
+<!-- Add: how you like changes made, non-negotiables (platforms, offline, accessibility), things outside the repo (consoles, secrets), areas to leave alone and known issues. -->
