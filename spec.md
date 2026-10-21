@@ -62,7 +62,7 @@ Switching accounts on one computer must never show, open or edit another account
 
 ### T1 Show/hide passwords and confirm the password on sign-up
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes, toggling and the mismatch error are observable in the DOM. Being signed out is a manual precondition.
 
@@ -165,3 +165,4 @@ Test steps:
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 Show/hide passwords and confirm the password on sign-up

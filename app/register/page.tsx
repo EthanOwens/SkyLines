@@ -7,12 +7,14 @@ import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -21,6 +23,10 @@ export default function RegisterPage() {
     setError("");
     if (password.length < 6) {
       setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords don't match.");
       return;
     }
     setLoading(true);
@@ -61,11 +67,18 @@ export default function RegisterPage() {
             onChange={(e) => setEmail(e.target.value)}
             required
           />
-          <Input
-            type="password"
+          <PasswordInput
+            autoComplete="new-password"
             placeholder="Password (min 6 chars)"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+          <PasswordInput
+            autoComplete="new-password"
+            placeholder="Confirm password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
             required
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
