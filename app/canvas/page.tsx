@@ -31,7 +31,7 @@ function CanvasPageInner() {
       return;
     }
     setLoading(true);
-    getNoteById(id)
+    getNoteById(id, uid ?? "")
       .then((found) => {
         if (cancelled) return;
         // Another account's note counts as missing.

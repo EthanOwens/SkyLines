@@ -250,7 +250,7 @@ export function StickyNoteEditor({ note }: Props) {
       const { listen } = await import("@tauri-apps/api/event");
       const fn = await listen<{ id: string; remote?: boolean }>(STICKY_NOTE_CHANGED_EVENT, async (e) => {
         if (e.payload.id !== note.id || deletedRef.current) return;
-        const current = await getStickyNoteById(note.id).catch(() => undefined);
+        const current = await getStickyNoteById(note.id, note.userId).catch(() => undefined);
         // A pulled change: reload unless this window has an unsaved edit.
         if (current && e.payload.remote && !saveTimer.current && !pendingContentRef.current) {
           setTitle(current.title || "Untitled");

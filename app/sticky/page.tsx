@@ -67,7 +67,7 @@ function StickyPageInner() {
       return;
     }
     setLoading(true);
-    getStickyNoteById(id)
+    getStickyNoteById(id, uid ?? "")
       .then((n) => {
         if (!cancelled) setNote(n && n.userId === uid ? n : null);
       })

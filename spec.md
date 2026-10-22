@@ -135,7 +135,7 @@ Test steps:
 
 ### T4 Lookups only return the signed-in account's data
 
-Status: todo
+Status: done
 Depends on: T3
 Tester: yes. Seeded rows owned by another user can be targeted through routes and references.
 
@@ -168,3 +168,4 @@ Test steps:
 - [x] T1 Show/hide passwords and confirm the password on sign-up
 - [x] T2 Google sign-in brings SkyLines back to the front
 - [x] T3 Signing in as another account starts clean
+- [x] T4 Lookups only return the signed-in account's data

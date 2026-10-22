@@ -20,7 +20,9 @@ export interface ReferenceRouter {
 let mainWindowRouter: ReferenceRouter | null = null;
 
 async function openStickyReference(id: string, imageId?: string): Promise<boolean> {
-  const sticky = await getStickyNoteById(id);
+  const uid = auth.currentUser?.uid;
+  if (!uid) return false;
+  const sticky = await getStickyNoteById(id, uid);
   if (!sticky) return false;
   await openStickyNoteWindow(id, sticky.title, imageId);
   return true;
@@ -48,7 +50,7 @@ export async function followReference(ref: Reference, router: ReferenceRouter): 
       return true;
     }
     case "folder": {
-      const folder = await getFolderById(ref.id);
+      const folder = await getFolderById(ref.id, uid);
       if (!folder) return false;
       setLastOpen(uid, { notebookId: folder.notebookId, folderId: folder.id, noteId: null });
       store.setSelectedNotebook(folder.notebookId);
@@ -62,14 +64,14 @@ export async function followReference(ref: Reference, router: ReferenceRouter): 
       router.push(`/canvas?id=${ref.id}`);
       return true;
     case "page": {
-      const page = await getPageById(ref.id);
+      const page = await getPageById(ref.id, uid);
       if (!page) return false;
       router.push(`/canvas?id=${page.noteId}&page=${page.id}`);
       return true;
     }
     case "image": {
       if (ref.stickyId !== undefined) return openStickyReference(ref.stickyId, ref.id);
-      const page = await getPageById(ref.pageId);
+      const page = await getPageById(ref.pageId, uid);
       if (!page) return false;
       router.push(
         `/canvas?id=${page.noteId}&page=${page.id}&shape=${encodeURIComponent(ref.shapeId)}&image=${encodeURIComponent(ref.id)}`,
@@ -77,7 +79,7 @@ export async function followReference(ref: Reference, router: ReferenceRouter): 
       return true;
     }
     case "shape": {
-      const page = await getPageById(ref.pageId);
+      const page = await getPageById(ref.pageId, uid);
       if (!page) return false;
       router.push(
         `/canvas?id=${page.noteId}&page=${page.id}&shape=${encodeURIComponent(ref.shapeId)}`,

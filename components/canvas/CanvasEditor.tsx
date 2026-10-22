@@ -190,7 +190,7 @@ export function CanvasEditor({ note }: Props) {
     setSelectedPageId(null);
 
     (async () => {
-      let notePages = await getPages(note.id);
+      let notePages = await getPages(note.id, note.userId);
 
       // Notes from before pages existed have no page rows: create a default
       // page and carry over canvasData. Tiptap-only content needs a live editor
@@ -211,7 +211,7 @@ export function CanvasEditor({ note }: Props) {
           });
         }
         await creation;
-        notePages = await getPages(note.id);
+        notePages = await getPages(note.id, note.userId);
       }
 
       if (cancelled) return;

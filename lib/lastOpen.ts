@@ -79,7 +79,7 @@ export async function recordNoteOpened(uid: string, note: Note): Promise<void> {
     return;
   }
 
-  const folder = await getFolderById(note.folderId);
+  const folder = await getFolderById(note.folderId, uid);
   if (!folder) {
     setLastOpen(uid, { notebookId: null, folderId: null, noteId: note.id });
     return;

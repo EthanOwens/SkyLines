@@ -78,7 +78,7 @@ function noteNode(note: Note): TreeNode {
     key: `note:${note.id}`,
     label: note.title || "Untitled",
     ref: { kind: "note", id: note.id },
-    load: async () => pageNodes(await getPages(note.id)),
+    load: async () => pageNodes(await getPages(note.id, note.userId)),
   };
 }
 

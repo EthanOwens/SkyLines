@@ -167,7 +167,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    void getNoteById(lastOpen.noteId).then((note) => {
+    void getNoteById(lastOpen.noteId, user.uid).then((note) => {
       if (cancelled) return;
       if (!note || note.userId !== user.uid) {
         // Stale or foreign: forget it so the next load goes to the picker.

@@ -182,7 +182,7 @@ async function applyFolderChange(change: DocumentChange<DocumentData>): Promise<
   if (!data) return;
 
   const remote = toRemoteFolderData(change.doc.id, data);
-  const local = await getFolderRowById(remote.id);
+  const local = await getFolderRowById(remote.id, remote.userId);
   const decision = decidePull(
     local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
     remote.updatedAt,
@@ -203,7 +203,7 @@ async function applyNoteChange(change: DocumentChange<DocumentData>): Promise<vo
   if (!data) return;
 
   const remote = toRemoteNoteData(change.doc.id, data);
-  const local = await getNoteRowById(remote.id);
+  const local = await getNoteRowById(remote.id, remote.userId);
   const decision = decidePull(
     local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
     remote.updatedAt,
@@ -224,7 +224,7 @@ async function applyNotebookChange(change: DocumentChange<DocumentData>): Promis
   if (!data) return;
 
   const remote = toRemoteNotebookData(change.doc.id, data);
-  const local = await getNotebookRowById(remote.id);
+  const local = await getNotebookRowById(remote.id, remote.userId);
   const decision = decidePull(
     local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
     remote.updatedAt,
@@ -249,7 +249,7 @@ async function applyPageChange(change: DocumentChange<DocumentData>): Promise<vo
   if (!data) return;
 
   const remote = toRemotePageData(change.doc.id, data);
-  const local = await getPageRowById(remote.id);
+  const local = await getPageRowById(remote.id, remote.userId);
   const decision = decidePull(
     local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
     remote.updatedAt,
@@ -270,7 +270,7 @@ async function applyStickyNoteChange(change: DocumentChange<DocumentData>): Prom
   if (!data) return;
 
   const remote = toRemoteStickyNoteData(change.doc.id, data);
-  const local = await getStickyNoteRowById(remote.id);
+  const local = await getStickyNoteRowById(remote.id, remote.userId);
   const decision = decidePull(
     local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
     remote.updatedAt,

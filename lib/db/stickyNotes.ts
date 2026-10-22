@@ -104,19 +104,19 @@ export async function hardDeleteStickyNote(id: string): Promise<void> {
   notifyDataChange("remote");
 }
 
-export async function getStickyNoteById(id: string): Promise<StickyNote | null> {
+export async function getStickyNoteById(id: string, userId: string): Promise<StickyNote | null> {
   const db = await getDb();
   const rows = await db.select<StickyNoteRow[]>(
-    `SELECT * FROM ${TABLE} WHERE id = $1 AND deleted_at IS NULL`,
-    [id],
+    `SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+    [id, userId],
   );
   return rows.length > 0 ? rowToStickyNote(rows[0]) : null;
 }
 
 /** Includes soft-deleted rows; see getNoteRowById. */
-export async function getStickyNoteRowById(id: string): Promise<StickyNote | null> {
+export async function getStickyNoteRowById(id: string, userId: string): Promise<StickyNote | null> {
   const db = await getDb();
-  const rows = await db.select<StickyNoteRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [id]);
+  const rows = await db.select<StickyNoteRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2`, [id, userId]);
   return rows.length > 0 ? rowToStickyNote(rows[0]) : null;
 }
 
