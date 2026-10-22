@@ -4,7 +4,8 @@
 // useSearchParams() needs the <Suspense> boundary in the default export.
 
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuthContext } from "@/components/AuthProvider";
 import { getNoteById } from "@/lib/db/notes";
 import { recordNoteOpened } from "@/lib/lastOpen";
 import { resolveNoteNotebookId } from "@/lib/notebookSync";
@@ -15,6 +16,9 @@ import type { Note } from "@/types";
 
 function CanvasPageInner() {
   const id = useSearchParams().get("id");
+  const router = useRouter();
+  const { user } = useAuthContext();
+  const uid = user?.uid;
   const [note, setNote] = useState<Note | null>(null);
   const [loading, setLoading] = useState(true);
   const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
@@ -28,26 +32,30 @@ function CanvasPageInner() {
     }
     setLoading(true);
     getNoteById(id)
-      .then((n) => {
+      .then((found) => {
         if (cancelled) return;
+        // Another account's note counts as missing.
+        const n = found && found.userId === uid ? found : null;
         setNote(n);
-        if (n) {
-          // Best-effort; never blocks rendering.
-          void recordNoteOpened(n);
+        if (!n) {
+          router.replace("/");
+          return;
+        }
+        // Best-effort; never blocks rendering.
+        void recordNoteOpened(n.userId, n);
 
-          // Keep the selected notebook in step with the note being viewed.
-          const { notebooks: liveNotebooks, notebooksLoaded: liveLoaded } =
-            useAppStore.getState();
-          setSelectedNotebook(
-            resolveNoteNotebookId(n.notebookId, liveNotebooks, liveLoaded),
-          );
+        // Keep the selected notebook in step with the note being viewed.
+        const { notebooks: liveNotebooks, notebooksLoaded: liveLoaded } =
+          useAppStore.getState();
+        setSelectedNotebook(
+          resolveNoteNotebookId(n.notebookId, liveNotebooks, liveLoaded),
+        );
 
-          // Back/Forward navigation must not push a new history entry.
-          if (useAppStore.getState().isHistoryNavigation) {
-            useAppStore.getState().setIsHistoryNavigation(false);
-          } else {
-            visitNote({ noteId: n.id });
-          }
+        // Back/Forward navigation must not push a new history entry.
+        if (useAppStore.getState().isHistoryNavigation) {
+          useAppStore.getState().setIsHistoryNavigation(false);
+        } else {
+          visitNote({ noteId: n.id });
         }
       })
       .catch(() => {
@@ -59,7 +67,7 @@ function CanvasPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [id, setSelectedNotebook, visitNote]);
+  }, [id, uid, router, setSelectedNotebook, visitNote]);
 
   if (!id) {
     return (

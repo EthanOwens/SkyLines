@@ -8,6 +8,7 @@ import { useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAuthContext } from "@/components/AuthProvider";
 import { getStickyNoteById } from "@/lib/db/stickyNotes";
 import { StickyNoteEditor } from "@/components/editor/StickyNoteEditor";
 import { useWindowDrag } from "@/hooks/useWindowDrag";
@@ -53,11 +54,14 @@ function StickyMessageScreen({ message }: { message: string }) {
 
 function StickyPageInner() {
   const id = useSearchParams().get("id");
+  const { user, loading: authLoading } = useAuthContext();
+  const uid = user?.uid;
   const [note, setNote] = useState<StickyNote | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
+    if (authLoading) return;
     if (!id) {
       setLoading(false);
       return;
@@ -65,7 +69,7 @@ function StickyPageInner() {
     setLoading(true);
     getStickyNoteById(id)
       .then((n) => {
-        if (!cancelled) setNote(n);
+        if (!cancelled) setNote(n && n.userId === uid ? n : null);
       })
       .catch(() => {
         if (!cancelled) setNote(null);
@@ -76,7 +80,7 @@ function StickyPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, uid, authLoading]);
 
   if (!id) {
     return <StickyMessageScreen message="No sticky note selected." />;

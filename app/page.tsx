@@ -31,7 +31,7 @@ export default function Home() {
 
   function openNotebook(id: string) {
     setSelectedNotebook(id);
-    setLastOpenNotebook(id);
+    if (user) setLastOpenNotebook(user.uid, id);
   }
 
   async function handleCreate() {

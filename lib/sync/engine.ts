@@ -151,7 +151,9 @@ function flushPush(): void {
   void attemptPush(pendingPushUserId);
 }
 
-function scheduleBackoffRetry(userId: string): void {
+function scheduleBackoffRetry(userId: string, gen: number): void {
+  // A stopped or replaced engine must not leave a timer retrying the old user.
+  if (gen !== generation || !engineRunning) return;
   if (pushBackoffTimer) clearTimeout(pushBackoffTimer);
   pushBackoffTimer = setTimeout(() => {
     pushBackoffTimer = null;
@@ -166,6 +168,8 @@ function scheduleBackoffRetry(userId: string): void {
  * status on "syncing". pendingPushUserId stays set so reconnect retries.
  */
 async function attemptPush(userId: string): Promise<void> {
+  if (!engineRunning) return;
+  const gen = generation;
   if (pushBackoffTimer) {
     clearTimeout(pushBackoffTimer);
     pushBackoffTimer = null;
@@ -209,11 +213,11 @@ async function attemptPush(userId: string): Promise<void> {
   } catch (err) {
     console.error("[sync/engine] push failed, scheduling backoff retry", err);
     setStatus(isOnline() ? "error" : "offline");
-    scheduleBackoffRetry(userId);
+    scheduleBackoffRetry(userId, gen);
   } finally {
     pushInFlight = false;
-    if (needsFollowUp) {
-      void attemptPush(userId);
+    if (needsFollowUp && gen === generation && pendingPushUserId) {
+      void attemptPush(pendingPushUserId);
     }
   }
 }
@@ -330,6 +334,7 @@ function handleVisibilityChange(): void {
 // teardown only acts if that generation is still current. A late cleanup from
 // an old React effect is then a no-op instead of stopping the live engine.
 let generation = 0;
+let engineRunning = false;
 
 export function startSyncEngine(userId: string): () => void {
   if (typeof window === "undefined" || typeof document === "undefined") {
@@ -337,6 +342,7 @@ export function startSyncEngine(userId: string): () => void {
   }
 
   const myGeneration = ++generation;
+  engineRunning = true;
   setFailures([]);
   setStatus("saved"); // fresh session, don't inherit a stale status from a prior sign-in/out cycle
 
@@ -358,6 +364,7 @@ export function startSyncEngine(userId: string): () => void {
       return;
     }
 
+    engineRunning = false;
     pullUnsubscribe?.();
     pullUnsubscribe = null;
     activePullUserId = null;

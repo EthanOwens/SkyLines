@@ -5,6 +5,7 @@ import { getPageById } from "@/lib/db/pages";
 import { getStickyNoteById } from "@/lib/db/stickyNotes";
 import { setLastOpen, setLastOpenNotebook } from "@/lib/lastOpen";
 import { openStickyNoteWindow } from "@/lib/stickyWindow";
+import { auth } from "@/lib/firebase";
 import { useAppStore } from "@/stores/appStore";
 
 // Sent by windows without the app's routes (sticky notes) with a reference
@@ -28,6 +29,8 @@ async function openStickyReference(id: string, imageId?: string): Promise<boolea
 /** Navigates the main window to the reference's target. False when it's gone. */
 export async function followReference(ref: Reference, router: ReferenceRouter): Promise<boolean> {
   if (ref.kind === "sticky") return openStickyReference(ref.id);
+  const uid = auth.currentUser?.uid;
+  if (!uid) return false;
 
   // Same existence rule as the chip, which shows a target with a missing
   // ancestor as not found.
@@ -38,7 +41,7 @@ export async function followReference(ref: Reference, router: ReferenceRouter): 
     case "notebook": {
       // The home page reopens the last note unless the last-open state says a
       // notebook was opened on its own.
-      setLastOpenNotebook(ref.id);
+      setLastOpenNotebook(uid, ref.id);
       store.setSelectedNotebook(ref.id);
       store.setSidebarOpen(true);
       router.push("/");
@@ -47,7 +50,7 @@ export async function followReference(ref: Reference, router: ReferenceRouter): 
     case "folder": {
       const folder = await getFolderById(ref.id);
       if (!folder) return false;
-      setLastOpen({ notebookId: folder.notebookId, folderId: folder.id, noteId: null });
+      setLastOpen(uid, { notebookId: folder.notebookId, folderId: folder.id, noteId: null });
       store.setSelectedNotebook(folder.notebookId);
       store.setSelectedFolder(folder.id);
       store.revealFolder(folder.id);

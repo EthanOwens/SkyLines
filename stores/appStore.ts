@@ -16,8 +16,8 @@ interface AppState {
   folders: Folder[];
   notes: Note[];
   notebooks: Notebook[];
-  // Lets the picker tell "not loaded yet" from "no notebooks". Never resets to
-  // false.
+  // Lets the picker tell "not loaded yet" from "no notebooks". Reset to false
+  // when the signed-in account changes.
   notebooksLoaded: boolean;
   selectedNoteId: string | null;
   // The sidebar's selected folder, separate from its expanded state. The
@@ -72,6 +72,8 @@ interface AppState {
   selectedPageId: string | null;
   pagesLoading: boolean;
 
+  // Back to the initial data and navigation slices when the signed-in account changes.
+  resetForUser: () => void;
   setFolders: (folders: Folder[]) => void;
   setNotes: (notes: Note[]) => void;
   setNotebooks: (notebooks: Notebook[]) => void;
@@ -131,6 +133,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedPageId: null,
   pagesLoading: true,
 
+  resetForUser: () =>
+    set({
+      folders: [],
+      notes: [],
+      notebooks: [],
+      notebooksLoaded: false,
+      selectedNoteId: null,
+      selectedFolderId: null,
+      selectedNotebookId: null,
+      revealedFolder: null,
+      noteHistory: [],
+      historyIndex: -1,
+      isHistoryNavigation: false,
+      clipboard: null,
+      pages: [],
+      selectedPageId: null,
+      pagesLoading: true,
+    }),
   setFolders: (folders) => set({ folders }),
   setNotes: (notes) => set({ notes }),
   setNotebooks: (notebooks) => set({ notebooks }),

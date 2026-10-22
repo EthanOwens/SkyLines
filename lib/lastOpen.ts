@@ -3,7 +3,13 @@
 import type { Note } from "@/types";
 import { getFolderById } from "@/lib/db/folders";
 
-const STORAGE_KEY = "skylines:lastOpen";
+const KEY_PREFIX = "skylines:lastOpen:";
+// The pre-account key, shared by every user on the device.
+const LEGACY_KEY = "skylines:lastOpen";
+
+function keyFor(uid: string): string {
+  return KEY_PREFIX + uid;
+}
 
 export interface LastOpenState {
   notebookId: string | null;
@@ -26,12 +32,12 @@ function isLastOpenState(value: unknown): value is LastOpenState {
  * Returns null when localStorage is unavailable (static export build), empty or
  * corrupt. Never throws.
  */
-export function getLastOpen(): LastOpenState | null {
+export function getLastOpen(uid: string): LastOpenState | null {
   if (typeof window === "undefined") return null;
 
   let raw: string | null;
   try {
-    raw = window.localStorage.getItem(STORAGE_KEY);
+    raw = window.localStorage.getItem(keyFor(uid));
   } catch {
     return null;
   }
@@ -46,19 +52,20 @@ export function getLastOpen(): LastOpenState | null {
 }
 
 /** Best-effort; does nothing when localStorage is unavailable. */
-export function setLastOpen(state: LastOpenState): void {
+export function setLastOpen(uid: string, state: LastOpenState): void {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.removeItem(LEGACY_KEY);
+    window.localStorage.setItem(keyFor(uid), JSON.stringify(state));
   } catch {
     // localStorage unavailable/full/disabled - nothing meaningful to do.
   }
 }
 
 /** A notebook opened from the picker, with no note yet. */
-export function setLastOpenNotebook(notebookId: string): void {
-  setLastOpen({ notebookId, folderId: null, noteId: null });
+export function setLastOpenNotebook(uid: string, notebookId: string): void {
+  setLastOpen(uid, { notebookId, folderId: null, noteId: null });
 }
 
 /**
@@ -66,19 +73,19 @@ export function setLastOpenNotebook(notebookId: string): void {
  * and notes whose folder can't be found are still recorded, because restore
  * only needs noteId.
  */
-export async function recordNoteOpened(note: Note): Promise<void> {
+export async function recordNoteOpened(uid: string, note: Note): Promise<void> {
   if (!note.folderId) {
-    setLastOpen({ notebookId: null, folderId: null, noteId: note.id });
+    setLastOpen(uid, { notebookId: null, folderId: null, noteId: note.id });
     return;
   }
 
   const folder = await getFolderById(note.folderId);
   if (!folder) {
-    setLastOpen({ notebookId: null, folderId: null, noteId: note.id });
+    setLastOpen(uid, { notebookId: null, folderId: null, noteId: note.id });
     return;
   }
 
-  setLastOpen({
+  setLastOpen(uid, {
     notebookId: folder.notebookId,
     folderId: folder.id,
     noteId: note.id,

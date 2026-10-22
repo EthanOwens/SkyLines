@@ -107,7 +107,7 @@ Test steps (manual):
 
 ### T3 Signing in as another account starts clean
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes. A note owned by another user can be seeded in SQLite and pointed to from localStorage, then the restore and canvas routes are observable.
 
@@ -167,3 +167,4 @@ Test steps:
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Show/hide passwords and confirm the password on sign-up
 - [x] T2 Google sign-in brings SkyLines back to the front
+- [x] T3 Signing in as another account starts clean

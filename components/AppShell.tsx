@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthContext } from "@/components/AuthProvider";
 import { useSyncEngine } from "@/hooks/useSyncEngine";
 import { useNotes } from "@/hooks/useNotes";
 import { useFolders } from "@/hooks/useFolders";
 import { useNotebooks } from "@/hooks/useNotebooks";
-import { getLastOpen } from "@/lib/lastOpen";
+import { getLastOpen, setLastOpen } from "@/lib/lastOpen";
 import { getNoteById } from "@/lib/db/notes";
 import { listenForReferenceFollows } from "@/lib/references/navigate";
 import { useAppStore } from "@/stores/appStore";
@@ -61,6 +61,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // JS runtime and would boot its own engine and subscriptions.
   const syncUserId =
     publicRoute || isStickyRoute || isImageEditorRoute ? undefined : user?.uid;
+
+  // Declared before the data hooks so their effects see the reset store. The
+  // first render's uid is the baseline, so it doesn't reset.
+  const resetForUser = useAppStore((s) => s.resetForUser);
+  const lastUid = useRef(user?.uid ?? null);
+  const uid = user?.uid ?? null;
+  useEffect(() => {
+    if (lastUid.current === uid) return;
+    lastUid.current = uid;
+    resetForUser();
+  }, [uid, resetForUser]);
 
   useSyncEngine(syncUserId);
   useNotes(syncUserId);
@@ -144,7 +155,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     let cancelled = false;
 
-    const lastOpen = getLastOpen();
+    const lastOpen = getLastOpen(user.uid);
     if (!lastOpen) return;
 
     if (!lastOpen.noteId) {
@@ -157,7 +168,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
 
     void getNoteById(lastOpen.noteId).then((note) => {
-      if (cancelled || !note) return;
+      if (cancelled) return;
+      if (!note || note.userId !== user.uid) {
+        // Stale or foreign: forget it so the next load goes to the picker.
+        setLastOpen(user.uid, { notebookId: null, folderId: null, noteId: null });
+        return;
+      }
       // Use the note's own notebookId: lastOpen.notebookId is null for notes
       // without a folder. Check it against the loaded notebooks, because it can
       // point at a deleted notebook; if notebooks haven't loaded yet, set it
