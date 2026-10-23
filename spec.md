@@ -1,171 +1,295 @@
-# Account switching and sign-in polish
+# First-run and sign-in polish
 
-Source: planning.md, 2026-10-21
+Source: review of the sign-in and startup flow in conversation, 2026-10-23
 
 ## Goal
 
-Switching accounts on one computer must never show, open or edit another account's data. Today, signing in as a second account reopens the first account's last note in a broken, shell-less screen with no way out. Alongside that fix, the sign-in screens get small usability improvements: Google sign-in brings SkyLines back to the front, sign-up asks for the password twice, and every password field can be shown in plain text.
+Make SkyLines easier for someone opening it for the first time. The first screens stop showing developer placeholder text, there's always a way to sign out, sign-in and sign-up errors say what actually went wrong, and Google sign-in is offered on sign-up too. "Forgot password?" becomes an in-app flow: the user gets a 6-digit code by email, types it into SkyLines and sets a new password there. A last task clears out code nothing uses.
 
 ## Context
 
-- **Shape of the app.** Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`. The previous spec (T1–T12, in git history) added Firestore rules, sync, logs and the loopback Google sign-in.
-- **Sign-in screens.**
-  - Login is `app/login/page.tsx`. Sign-up is a separate page, `app/register/page.tsx`: optional name, email and one password (`password.length < 6` check). Both pages are public routes in `components/AppShell.tsx` (`PUBLIC_ROUTES`) and use the same centered `max-w-sm space-y-6` card.
-  - Errors show as `{error && <p className="text-sm text-destructive">{error}</p>}` on both pages.
-  - The only password inputs are login L148-154 and register L64-70. "Forgot password?" uses Firebase's hosted reset page, so there's no reset form in the app.
-  - `components/ui/input.tsx` is a thin wrapper over `@base-ui/react/input` with no icon slot. `components/ui/button.tsx` has `variant="ghost"` and `size="icon-xs"`. `lucide-react` (with `Eye` / `EyeOff`) is installed and widely used.
-- **Google sign-in.**
-  - `src-tauri/src/google_oauth.rs` `google_oauth_listen` serves a fixed `PAGE` ("You can close this tab and return to SkyLines.", no script) for `/`, emits `google-oauth:redirect` to `main` and stops. `app/login/page.tsx` `handleGoogle` finishes the sign-in.
-  - Nothing brings SkyLines forward afterwards.
-  - `src-tauri/src/lib.rs` has a private `show_main_window(&AppHandle)` (`#[cfg(desktop)]`: `show`, `unminimize`, `set_focus`), used by the tray, the global shortcut and the `focus_main_window` command. Closing the main window hides it, so it may be hidden at sign-in time.
-- **Why switching accounts breaks** (traced; line numbers as of 0651145):
-  - Sign-out (`components/topbar/AccountMenu.tsx:100-103`, `components/sidebar/Sidebar.tsx:114-117`) only calls `signOut` and goes to `/login`. It clears nothing.
-  - `lib/lastOpen.ts` keeps one device-wide localStorage key, `skylines:lastOpen`, with no user id.
-    - It's written by `recordNoteOpened` in `app/canvas/page.tsx:36`, `app/page.tsx:34` and `lib/references/navigate.ts:42,50`.
-    - It's read by the restore effect in `components/AppShell.tsx:142-185`, which looks up the note with `getNoteById` and calls `router.replace('/canvas?id=…')`.
-  - The by-id getters don't filter by user:
-    - `getNoteById` / `getNoteRowById` (`lib/db/notes.ts:90,103`)
-    - `getFolderById` (+row) (`lib/db/folders.ts:89,102`)
-    - `getNotebookById` (+row) (`lib/db/notebooks.ts:46,56`)
-    - `getPageById` (+row) and `getPages(noteId)` (`lib/db/pages.ts:48,93,103`)
-    - `getStickyNoteById` (+row) (`lib/db/stickyNotes.ts:107,117`)
-
-    The list and dirty queries do filter (`getNotes`, `getFolders`, `getNotebooks`, `getStickyNotes`, `getDirty*`). Every table has `user_id TEXT NOT NULL`.
-  - `stores/appStore.ts` has no reset action. The data hooks (`hooks/useNotebooks.ts`, `useNotes.ts`, `useFolders.ts`) only unsubscribe when the user changes. So `notebooks`, `notes`, `folders`, `notebooksLoaded` (never reset to false), `selectedNotebookId`, `selectedFolderId`, `noteHistory` / `historyIndex`, `clipboard`, `pages` and `selectedPageId` survive sign-out.
-  - `app/canvas/page.tsx:30-50` loads the note by id and resolves its notebook with `resolveNoteNotebookId` (`lib/notebookSync.ts`). That gives null for another account's note. `components/shell/AppLayout.tsx:15-17` then renders only the children (`PageSidebar` + canvas) with no top bar or sidebar. That is the reported screen, and there's no way out, since sign-out lives in the top bar.
-  - Edits made in that state are written with the note's `user_id` (account A) and `dirty=1`. They would be pushed into A's Firestore account the next time A signs in.
-  - **Sync engine** (`lib/sync/engine.ts:168-219, 355-383`): if a push is in flight at sign-out, its failure calls `scheduleBackoffRetry` after teardown. That leaves a timer retrying A's rows under B's auth, so B sees "Sync error". The follow-up path at line 216 can also call `attemptPush` with A's id.
-  - Push only sends `getDirty*(userId)` rows and pull is `where("userId","==",uid)`, so sync itself doesn't mix accounts.
-- **Getting the current user outside React.** Module code such as `lib/references/navigate.ts` can use `auth.currentUser?.uid` from the app's Firebase auth instance. React code uses `useAuthContext()` (`components/AuthProvider.tsx`).
+- **Shape of the app.** Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`. Firebase is client-only today: `firebase.json` only deploys `firestore.rules`, and there are no Cloud Functions and no Firebase Hosting. The Firebase CLI isn't installed globally; use `npx firebase-tools` in docs, and never deploy or log in from an agent.
+- **Auth plumbing.** `components/AuthProvider.tsx` (`useAuthContext()`) is the only auth state source. `components/AppShell.tsx` gates routes: `PUBLIC_ROUTES = ["/login", "/register"]`, with paths normalized for the trailing slash. Signed-in users visiting a public route are not redirected away. `lib/firebase.ts` exports `auth`, `db` and the default `app`.
+- **Sign-in screens.** `app/login/page.tsx` and `app/register/page.tsx` share a centered `max-w-sm space-y-6` card, use `Input` and `PasswordInput` (`components/ui/`), and show errors as `{error && <p className="text-sm text-destructive">{error}</p>}`. Register checks `password.length < 6` and then that the two passwords match. Login has an "or" divider before "Continue with Google", and a dev-only `DevLogin` block.
+- **Google sign-in** is `handleGoogle` in `app/login/page.tsx`. It runs a loopback OAuth flow: `google_oauth_listen` / `google_oauth_exchange` in Rust, helpers in `lib/auth/googleOAuth.ts`, including `isGoogleSignInConfigured()`. When unconfigured it currently sets an error naming the two `NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_*` env vars.
+- **Forgot password today.** `handleForgotPassword` in `app/login/page.tsx` calls Firebase's `sendPasswordResetEmail`, which sends a link to Firebase's hosted reset page. With an empty email field it falls back to `window.prompt`.
+- **Shell layout.** `components/shell/AppLayout.tsx` renders the top bar (`components/topbar/TopBar.tsx`, which holds `AccountMenu`), the sidebar and the ribbon only when a notebook is selected. Otherwise, as on the notebook picker, it renders the page full-screen with no account menu. Sign-out exists only in `AccountMenu` and `components/sidebar/Sidebar.tsx`. Once a notebook is selected there's no UI path back to the picker.
+- **Home route** `app/page.tsx` shows the picker. When a notebook is selected and the route is `/`, it shows placeholder text: "Notebook "X" is open" and "Sidebar/note view coming in a later subtask." `AppShell`'s restore effect redirects `/` to the last note when `skylines:lastOpen:<uid>` (localStorage, `lib/lastOpen.ts`) has a `noteId`. With only a `notebookId`, it selects the notebook and stays on `/`.
+- **Creating a note.** `newNote()` in `components/sidebar/Sidebar.tsx` (~L75-97) creates a canvas note in the selected notebook and folder (falling back to `getOrCreateDefaultNotebookId`), appends it with `nextOrderValue`, and pushes `/canvas?id=<id>`.
+- **Firestore rules** (`firestore.rules`) allow client access only to `folders`, `notes`, `notebooks`, `pages` and `stickyNotes`. Any other collection is denied to clients, while the Admin SDK in Cloud Functions bypasses the rules.
 
 ## Decisions
 
-- **Google tab** (user's choice): SkyLines comes to the front as soon as the redirect arrives, on success, cancel or failure. The page also tries `window.close()`. Browsers usually block that for a tab the OS opened, so the page keeps a short neutral line ("You can close this tab and return to SkyLines."). It doesn't say "Signed in", because the same page is served on failure. No `skylines://` redirect.
-- **Bring-forward** reuses `show_main_window`, called from Rust right after the emit. No macOS-specific activation code in this round. If macOS leaves the window behind the browser, report it in the handover instead of adding native code.
-- **Account switching** (user's choice): keep every account's local data on the computer and scope it to the signed-in account. Nothing is wiped on sign-out, so unsynced edits are never lost. An account's dirty rows wait until that account signs in on this computer again.
-- **Last open** becomes per account: key `skylines:lastOpen:<uid>`. The old `skylines:lastOpen` key is removed and ignored.
-- **State reset** happens in one place: when the signed-in uid changes (to another account or to null), reset the store's data and navigation slices to their initial values, including `notebooksLoaded = false`. This covers both sign-out buttons and any other way auth changes.
-- **A note, page, folder, notebook or sticky note that isn't the signed-in account's**, or doesn't exist, is treated as not found. Routes that load one by id (`/canvas`, `/sticky`) go to `/` (the notebook picker with the full shell) instead of rendering without the shell.
-- **By-id getters** take a `userId` argument and add `AND user_id = $n`. Sync code passes the engine's user id.
-- **Password fields**: one shared `PasswordInput` in `components/ui/`. It's a `relative` wrapper around `Input`, with an `Eye` / `EyeOff` ghost icon button inside the right edge (`type="button"`, `aria-label` "Show password" / "Hide password", `aria-pressed`). Each field has its own toggle. Login uses `autoComplete="current-password"`; register uses `"new-password"`.
-- **Confirm password**: a second field "Confirm password" on register. On submit, a mismatch shows "Passwords don't match." and nothing is sent to Firebase. The check runs after the existing length check.
+- **Notebook empty state** (item 1): on `/` with a notebook open, show the notebook's name, "Pick a note in the sidebar, or create a new one." and a "New note" button. The button does exactly what the sidebar's New note does, through one shared function rather than a copy.
+- **Account menu on the picker** (item 2): when no notebook is selected, `AppLayout` also renders `AccountMenu` pinned to the top-right corner. Nothing else from the top bar is added there.
+- **Error messages** (item 3) come from one helper, `authErrorMessage(err, fallback)` in `lib/auth/errors.ts`, which maps Firebase error codes:
+  - `auth/network-request-failed`: "Can't reach the sign-in service. Check your internet connection and try again."
+  - `auth/too-many-requests`: "Too many attempts. Wait a few minutes and try again."
+  - `auth/invalid-email`: "That email address doesn't look right."
+  - `auth/weak-password`: "That password is too weak. Try a longer one."
+  - `auth/email-already-in-use`: "An account with this email already exists. Sign in instead, or use Continue with Google if you signed up that way."
+  - `auth/invalid-credential`, `auth/wrong-password`, `auth/user-not-found`: "Invalid email or password."
+  - `auth/user-disabled`: "This account has been disabled."
+  - Anything else gets the caller's fallback and is logged with `console.error`, so it reaches the log file.
+- **Login heading** (item 4): "Sign in to Skylines", with the subtitle "Use your email or Google account." The UI keeps its existing "Skylines" spelling.
+- **Google on sign-up** (item 4): register gets the same "or" divider and "Continue with Google" button as login, through one shared `components/auth/GoogleSignInButton.tsx` that owns the flow now in `handleGoogle`.
+- **Google not configured** (item 6): the button still shows, disabled, with a muted line below it: "Google sign-in isn't set up in this build." The env-var names go only to `console.warn`, never into the UI.
+- **Password reset** (item 5, user's choices):
+  - The email carries a 6-digit typeable code.
+  - It's sent by Cloud Functions (Blaze plan) through Gmail SMTP with a Gmail app password (`nodemailer`).
+  - A reset works for any account with that email. On a Google-only account it adds a password.
+- **Reset rules** (defaults chosen):
+  - Codes expire after 15 minutes, and a new request replaces the previous code.
+  - Codes can be resent after 60 seconds, at most 5 sends per email per rolling hour.
+  - 5 wrong guesses delete the code.
+  - The new password needs at least 6 characters (same as register).
+  - On success, the server revokes the account's refresh tokens (signing out other devices). The app then signs in with the new password and goes to `/`.
+- **No account enumeration**: requesting a reset for an email with no account returns the same success as a real one and sends nothing. Confirming with no stored code fails as "invalid code".
+- **Reset storage**: Firestore `passwordResets/{sha256(normalized email)}`, written only by the functions. The code is stored as a hash, never in plain text. `firestore.rules` stays unchanged, since it already denies this collection to clients.
+- **Error contract** between the functions and the app: failures are `HttpsError`s carrying `details.reason`, one of:
+  - `invalid-email`, `cooldown` (with `details.retryAfterSeconds`), `too-many-requests`
+  - `invalid-code`, `expired`, `too-many-attempts`, `weak-password`
+- **Login's "Forgot password?"** becomes a link to `/forgot-password?email=<current email field>`. `sendPasswordResetEmail` and `window.prompt` go away.
+- **Cleanup** (item 7): one task at the end reviews the whole project for unused code and removes it, including `hooks/useAuth.ts`.
+- **Hide-to-tray hint** (review item 8): not wanted.
 
 ## Out of scope
 
-- Wiping local data on sign-out, and deleting or scoping picture files in `$APPDATA/images`.
-- Closing or reloading open sticky-note pop-out windows when the account changes.
-- Firestore writes still pending in the SDK at the moment of sign-out.
-- A password reset form inside the app.
-- Native macOS app activation, and removing the unused `skylines://` deep-link plugin.
+- **Phone numbers and SMS reset.** This is planned for a later spec. The user wants an optional phone number both on sign-up and on a new account settings screen. It needs the Blaze plan and an early task proving Firebase's reCAPTCHA works inside the Tauri window on macOS and Windows.
+- An account settings screen.
+- App Check, CAPTCHA or per-IP limits on reset requests.
+- A way back from an open notebook to the picker.
+- A hint that closing the window hides SkyLines to the tray.
+- Deploying functions or changing Firebase console settings. Those are manual steps for the user.
 
 ## Tasks
 
-### T1 Show/hide passwords and confirm the password on sign-up
+### T1 An open notebook shows a real empty state
 
-Status: done
+Status: todo
 Depends on: none
-Tester: yes, toggling and the mismatch error are observable in the DOM. Being signed out is a manual precondition.
+Tester: yes. The empty state and the note it creates are observable in the DOM and the URL.
 
-- Add `components/ui/PasswordInput.tsx` as described in Decisions. It forwards all `Input` props and adds right padding so text doesn't run under the icon.
-- Use it for the password field on `app/login/page.tsx` and on `app/register/page.tsx`.
-- On register, add a "Confirm password" `PasswordInput`. Validate a match on submit as described in Decisions, before `createUserWithEmailAndPassword`.
+- Replace the placeholder branch in `app/page.tsx` (the `selectedNotebookId && selectedNotebook` case) with the empty state from Decisions, in the same centered layout style.
+- Move the body of `newNote()` from `components/sidebar/Sidebar.tsx` into a shared hook, `hooks/useCreateNote.ts`, that returns the create function and a `creating` flag. Use it in both the sidebar and the empty state, so neither keeps its own copy.
 
-Files: new `components/ui/PasswordInput.tsx`, `app/login/page.tsx`, `app/register/page.tsx`
+Files: `app/page.tsx`, `components/sidebar/Sidebar.tsx`, new `hooks/useCreateNote.ts`
 
 Acceptance:
-- Login has one password field and register has two. Each has its own toggle button, and its input's `type` switches between `password` and `text` when clicked.
-- Clicking a toggle never submits the form.
-- Submitting register with mismatched passwords shows "Passwords don't match." and makes no Firebase call. The existing length check still runs first.
-- The toggle has an `aria-label` that matches its state.
+- The strings "is open" and "coming in a later subtask" no longer appear in `app/page.tsx`.
+- With a notebook open on `/`, the main area shows the notebook name, the hint line and a "New note" button.
+- Clicking "New note" creates a canvas note in the open notebook (and selected folder, if any), placed after its siblings, and navigates to `/canvas?id=<new id>`. The button is disabled while creating.
+- The sidebar's New note behaves as before and uses the same hook.
 
 Test steps:
-1. Precondition (manual): the user signs out so the login page shows. The tester never signs in or out.
-2. On login, type into the password field and click its eye button. The input's `type` becomes `text`; click again and it's `password`. The page is still on login, with no error.
-3. Go to "Sign up". Fill email `mismatch-test@example.com`, password `abcdef` and confirm `abcdeg`, then submit. "Passwords don't match." shows, the page stays on register, and no account is created. Don't submit with matching passwords.
-4. Both register password fields toggle independently.
+1. Signed in as `dev@skylines.local`. Save the current value of localStorage `skylines:lastOpen:<uid>`, then set it to `{"notebookId":"<an existing notebook id>","folderId":null,"noteId":null}` and reload the main window.
+2. The top bar and sidebar are visible and the main area shows the notebook name, the hint and "New note". No placeholder text appears.
+3. Click "New note". The URL becomes `/canvas?id=…` and the new note appears in the sidebar.
+4. The sidebar's New note still creates and opens a note.
+5. Delete both notes you created and restore the saved lastOpen value.
 
-### T2 Google sign-in brings SkyLines back to the front
+### T2 The account menu shows on the notebook picker
 
-Status: done
+Status: todo
 Depends on: none
-Tester: no. The steps need a real Google account in the system browser and native window focus, which the tester can't drive.
+Tester: yes. The menu and its contents are visible in the DOM. The tester must not click Sign out.
 
-- In `src-tauri/src/google_oauth.rs`, after emitting `google-oauth:redirect`, call `show_main_window` behind `#[cfg(desktop)]`. Make it `pub(crate)` in `src-tauri/src/lib.rs`.
-- Add `<script>window.close()</script>` to `PAGE`, keeping its current text.
+- In `components/shell/AppLayout.tsx`, when no notebook is selected and a user is signed in, render `AccountMenu` in a fixed top-right container alongside `children`. Keep the existing full layout unchanged when a notebook is selected.
+- Check the comment in `AccountMenu` about where it mounts, and update it if it's no longer accurate.
 
-Files: `src-tauri/src/google_oauth.rs`, `src-tauri/src/lib.rs`
+Files: `components/shell/AppLayout.tsx`, possibly `components/topbar/AccountMenu.tsx` (comment only)
 
 Acceptance:
-- After any redirect to `/` on the listener (success, `error=access_denied` or a wrong `state`), the main window is shown, unminimized and focused.
-- The served page contains a `window.close()` script and the "You can close this tab and return to SkyLines." text.
-- Requests for other paths (such as `/favicon.ico`) still get a 404 and neither focus the window nor end the wait.
+- On the picker (signed in, no notebook selected), the account menu button is visible in the top-right corner. Opening it shows the signed-in email and a "Sign out" item.
+- Public routes and pop-out windows (`/sticky`, `/image-editor`) don't render it, because `AppLayout` isn't used there.
+- With a notebook open, there is exactly one account menu (the top bar's).
+
+Test steps:
+1. Signed in as `dev@skylines.local`. Save localStorage `skylines:lastOpen:<uid>`, remove it, and reload. The notebook picker shows.
+2. The account menu button is in the top-right corner. Open it: it shows `dev@skylines.local` and a "Sign out" item. Don't click Sign out. Close the menu.
+3. Open a notebook from the picker. Exactly one account menu exists (in the top bar).
+4. Restore the saved lastOpen value and reload.
+
+### T3 Sign-in and sign-up errors say what went wrong
+
+Status: todo
+Depends on: none
+Tester: no. The new messages need a signed-out app, an offline network or rate limiting, which the tester can't create safely.
+
+- Add `lib/auth/errors.ts` with `authErrorMessage(err: unknown, fallback: string): string`, mapping the codes listed in Decisions. Use `FirebaseError` from `firebase/app`.
+- Use it in `handleEmail` on login (fallback "Sign-in failed. Please try again.") and in `handleSubmit` on register (fallback "Registration failed. Please try again."), replacing the hard-coded message and the `msg.includes` check.
+- Keep the length and match checks on register as they are.
+
+Files: new `lib/auth/errors.ts`, `app/login/page.tsx`, `app/register/page.tsx`
+
+Acceptance:
+- Login no longer shows "Invalid email or password." for network or rate-limit failures; each code in Decisions maps to its message.
+- Register maps `email-already-in-use`, `invalid-email`, `weak-password`, network and rate-limit errors to their messages.
+- Unmapped errors show the fallback and are logged with `console.error`.
 
 Test steps (manual):
-1. Signed out, click "Continue with Google" and choose an account. SkyLines comes to the front, signed in. The browser tab either closes or shows the close-this-tab line.
-2. Click "Continue with Google", minimize SkyLines, then cancel on Google's page. SkyLines comes back to the front showing "Google sign-in cancelled.".
-3. On macOS, note whether the window actually comes in front of the browser. If it doesn't, report it.
+1. Signed out, turn off Wi-Fi and sign in. "Can't reach the sign-in service…" shows.
+2. Sign in with a wrong password. "Invalid email or password." shows.
+3. Sign up with an email that already has an account. The "already exists" message shows.
 
-### T3 Signing in as another account starts clean
+### T4 Google sign-in on sign-up, and a clear note when it isn't set up
 
-Status: done
+Status: todo
 Depends on: none
-Tester: yes. A note owned by another user can be seeded in SQLite and pointed to from localStorage, then the restore and canvas routes are observable.
+Tester: yes. Both pages render while signed in, so headings and button state can be checked without clicking Google.
 
-- **`lib/lastOpen.ts`.** Key the stored value by uid (`skylines:lastOpen:<uid>`). `getLastOpen` / `recordNoteOpened` / the other helpers take the uid, and their callers pass it (see Context). Remove the old key once.
-- **`stores/appStore.ts`.** Add a `resetForUser()` action that restores every data and navigation slice listed in Context to its initial value, including `notebooksLoaded: false`. Call it from `components/AppShell.tsx` whenever the signed-in uid changes, before the data hooks refetch.
-- **Restore effect** (`AppShell.tsx` ~142-185) **and `app/canvas/page.tsx`.** Treat a note whose `userId` isn't the signed-in uid as missing. In the canvas page, a missing or foreign note does `router.replace("/")` and never calls `recordNoteOpened` or `visitNote`. Apply the same rule to `app/sticky/page.tsx` for a foreign sticky note (show its existing not-found handling or close, whichever it does today for a missing id).
-- **`lib/sync/engine.ts`.** A stopped engine never schedules work. Check the engine generation (or an equivalent stopped flag) in `attemptPush` and `scheduleBackoffRetry` before scheduling, and make the follow-up push use the current user, never a stale closure id.
+- Move `handleGoogle` and its button from `app/login/page.tsx` into `components/auth/GoogleSignInButton.tsx`. Its props are `disabled`, `onBusyChange(busy)` and `onError(message)`. On success it does `router.replace("/")`, as today. Keep its comments about the system browser and the 5-minute limit.
+- Use the component on login (unchanged behaviour) and on register, below the form, behind the same "or" divider markup as login.
+- When `isGoogleSignInConfigured()` is false, render the button disabled, with the muted note from Decisions, and `console.warn` the missing env-var names once.
+- Change the login heading and subtitle as in Decisions.
 
-Files: `lib/lastOpen.ts`, `stores/appStore.ts`, `components/AppShell.tsx`, `app/canvas/page.tsx`, `app/page.tsx`, `lib/references/navigate.ts`, `app/sticky/page.tsx`, `lib/sync/engine.ts`
-
-Acceptance:
-- `lastOpen` is stored under a per-uid key, and a value under another uid's key is never read.
-- After the uid changes, the store's notebooks, notes, folders, selection, history, clipboard and pages are back to their initial values, and `notebooksLoaded` is false until the new user's notebooks load.
-- `/canvas?id=<a note owned by another user or missing>` ends on `/` with the full shell (top bar visible) and doesn't write `lastOpen`.
-- After `stopSyncEngine`, no push or retry timer runs for the old user, even if a push was in flight.
-- Email/password and Google sign-in still land on `/`.
-
-Test steps:
-1. Signed in as `dev@skylines.local`. With `webview_execute_js`, insert a note row into SQLite with a new UUID and `user_id = 'someone-else'` (no notebook, title "foreign-test"), and set localStorage `skylines:lastOpen:<dev uid>` to that note. Store the id on `window`.
-2. Reload the main window. It ends on `/` with the top bar visible, not on `/canvas`, and `skylines:lastOpen:<dev uid>` no longer points to the foreign note.
-3. Navigate to `/canvas?id=<foreign id>`. It ends on `/` with the top bar visible.
-4. Navigate to `/canvas?id=<an id that doesn't exist>`. Same result.
-5. Delete the seeded row and restore any lastOpen value you changed.
-6. Manual: sign in as account A, open a page, sign out, sign in as account B. B lands on its own notebooks with the full shell, and Back in the top bar doesn't go to A's note.
-
-### T4 Lookups only return the signed-in account's data
-
-Status: done
-Depends on: T3
-Tester: yes. Seeded rows owned by another user can be targeted through routes and references.
-
-- **By-id getters.** Give each getter listed in Context a `userId` parameter and filter `AND user_id = $n`. That includes `getPages(noteId, userId)`.
-- **Callers.** Update every caller:
-  - React code passes the auth user's uid.
-  - `lib/references/navigate.ts` and other module code use `auth.currentUser?.uid`, and treat no user as not found.
-  - `lib/stickyWindow.ts` follows the same rule.
-  - Sync code (`lib/sync/pull.ts` and others) passes the engine's user id.
-- Grep for every call site; nothing may call a by-id getter without a user id.
-
-Files: `lib/db/notes.ts`, `lib/db/folders.ts`, `lib/db/notebooks.ts`, `lib/db/pages.ts`, `lib/db/stickyNotes.ts` and their callers (including `lib/references/navigate.ts`, `lib/references/resolve.ts`, `lib/stickyWindow.ts`, `lib/sync/pull.ts`, `components/canvas/`, `components/sidebar/`, `app/`)
+Files: new `components/auth/GoogleSignInButton.tsx`, `app/login/page.tsx`, `app/register/page.tsx`
 
 Acceptance:
-- Every by-id getter and `getPages` takes a user id and returns nothing (null or an empty list) for rows owned by another user.
-- No call site calls them without a user id (`npx tsc --noEmit` enforces the new signatures).
-- Following a reference to another user's note, page or sticky note does nothing, or shows the existing "missing" state, instead of opening it.
-- Pull still applies remote changes for the signed-in user (create, edit and delete on another device still show up).
+- Login and register both show "Continue with Google". Only one copy of the Google flow exists in the codebase.
+- While Google sign-in runs, the other buttons on that page are disabled and the button reads "Waiting for browser…", as login does today.
+- Unconfigured builds show the disabled button and "Google sign-in isn't set up in this build.". No UI text mentions env-var names.
+- The login heading is "Sign in to Skylines". "Welcome back" no longer appears.
 
 Test steps:
-1. Signed in as `dev@skylines.local`, seed with `webview_execute_js` a foreign note row and a foreign sticky-note row (`user_id = 'someone-else'`, new UUIDs).
-2. Navigate to `/canvas?id=<foreign note>`. It ends on `/`. Open `/sticky?id=<foreign sticky>` the way the app opens sticky windows, if reachable. It doesn't show the foreign content.
-3. In a test note of your own, insert a reference chip pointing at the foreign note id (as the existing reference tests do). Clicking it doesn't open the foreign note, and its chip shows the missing state.
-4. Your own notes, pages and sticky notes still open normally, and a reference to your own note still works.
-5. Delete the seeded rows and the test note.
+1. Navigate the main window to `/login`. The heading is "Sign in to Skylines" and "Continue with Google" is enabled (`.env.local` has both Google vars). Don't click it.
+2. Navigate to `/register`. An "or" divider and an enabled "Continue with Google" button show below the form.
+3. Navigate back to `/`.
+4. Manual: from sign-up, Continue with Google with a new Google account creates the account and lands on `/`.
+
+### T5 Server side of the 6-digit password reset
+
+Status: todo
+Depends on: none
+Tester: no. Nothing runs until the user deploys the functions.
+
+- **Package.** Create a `functions/` package in TypeScript:
+  - Dependencies: `firebase-functions` (v2 API), `firebase-admin`, `nodemailer` and `@types/nodemailer`.
+  - `engines.node` is a runtime Cloud Functions supports (22), and the build outputs to `functions/lib`.
+- **Firebase config.** Add a `functions` entry to `firebase.json` (`source: "functions"`, with a predeploy build).
+- **Git and type checking.** Add `functions/lib` and `functions/node_modules` to `.gitignore`. Exclude `functions` from the root `tsconfig.json`, so `npx tsc --noEmit` and `npm run build` don't type-check it.
+- **Pure helpers** in `functions/src/resetCode.ts`:
+  - email normalization (trim and lowercase)
+  - the doc id, `sha256(email)`
+  - code generation with `crypto.randomInt`, zero-padded to 6 digits
+  - code hashing
+  - the cooldown and hourly-limit decision
+
+  Add a small `node:test` file for them, run by `npm test` in `functions/`.
+- **Callables** in `functions/src/index.ts`, built with `onCall` and secrets `defineSecret("GMAIL_USER")` and `defineSecret("GMAIL_APP_PASSWORD")`:
+  - `requestPasswordReset({ email })`
+    - Validates the email (`invalid-email`).
+    - Applies the cooldown and hourly limit (`cooldown` with `retryAfterSeconds`, or `too-many-requests`).
+    - Looks up the user with `getAuth().getUserByEmail`. With no user, it returns `{ ok: true }` without sending.
+    - Otherwise it stores the hashed code, expiry, attempt count and send times in `passwordResets/{docId}`, then emails the code through nodemailer with Gmail SMTP. The subject is "Your Skylines password reset code", and the body gives the code, says it expires in 15 minutes, and says to ignore the email if the user didn't ask for it.
+  - `confirmPasswordReset({ email, code, newPassword })`
+    - Runs in a Firestore transaction.
+    - A missing doc gives `invalid-code`. A past expiry gives `expired`.
+    - A wrong code increments the attempts and gives `invalid-code`, or deletes the doc and gives `too-many-attempts` at 5.
+    - A password shorter than 6 characters gives `weak-password`.
+    - On success it runs `updateUser(uid, { password })` and `revokeRefreshTokens(uid)`, deletes the doc and returns `{ ok: true }`.
+  - All errors are `HttpsError` with `details.reason`, as in Decisions.
+- **Docs.** Add a "Password reset email" section to `README.md` with the manual setup:
+  1. Upgrade the project to Blaze.
+  2. Create a Gmail app password (needs 2-Step Verification).
+  3. Run `npx firebase-tools login`.
+  4. Set both secrets with `npx firebase-tools functions:secrets:set …`.
+  5. Deploy with `npx firebase-tools deploy --only functions --project <project id>`.
+- **CLAUDE.md.** Add `(cd functions && npm run build && npm test)` to `## Verification`. Add a Gotcha that functions are deployed manually by the user and that agents must never deploy.
+
+Files: new `functions/package.json`, `functions/tsconfig.json`, `functions/src/index.ts`, `functions/src/resetCode.ts`, `functions/src/resetCode.test.ts`; `firebase.json`, `.gitignore`, `tsconfig.json`, `README.md`, `CLAUDE.md`
+
+Acceptance:
+- `(cd functions && npm install && npm run build && npm test)` exits 0, and the root verification commands still pass.
+- The code is never stored or logged in plain text. A new request replaces the old code. The expiry, cooldown, hourly-limit and attempt rules match Decisions.
+- A reset request for an unknown email returns `{ ok: true }` and sends nothing. Confirming with no stored code returns `invalid-code`.
+- `firestore.rules` is unchanged.
+- The README lists every manual setup step, and nothing in the task runs `firebase login` or a deploy.
+
+Test steps (manual, after the user deploys):
+1. Request a reset for your real email. An email with a 6-digit code arrives.
+2. Request again within 60 seconds. The call fails with reason `cooldown`.
+
+### T6 Forgot-password screens in the app
+
+Status: todo
+Depends on: T3, T5
+Tester: yes. The screens, validation and the unknown-email path are observable. Reading a real code from an inbox is manual.
+
+- Export `functions = getFunctions(app)` from `lib/firebase.ts`. Add `/forgot-password` to `PUBLIC_ROUTES` in `components/AppShell.tsx`.
+- New `app/forgot-password/page.tsx`, in the same card layout as login:
+  - **Step 1, "Reset your password".** An email field (prefilled from `?email=`), a "Send code" button and a "Back to sign in" link. It calls `requestPasswordReset` through `httpsCallable`.
+  - **Step 2.** The line "If an account exists for <email>, we've emailed a 6-digit code. It expires in 15 minutes." Then:
+    - A code field (`inputMode="numeric"`, `autoComplete="one-time-code"`, keeps digits only, max 6, so a pasted "123 456" works).
+    - "New password" and "Confirm password" `PasswordInput`s (`new-password`), checked like register: length first, then match.
+    - A "Reset password" button.
+    - "Resend code", disabled with a "Resend code in Ns" countdown for 60 seconds after each send, or for `retryAfterSeconds` on `cooldown`.
+    - "Use a different email" (back to step 1).
+- **On success**, run `signInWithEmailAndPassword` with the new password, then `router.replace("/")`. If that sign-in fails, go to `/login`.
+- **Error messages by reason:**
+  - `invalid-code`: "That code isn't right."
+  - `expired`: "That code has expired. Send a new one."
+  - `too-many-attempts`: "Too many wrong codes. Send a new one."
+  - `cooldown`: wait message using the seconds
+  - `too-many-requests`: "Too many codes requested. Try again in an hour."
+  - `invalid-email`: "That email address doesn't look right."
+  - `weak-password`: "Password must be at least 6 characters."
+  - Anything else, including the functions not being deployed: "Couldn't reach the password reset service. Try again later." Use `authErrorMessage` for network errors.
+- **In `app/login/page.tsx`**, replace the "Forgot password?" button with the link from Decisions, and remove `handleForgotPassword`, `resetMessage`, `resetLoading`, `sendPasswordResetEmail` and `window.prompt`.
+
+Files: new `app/forgot-password/page.tsx`, `lib/firebase.ts`, `components/AppShell.tsx`, `app/login/page.tsx`
+
+Acceptance:
+- "Forgot password?" on login opens `/forgot-password` with the typed email prefilled. The page works signed out.
+- Step 2 can't submit with a code that isn't 6 digits, a short password or mismatched passwords, and these checks make no server call.
+- Resend is disabled during its countdown and re-enables afterwards.
+- A successful reset signs the user in with the new password and lands on `/`.
+- `app/login/page.tsx` no longer references `sendPasswordResetEmail` or `window.prompt`.
+
+Test steps:
+1. Navigate the main window to `/login`, type `nobody-reset-test@example.com` and click "Forgot password?". `/forgot-password` shows with that email filled in.
+2. Click "Send code".
+   - If the functions are deployed, step 2 shows the "If an account exists…" line and Resend shows a countdown.
+   - If they aren't deployed, "Couldn't reach the password reset service…" shows. Stop here and report it.
+3. Type `12a3` in the code field. Only `123` remains. Enter `123456`, password `abcdef` and confirm `abcdeg`, then submit. "Passwords don't match." shows and no request is sent.
+4. Make both passwords `abcdef` and submit. "That code isn't right." shows (no code exists for that email).
+5. "Use a different email" returns to step 1. Navigate back to `/`.
+6. Manual: signed out, reset your real account's password with the emailed code. You end up signed in on `/`, and the new password works on login.
+
+### T7 Remove code nothing uses
+
+Status: todo
+Depends on: T1, T2, T3, T4, T5, T6
+Tester: yes, as a smoke test. The app still starts, opens notebooks, notes and sticky notes, and the sign-in pages render.
+
+- **What to look for.** Review the whole project (`app/`, `components/`, `lib/`, `hooks/`, `stores/`, `types/`, `src-tauri/`, `functions/`) for code nothing uses, and remove it:
+  - unused files, exports, components and hooks (known: `hooks/useAuth.ts`, a duplicate of `AuthProvider`)
+  - npm and Cargo dependencies nothing imports
+  - Tauri plugins and capability permissions nothing calls
+  - commented-out code
+- **Deep-link plugin.** The `skylines://` deep-link plugin is believed unused (`@tauri-apps/plugin-deep-link`, `tauri-plugin-deep-link`, its `tauri.conf.json` config). Remove it only after confirming nothing reads deep links, including features of `tauri-plugin-single-instance`.
+- **Tools.** One-off tools such as `npx knip` are fine; don't add them to `package.json`.
+- **Never remove:**
+  - existing SQL migrations
+  - capability files for window labels
+  - Tauri commands invoked by string from the frontend
+  - `scripts/`
+  - `DevLogin`
+  - anything reached only through dynamic strings
+- **Handover.** List every removal with its reason.
+
+Files: across the project; lockfiles update with dependency removals
+
+Acceptance:
+- `hooks/useAuth.ts` is gone, and every removed item is listed in the handover with why it was unused.
+- All verification commands, including the functions build and test, pass.
+- No user-visible behaviour changes.
+
+Test steps:
+1. Reload the main window. The app starts signed in as `dev@skylines.local`, and opening a notebook and a note works.
+2. Open an existing sticky note window and close it again.
+3. Navigate to `/login`, `/register` and `/forgot-password`. Each renders. Navigate back to `/`.
 
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
-- [x] T1 Show/hide passwords and confirm the password on sign-up
-- [x] T2 Google sign-in brings SkyLines back to the front
-- [x] T3 Signing in as another account starts clean
-- [x] T4 Lookups only return the signed-in account's data
