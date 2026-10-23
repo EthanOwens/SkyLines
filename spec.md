@@ -66,7 +66,7 @@ Make SkyLines easier for someone opening it for the first time. The first screen
 
 ### T1 An open notebook shows a real empty state
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes. The empty state and the note it creates are observable in the DOM and the URL.
 
@@ -293,3 +293,4 @@ Test steps:
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 An open notebook shows a real empty state

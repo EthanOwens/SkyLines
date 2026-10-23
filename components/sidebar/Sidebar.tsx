@@ -1,11 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "firebase/auth";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { createNote } from "@/lib/db/notes";
+import { useCreateNote } from "@/hooks/useCreateNote";
 import { createFolder } from "@/lib/db/folders";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
 import { nextOrderValue } from "@/lib/dnd/sidebar";
@@ -63,37 +63,13 @@ export function Sidebar({ user }: Props) {
   const selectedFolderId = useAppStore((s) => s.selectedFolderId);
   const notes = useAppStore((s) => s.notes);
   const folders = useAppStore((s) => s.folders);
-  const [creating, setCreating] = useState(false);
+  const { create: newNote, creating } = useCreateNote(user.uid);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
   // Create in the open notebook; fall back to the default notebook only when
   // none is open.
   async function resolveNotebookId() {
     return selectedNotebookId ?? (await getOrCreateDefaultNotebookId(user.uid));
-  }
-
-  async function newNote() {
-    if (creating) return;
-    setCreating(true);
-    try {
-      const notebookId = await resolveNotebookId();
-      // Create inside the selected folder if there is one, and append after the
-      // existing items instead of the default order 0.
-      const siblingNoteOrders = notes
-        .filter((n) => n.folderId === (selectedFolderId ?? null) && n.notebookId === notebookId)
-        .map((n) => n.order);
-      const id = await createNote(
-        user.uid,
-        "canvas",
-        notebookId,
-        selectedFolderId ?? undefined,
-        undefined,
-        nextOrderValue(siblingNoteOrders),
-      );
-      router.push(`/canvas?id=${id}`);
-    } finally {
-      setCreating(false);
-    }
   }
 
   async function newFolder() {
