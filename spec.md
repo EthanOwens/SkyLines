@@ -112,7 +112,7 @@ Test steps:
 
 ### T3 Sign-in and sign-up errors say what went wrong
 
-Status: todo
+Status: done
 Depends on: none
 Tester: no. The new messages need a signed-out app, an offline network or rate limiting, which the tester can't create safely.
 
@@ -295,3 +295,4 @@ Test steps:
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 An open notebook shows a real empty state
 - [x] T2 The account menu shows on the notebook picker
+- [x] T3 Sign-in and sign-up errors say what went wrong

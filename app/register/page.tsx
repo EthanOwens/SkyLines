@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { authErrorMessage } from "@/lib/auth/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/PasswordInput";
@@ -35,12 +36,7 @@ export default function RegisterPage() {
       if (name) await updateProfile(cred.user, { displayName: name });
       router.replace("/");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Registration failed.";
-      if (msg.includes("email-already-in-use")) {
-        setError("An account with this email already exists.");
-      } else {
-        setError("Registration failed. Please try again.");
-      }
+      setError(authErrorMessage(err, "Registration failed. Please try again."));
     } finally {
       setLoading(false);
     }

@@ -15,6 +15,7 @@ import { open as openInBrowser } from "@tauri-apps/plugin-shell";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { auth } from "@/lib/firebase";
+import { authErrorMessage } from "@/lib/auth/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/PasswordInput";
@@ -49,8 +50,8 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       router.replace("/");
-    } catch {
-      setError("Invalid email or password.");
+    } catch (err) {
+      setError(authErrorMessage(err, "Sign-in failed. Please try again."));
     } finally {
       setLoading(false);
     }
