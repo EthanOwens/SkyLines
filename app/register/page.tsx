@@ -8,6 +8,7 @@ import { auth } from "@/lib/firebase";
 import { authErrorMessage } from "@/lib/auth/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { PasswordInput } from "@/components/ui/PasswordInput";
 
 export default function RegisterPage() {
@@ -18,6 +19,7 @@ export default function RegisterPage() {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -78,10 +80,21 @@ export default function RegisterPage() {
             required
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button type="submit" className="w-full" disabled={loading || googleLoading}>
             {loading ? "Creating account…" : "Create account"}
           </Button>
         </form>
+
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-border" />
+          </div>
+          <div className="relative flex justify-center text-xs text-muted-foreground">
+            <span className="bg-background px-2">or</span>
+          </div>
+        </div>
+
+        <GoogleSignInButton disabled={loading} onBusyChange={setGoogleLoading} onError={setError} />
 
         <p className="text-center text-sm text-muted-foreground">
           Already have an account?{" "}

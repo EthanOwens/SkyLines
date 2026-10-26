@@ -134,7 +134,7 @@ Test steps (manual):
 
 ### T4 Google sign-in on sign-up, and a clear note when it isn't set up
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes. Both pages render while signed in, so headings and button state can be checked without clicking Google.
 
@@ -296,3 +296,4 @@ Test steps:
 - [x] T1 An open notebook shows a real empty state
 - [x] T2 The account menu shows on the notebook picker
 - [x] T3 Sign-in and sign-up errors say what went wrong
+- [x] T4 Google sign-in on sign-up, and a clear note when it isn't set up
