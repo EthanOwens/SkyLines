@@ -90,7 +90,7 @@ Test steps:
 
 ### T2 The account menu shows on the notebook picker
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes. The menu and its contents are visible in the DOM. The tester must not click Sign out.
 
@@ -294,3 +294,4 @@ Test steps:
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 An open notebook shows a real empty state
+- [x] T2 The account menu shows on the notebook picker

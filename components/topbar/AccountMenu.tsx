@@ -36,8 +36,8 @@ import { copyBugReport } from "@/lib/bugReport";
 // themes that reuse the id.
 export const SYSTEM_THEME_VALUE = "__system__";
 
-// Only mounts for a signed-in user inside the app shell, so the only account
-// action is Sign out. The engine doesn't track a last-synced time, so sync
+// Mounts for a signed-in user inside the app shell (the top bar, or the top
+// right of the notebook picker), so the only account action is Sign out. The engine doesn't track a last-synced time, so sync
 // status is shown as a label.
 const SYNC_STATUS_DISPLAY: Record<
   string,
