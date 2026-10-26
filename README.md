@@ -90,6 +90,20 @@ npx firebase-tools deploy --only firestore:rules --project <NEXT_PUBLIC_FIREBASE
 
 Before the first deploy, compare it with the rules currently in the Firebase console so you don't overwrite anything you need.
 
+### Password reset email
+
+"Forgot password?" emails a 6-digit code from the Cloud Functions in `functions/`, through Gmail SMTP. One-time setup:
+
+1. Upgrade the Firebase project to the Blaze plan (Cloud Functions require it).
+2. Create a Gmail app password for the sending account (needs 2-Step Verification): https://myaccount.google.com/apppasswords
+3. Run `npx firebase-tools login`.
+4. Set both secrets:
+   ```
+   npx firebase-tools functions:secrets:set GMAIL_USER --project <project id>
+   npx firebase-tools functions:secrets:set GMAIL_APP_PASSWORD --project <project id>
+   ```
+5. Deploy: `npx firebase-tools deploy --only functions --project <project id>`
+
 ### Releasing
 
 `npm version patch|minor|major` bumps `package.json` (the Tauri version follows it), commits and tags. `minor` from 0.9 gives 0.10.0, so use `major` or `npm version 1.0.0` to reach 1.0.0.

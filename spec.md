@@ -159,7 +159,7 @@ Test steps:
 
 ### T5 Server side of the 6-digit password reset
 
-Status: todo
+Status: done
 Depends on: none
 Tester: no. Nothing runs until the user deploys the functions.
 
@@ -297,3 +297,4 @@ Test steps:
 - [x] T2 The account menu shows on the notebook picker
 - [x] T3 Sign-in and sign-up errors say what went wrong
 - [x] T4 Google sign-in on sign-up, and a clear note when it isn't set up
+- [x] T5 Server side of the 6-digit password reset

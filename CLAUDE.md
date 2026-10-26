@@ -14,6 +14,7 @@ Run all of these after every change. Each must exit 0:
 - `npx tsc --noEmit`
 - `npm run build`
 - `(cd src-tauri && cargo check)`
+- `(cd functions && npm run build && npm test)`
 
 ## Testing
 
@@ -48,6 +49,7 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 - Every window created at runtime needs a capability file in `src-tauri/capabilities/` matching its label (`main`, `sticky-*`, `image-editor-*`), or its webview gets no permissions.
 - The app is built on both Windows and macOS. On macOS, Rust linking needs `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk` because of a stray beta SDK.
 - `.env.local` holds the Firebase `NEXT_PUBLIC_*` config, which is baked in at build time.
+- Cloud Functions (`functions/`) are deployed manually by the user. Agents must never deploy them, run `firebase login` or set secrets.
 
 ## Preferences and notes
 
