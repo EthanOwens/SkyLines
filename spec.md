@@ -212,7 +212,7 @@ Test steps (manual, after the user deploys):
 
 ### T6 Forgot-password screens in the app
 
-Status: todo
+Status: done
 Depends on: T3, T5
 Tester: yes. The screens, validation and the unknown-email path are observable. Reading a real code from an inbox is manual.
 
@@ -298,3 +298,4 @@ Test steps:
 - [x] T3 Sign-in and sign-up errors say what went wrong
 - [x] T4 Google sign-in on sign-up, and a clear note when it isn't set up
 - [x] T5 Server side of the 6-digit password reset
+- [x] T6 Forgot-password screens in the app

@@ -23,7 +23,7 @@ import { SYSTEM_THEME_VALUE } from "@/components/topbar/AccountMenu";
 // client component because app/layout.tsx is a server component.
 //
 // Public routes are never redirected to /login.
-const PUBLIC_ROUTES = ["/login", "/register"];
+const PUBLIC_ROUTES = ["/login", "/register", "/forgot-password"];
 
 function isPublicRoute(pathname: string | null): boolean {
   if (!pathname) return false;

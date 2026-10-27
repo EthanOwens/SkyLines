@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   signInWithEmailAndPassword,
-  sendPasswordResetEmail,
   createUserWithEmailAndPassword,
 } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
@@ -23,16 +22,13 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [resetMessage, setResetMessage] = useState("");
-  const [resetLoading, setResetLoading] = useState(false);
   const [devLoginLoading, setDevLoginLoading] = useState(false);
 
-  const anyActionInFlight = loading || resetLoading || googleLoading || devLoginLoading;
+  const anyActionInFlight = loading || googleLoading || devLoginLoading;
 
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    setResetMessage("");
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
@@ -41,22 +37,6 @@ export default function LoginPage() {
       setError(authErrorMessage(err, "Sign-in failed. Please try again."));
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleForgotPassword() {
-    setError("");
-    setResetMessage("");
-    const targetEmail = email.trim() || window.prompt("Email", "")?.trim() || "";
-    if (!targetEmail) return;
-    setResetLoading(true);
-    try {
-      await sendPasswordResetEmail(auth, targetEmail);
-      setResetMessage("Check your email for a password reset link.");
-    } catch {
-      setError("Could not send reset email. Please check the address and try again.");
-    } finally {
-      setResetLoading(false);
     }
   }
 
@@ -84,17 +64,14 @@ export default function LoginPage() {
             required
           />
           <div className="text-right">
-            <button
-              type="button"
-              onClick={handleForgotPassword}
-              disabled={anyActionInFlight}
+            <Link
+              href={`/forgot-password?email=${encodeURIComponent(email.trim())}`}
               className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
             >
-              {resetLoading ? "Sending…" : "Forgot password?"}
-            </button>
+              Forgot password?
+            </Link>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
-          {resetMessage && <p className="text-sm text-muted-foreground">{resetMessage}</p>}
           <Button type="submit" className="w-full" disabled={anyActionInFlight}>
             {loading ? "Signing in…" : "Sign in"}
           </Button>
@@ -114,8 +91,7 @@ export default function LoginPage() {
           onBusyChange={setGoogleLoading}
           onError={(msg) => {
             setError(msg);
-            setResetMessage("");
-          }}
+                  }}
         />
 
         <p className="text-center text-sm text-muted-foreground">
@@ -132,8 +108,7 @@ export default function LoginPage() {
             onLoadingChange={setDevLoginLoading}
             onError={(msg) => {
               setError(msg);
-              setResetMessage("");
-            }}
+                      }}
           />
         )}
       </div>
