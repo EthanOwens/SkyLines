@@ -33,13 +33,6 @@
       }
     }
   },
-  "plugins": {
-    "deep-link": {
-      "desktop": {
-        "schemes": ["skylines"]
-      }
-    }
-  },
   "bundle": {
     "active": true,
     "targets": "all",

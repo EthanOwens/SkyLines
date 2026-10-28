@@ -258,7 +258,7 @@ Test steps:
 
 ### T7 Remove code nothing uses
 
-Status: todo
+Status: done
 Depends on: T1, T2, T3, T4, T5, T6
 Tester: yes, as a smoke test. The app still starts, opens notebooks, notes and sticky notes, and the sign-in pages render.
 
@@ -299,3 +299,4 @@ Test steps:
 - [x] T4 Google sign-in on sign-up, and a clear note when it isn't set up
 - [x] T5 Server side of the 6-digit password reset
 - [x] T6 Forgot-password screens in the app
+- [x] T7 Remove code nothing uses
