@@ -87,11 +87,11 @@ export async function hardDeleteNote(noteId: string): Promise<void> {
   notifyDataChange("remote");
 }
 
-export async function getNoteById(noteId: string): Promise<Note | null> {
+export async function getNoteById(noteId: string, userId: string): Promise<Note | null> {
   const db = await getDb();
   const rows = await db.select<NoteRow[]>(
-    `SELECT * FROM ${TABLE} WHERE id = $1 AND deleted_at IS NULL`,
-    [noteId],
+    `SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+    [noteId, userId],
   );
   return rows.length > 0 ? rowToNote(rows[0]) : null;
 }
@@ -100,9 +100,9 @@ export async function getNoteById(noteId: string): Promise<Note | null> {
  * Includes soft-deleted rows: pull sync must find tombstones, or it would
  * re-insert them.
  */
-export async function getNoteRowById(noteId: string): Promise<Note | null> {
+export async function getNoteRowById(noteId: string, userId: string): Promise<Note | null> {
   const db = await getDb();
-  const rows = await db.select<NoteRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [noteId]);
+  const rows = await db.select<NoteRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2`, [noteId, userId]);
   return rows.length > 0 ? rowToNote(rows[0]) : null;
 }
 

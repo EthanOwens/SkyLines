@@ -1,3 +1,4 @@
+import { resolveImageSrc } from "@/lib/images/localImages";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { parseReference, type ReferenceKind } from "@/lib/references/format";
 import { getLinkPreview, type LinkPreview } from "@/lib/linkPreview";
@@ -35,7 +36,7 @@ function fillPreview(card: HTMLElement, p: LinkPreview) {
   card.insertBefore(body, card.firstChild);
   if (p.image) {
     const img = document.createElement("img");
-    img.src = p.image;
+    img.src = resolveImageSrc(p.image);
     img.className = p.large ? "hover-preview-image hover-preview-large" : "hover-preview-thumb";
     if (p.large) card.appendChild(img);
     else body.appendChild(img);
@@ -68,7 +69,7 @@ async function fillCard(card: HTMLElement, target: Element) {
   if (resolved.previewText) line(card, "hover-preview-text", resolved.previewText);
   else if (resolved.previewImage) {
     const img = document.createElement("img");
-    img.src = resolved.previewImage;
+    img.src = resolveImageSrc(resolved.previewImage);
     img.className = "hover-preview-image";
     card.appendChild(img);
   }

@@ -1,11 +1,5 @@
+mod google_oauth;
 mod link_preview;
-
-use tauri_plugin_deep_link::DeepLinkExt;
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 // Sticky note windows are grouped separately from the main window on the
 // Windows taskbar, under their own AppUserModelID and icon.
@@ -184,7 +178,7 @@ fn setup_tray_and_menu(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 #[cfg(desktop)]
-fn show_main_window(app: &tauri::AppHandle) {
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
     use tauri::Manager;
 
     if let Some(window) = app.get_webview_window("main") {
@@ -525,21 +519,12 @@ pub fn run() {
         },
     ];
 
-    // Google sign-in finishes in the system browser and returns through a
-    // skylines:// deep link, because Google blocks OAuth inside embedded
-    // webviews (see lib/auth/googleOAuth.ts).
-    //
-    // single-instance must be registered first: on Windows and Linux the OS
-    // delivers a deep link by starting a second process, which this plugin
-    // forwards to the running instance before exiting.
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
-            // Empty on purpose: the plugin's deep-link feature already forwards
-            // argv to the deep-link plugin.
-        }));
+        // Registered first so a second launch exits before anything else starts.
+        builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}));
 
         // Only the handler is set up here. The shortcut itself is registered in
         // setup(), so a collision with another app's shortcut can't fail
@@ -568,10 +553,22 @@ pub fn run() {
     }
 
     builder
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: None,
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                ])
+                .max_file_size(1_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(2))
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_screenshots::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
@@ -580,14 +577,6 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            // Installers register skylines:// with the OS. Dev builds on
-            // Windows, and all Linux builds, register it at runtime instead.
-            // macOS only picks it up from an installed .app bundle.
-            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
-            {
-                app.deep_link().register_all()?;
-            }
-
             #[cfg(desktop)]
             setup_tray_and_menu(app)?;
 
@@ -613,7 +602,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, setup_sticky_window, focus_main_window, link_preview::fetch_page_head, link_preview::fetch_image])
+        .invoke_handler(tauri::generate_handler![setup_sticky_window, focus_main_window, link_preview::fetch_page_head, link_preview::fetch_image, google_oauth::google_oauth_listen, google_oauth::google_oauth_exchange])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -95,3 +95,11 @@ export interface StickyNote {
 }
 
 export type SyncStatus = "saved" | "syncing" | "offline" | "error";
+
+export interface SyncFailure {
+  table: "folders" | "notes" | "notebooks" | "pages" | "stickyNotes";
+  id: string;
+  name: string;
+  reason: "too-big" | "rejected";
+  message: string;
+}

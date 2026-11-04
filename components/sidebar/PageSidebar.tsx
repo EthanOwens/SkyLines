@@ -48,7 +48,7 @@ export function PageSidebar({ note }: Props) {
   // Selects preferId when present; if the selected page is gone, falls back to
   // the first page so the canvas never points at a deleted page.
   async function refresh(preferId?: string) {
-    const fresh = await getPages(note.id);
+    const fresh = await getPages(note.id, note.userId);
     setPages(fresh);
     const currentSelected = useAppStore.getState().selectedPageId;
     if (preferId && fresh.some((p) => p.id === preferId)) {
@@ -76,7 +76,7 @@ export function PageSidebar({ note }: Props) {
 
   async function handlePasteToEnd() {
     if (!clipboard || clipboard.type !== "page") return;
-    const pasted = await pastePageClipboardEntry(clipboard, { noteId: note.id }, pages);
+    const pasted = await pastePageClipboardEntry(clipboard, { noteId: note.id, userId: note.userId }, pages);
     if (pasted && clipboard.kind === "cut") {
       setClipboard(null);
     }

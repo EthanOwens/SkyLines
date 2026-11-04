@@ -5,6 +5,7 @@ import { useAuthContext } from "@/components/AuthProvider";
 import { useAppStore } from "@/stores/appStore";
 import { createNotebook } from "@/lib/db/notebooks";
 import { setLastOpenNotebook } from "@/lib/lastOpen";
+import { useCreateNote } from "@/hooks/useCreateNote";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenuContent } from "@/components/ui/dropdown-menu";
@@ -20,6 +21,9 @@ export default function Home() {
   const selectedNotebookId = useAppStore((s) => s.selectedNotebookId);
   const setSelectedNotebook = useAppStore((s) => s.setSelectedNotebook);
 
+  const { create: createNoteInOpenNotebook, creating: creatingNote } = useCreateNote(
+    user?.uid ?? "",
+  );
   const [newNotebookName, setNewNotebookName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +35,7 @@ export default function Home() {
 
   function openNotebook(id: string) {
     setSelectedNotebook(id);
-    setLastOpenNotebook(id);
+    if (user) setLastOpenNotebook(user.uid, id);
   }
 
   async function handleCreate() {
@@ -56,12 +60,13 @@ export default function Home() {
   if (selectedNotebookId && selectedNotebook) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-2">
-        <h1 className="text-xl font-semibold">
-          Notebook &quot;{selectedNotebook.name}&quot; is open
-        </h1>
+        <h1 className="text-xl font-semibold">{selectedNotebook.name}</h1>
         <p className="text-sm text-muted-foreground">
-          Sidebar/note view coming in a later subtask.
+          Pick a note in the sidebar, or create a new one.
         </p>
+        <Button onClick={() => void createNoteInOpenNotebook()} disabled={creatingNote}>
+          New note
+        </Button>
       </div>
     );
   }

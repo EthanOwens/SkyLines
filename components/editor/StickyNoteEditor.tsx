@@ -14,6 +14,7 @@ import { EditingContextMenu } from "@/components/canvas/RichTextShape";
 import { copyReference } from "@/lib/references/copy";
 import { STICKY_REVEAL_IMAGE_EVENT } from "@/lib/stickyWindow";
 import { revealImage } from "@/lib/tiptap/imageId";
+import { saveDataUrl } from "@/lib/images/localImages";
 import { openImageEditorWindow } from "@/lib/imageEditorWindow";
 import { useAuthContext } from "@/components/AuthProvider";
 import { InsertLinkDialog } from "./InsertLinkDialog";
@@ -39,6 +40,7 @@ interface Props {
 
 export function StickyNoteEditor({ note }: Props) {
   const [title, setTitle] = useState(note.title || "Untitled");
+  const [liveNote, setLiveNote] = useState(note);
   const [focused, setFocused] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const { user } = useAuthContext();
@@ -109,7 +111,7 @@ export function StickyNoteEditor({ note }: Props) {
       },
       handleDOMEvents: {
         contextmenu(_view, event) {
-          const img = (event.target as Element).closest?.("img[data-image-id]");
+          const img = (event.target as Element).closest?.("[data-image-id]");
           if (!img) return false;
           event.preventDefault();
           setImageMenu({
@@ -128,19 +130,21 @@ export function StickyNoteEditor({ note }: Props) {
         const target = event.target as HTMLElement;
         if (target.tagName !== "IMG") return false;
         event.preventDefault();
-        const originalSrc = (target as HTMLImageElement).src;
+        const originalSrc = view.state.doc.nodeAt(pos)?.attrs.src as string | undefined;
+        if (!originalSrc) return true;
         void (async () => {
           const sourceId = await openImageEditorWindow(originalSrc);
           const { listen } = await import("@tauri-apps/api/event");
-          const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, (e) => {
+          const unlisten = await listen<string>(`image-editor:saved:${sourceId}`, async (e) => {
             pendingImageEditorUnlistens.current.delete(unlisten);
+            unlisten();
+            const token = await saveDataUrl(e.payload);
             // The doc may have changed while the editor was open: make sure pos
             // still holds the same image before patching.
             const node = view.state.doc.nodeAt(pos);
             if (node && node.type.name === "image" && node.attrs.src === originalSrc) {
-              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: e.payload }));
+              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: token }));
             }
-            unlisten();
           });
           pendingImageEditorUnlistens.current.add(unlisten);
         })();
@@ -153,12 +157,16 @@ export function StickyNoteEditor({ note }: Props) {
       pendingContentRef.current = content;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
+        saveTimer.current = null;
         if (deletedRef.current) return;
         void updateStickyNote(note.id, { content });
         pendingContentRef.current = null;
       }, SAVE_DELAY_MS);
     },
   });
+
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
 
   // Window focus listener for both bars, and applies the saved pinned state to
   // the OS window on mount.
@@ -240,9 +248,19 @@ export function StickyNoteEditor({ note }: Props) {
 
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      const fn = await listen<{ id: string }>(STICKY_NOTE_CHANGED_EVENT, async (e) => {
+      const fn = await listen<{ id: string; remote?: boolean }>(STICKY_NOTE_CHANGED_EVENT, async (e) => {
         if (e.payload.id !== note.id || deletedRef.current) return;
-        const current = await getStickyNoteById(note.id).catch(() => undefined);
+        const current = await getStickyNoteById(note.id, note.userId).catch(() => undefined);
+        // A pulled change: reload unless this window has an unsaved edit.
+        if (current && e.payload.remote && !saveTimer.current && !pendingContentRef.current) {
+          setTitle(current.title || "Untitled");
+          setLiveNote(current);
+          editorRef.current?.commands.setContent((current.content as object) ?? "", { emitUpdate: false });
+          void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+            getCurrentWindow().setTitle(current.title || "Untitled"),
+          );
+          return;
+        }
         if (current !== null || deletedRef.current) return;
         discardPendingSave();
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -337,7 +355,7 @@ export function StickyNoteEditor({ note }: Props) {
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden">
       <StickyNoteTopBar
-        note={note}
+        note={liveNote}
         title={title}
         focused={focused}
         collapsed={collapsed}

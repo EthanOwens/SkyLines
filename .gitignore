@@ -47,3 +47,7 @@ src-tauri/gen/schemas
 
 # Claude Code local tooling settings
 .claude/settings.local.json
+
+# Cloud Functions
+functions/lib
+functions/node_modules

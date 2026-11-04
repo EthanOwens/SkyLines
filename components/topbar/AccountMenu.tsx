@@ -25,7 +25,10 @@ import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
 import { setSelectedThemeId as persistSelectedThemeId } from "@/lib/themes/selection";
 import { getSystemTheme, watchSystemThemeChanges } from "@/lib/themes/system";
 import { ThemeEditor } from "@/components/theme/ThemeEditor";
-import { LogOut, Palette, Cloud, CloudOff, Loader2, CheckCircle2 } from "lucide-react";
+import { LogOut, Palette, Cloud, CloudOff, Loader2, CheckCircle2, Bug, Check, FolderOpen } from "lucide-react";
+import { openPath } from "@tauri-apps/plugin-opener";
+import { appLogDir } from "@tauri-apps/api/path";
+import { copyBugReport } from "@/lib/bugReport";
 
 // The "System" theme: applies the light or dark theme to match the OS and keeps
 // following it. Stored as this sentinel rather than null so the effect below
@@ -33,8 +36,8 @@ import { LogOut, Palette, Cloud, CloudOff, Loader2, CheckCircle2 } from "lucide-
 // themes that reuse the id.
 export const SYSTEM_THEME_VALUE = "__system__";
 
-// Only mounts for a signed-in user inside the app shell, so the only account
-// action is Sign out. The engine doesn't track a last-synced time, so sync
+// Mounts for a signed-in user inside the app shell (the top bar, or the top
+// right of the notebook picker), so the only account action is Sign out. The engine doesn't track a last-synced time, so sync
 // status is shown as a label.
 const SYNC_STATUS_DISPLAY: Record<
   string,
@@ -50,10 +53,12 @@ export function AccountMenu() {
   const router = useRouter();
   const { user } = useAuthContext();
   const syncStatus = useAppStore((s) => s.syncStatus);
+  const syncFailures = useAppStore((s) => s.syncFailures);
   const availableThemes = useAppStore((s) => s.availableThemes);
   const selectedThemeId = useAppStore((s) => s.selectedThemeId);
   const setSelectedThemeId = useAppStore((s) => s.setSelectedThemeId);
   const [themeEditorOpen, setThemeEditorOpen] = useState(false);
+  const [reportStatus, setReportStatus] = useState<"idle" | "copied" | "failed">("idle");
 
   // Follows OS light/dark changes while "System" is selected; the cleanup
   // removes the listener on any other selection. Placed above the early return
@@ -86,10 +91,35 @@ export function AccountMenu() {
 
   const statusInfo = SYNC_STATUS_DISPLAY[syncStatus] ?? SYNC_STATUS_DISPLAY.saved;
   const StatusIcon = statusInfo.icon;
+  const firstFailure = syncFailures[0];
+  const statusLabel = firstFailure
+    ? `Couldn't sync: ${firstFailure.name || "Untitled"} (${firstFailure.reason === "too-big" ? "too big" : "rejected"})` +
+      (syncFailures.length > 1 ? ` and ${syncFailures.length - 1} more` : "")
+    : statusInfo.label;
 
   async function handleSignOut() {
     await signOut(auth);
     router.replace("/login");
+  }
+
+  async function handleCopyBugReport() {
+    if (reportStatus !== "idle") return;
+    try {
+      await copyBugReport(syncStatus, syncFailures);
+      setReportStatus("copied");
+    } catch (err) {
+      console.error("Copy bug report failed", err);
+      setReportStatus("failed");
+    }
+    setTimeout(() => setReportStatus("idle"), 1500);
+  }
+
+  async function handleOpenLogs() {
+    try {
+      await openPath(await appLogDir());
+    } catch (err) {
+      console.error("Open logs folder failed", err);
+    }
   }
 
   // Clear old overrides first, so a theme that sets fewer variables doesn't
@@ -139,7 +169,7 @@ export function AccountMenu() {
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled className="text-xs text-muted-foreground">
             <StatusIcon className={`mr-2 h-3 w-3 ${statusInfo.className}`} />
-            {statusInfo.label}
+            {statusLabel}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuSub>
@@ -168,9 +198,29 @@ export function AccountMenu() {
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
+          <DropdownMenuItem closeOnClick={false} onClick={() => void handleCopyBugReport()}>
+            {reportStatus === "copied" ? (
+              <Check className="mr-2 h-4 w-4" />
+            ) : (
+              <Bug className="mr-2 h-4 w-4" />
+            )}
+            {reportStatus === "copied"
+              ? "Copied"
+              : reportStatus === "failed"
+                ? "Couldn't copy"
+                : "Copy bug report"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void handleOpenLogs()}>
+            <FolderOpen className="mr-2 h-4 w-4" />
+            Open logs folder
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
             <LogOut className="mr-2 h-4 w-4" />
             Sign out
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+            SkyLines v{process.env.NEXT_PUBLIC_APP_VERSION} ({process.env.NEXT_PUBLIC_BUILD_COMMIT})
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

@@ -86,11 +86,11 @@ export async function hardDeleteFolder(folderId: string): Promise<void> {
   notifyDataChange("remote");
 }
 
-export async function getFolderById(folderId: string): Promise<Folder | null> {
+export async function getFolderById(folderId: string, userId: string): Promise<Folder | null> {
   const db = await getDb();
   const rows = await db.select<FolderRow[]>(
-    `SELECT * FROM ${TABLE} WHERE id = $1 AND deleted_at IS NULL`,
-    [folderId],
+    `SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+    [folderId, userId],
   );
   return rows.length > 0 ? rowToFolder(rows[0]) : null;
 }
@@ -99,9 +99,9 @@ export async function getFolderById(folderId: string): Promise<Folder | null> {
  * Includes soft-deleted rows: pull sync must find tombstones, or it would
  * re-insert them.
  */
-export async function getFolderRowById(folderId: string): Promise<Folder | null> {
+export async function getFolderRowById(folderId: string, userId: string): Promise<Folder | null> {
   const db = await getDb();
-  const rows = await db.select<FolderRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [folderId]);
+  const rows = await db.select<FolderRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2`, [folderId, userId]);
   return rows.length > 0 ? rowToFolder(rows[0]) : null;
 }
 

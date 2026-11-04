@@ -31,12 +31,10 @@ export async function ensureThemesDir(): Promise<string> {
 export interface LoadedThemesResult {
   dir: string;
   themes: Theme[];
-  // Reported for the spike page; not needed by the loader itself.
-  skipped: string[];
 }
 
 /**
- * Bad files are skipped and logged, never fatal: they're hand-edited, so typos
+ * Bad files are skipped, never fatal: they're hand-edited, so typos
  * are expected.
  */
 export async function loadThemes(): Promise<LoadedThemesResult> {
@@ -44,7 +42,6 @@ export async function loadThemes(): Promise<LoadedThemesResult> {
 
   const entries = await readDir(dir);
   const themes: Theme[] = [];
-  const skipped: string[] = [];
 
   for (const entry of entries) {
     if (entry.isDirectory) continue;
@@ -56,16 +53,13 @@ export async function loadThemes(): Promise<LoadedThemesResult> {
       const parsed: unknown = JSON.parse(raw);
       if (isTheme(parsed)) {
         themes.push(parsed);
-      } else {
-        skipped.push(entry.name);
       }
     } catch {
       // Bad JSON, or a file that vanished between listing and reading: skip it.
-      skipped.push(entry.name);
     }
   }
 
-  return { dir, themes, skipped };
+  return { dir, themes };
 }
 
 /** Files are named by id, not by the editable, non-unique name. */

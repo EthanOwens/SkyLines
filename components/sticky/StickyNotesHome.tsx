@@ -134,7 +134,7 @@ export function StickyNotesHome({ open, onOpenChange }: StickyNotesHomeProps) {
     }
   }
 
-  // The sticky editor allows base64 images, so the data URL works as-is.
+  // The sticky editor's image plugin turns the data URL into a file when the window opens.
   async function handleScreenshotCaptured(dataUrl: string) {
     if (!user || creating) return;
     setCreating(true);

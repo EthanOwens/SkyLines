@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
 
 // Firestore is a background sync target; the UI reads from SQLite.
 const firebaseConfig = {
@@ -15,5 +16,6 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
 export const auth = getAuth(app);
+export const functions = getFunctions(app);
 export const db = getFirestore(app);
 export default app;

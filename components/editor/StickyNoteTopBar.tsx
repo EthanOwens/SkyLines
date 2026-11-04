@@ -95,6 +95,7 @@ export function StickyNoteTopBar({
   const [pinned, setPinned] = useState(note.pinned);
   const [menuOpen, setMenuOpen] = useState(false);
   const [topBarColor, setTopBarColor] = useState(note.topBarColor);
+  useEffect(() => setTopBarColor(note.topBarColor), [note.topBarColor]);
   // Resolved --primary, so the picker opens on the color the bar actually shows
   // when no custom color is set.
   const [defaultColorHex, setDefaultColorHex] = useState(FALLBACK_PICKER_HEX);

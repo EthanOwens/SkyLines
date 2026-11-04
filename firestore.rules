@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function ownsExisting() {
+      return request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    function ownsIncoming() {
+      return request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+
+    match /{collection}/{id} {
+      allow read, delete: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes']) && ownsExisting();
+      allow create: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes']) && ownsIncoming();
+      allow update: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes']) && ownsExisting() && ownsIncoming();
+    }
+  }
+}

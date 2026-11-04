@@ -1,3 +1,4 @@
+import { auth } from "@/lib/firebase";
 import { getStickyNoteById } from "@/lib/db/stickyNotes";
 
 // Opens a sticky note in its own window, or focuses it if already open.
@@ -32,7 +33,7 @@ export async function openStickyNoteWindow(
   }
 
   const windowTitle =
-    title ?? (await getStickyNoteById(id).catch(() => null))?.title ?? "Untitled";
+    title ?? (await getStickyNoteById(id, auth.currentUser?.uid ?? "").catch(() => null))?.title ?? "Untitled";
 
   const win = new WebviewWindow(label, {
     url: `/sticky/?id=${id}${imageId ? `&image=${encodeURIComponent(imageId)}` : ""}`,

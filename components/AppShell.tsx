@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthContext } from "@/components/AuthProvider";
 import { useSyncEngine } from "@/hooks/useSyncEngine";
 import { useNotes } from "@/hooks/useNotes";
 import { useFolders } from "@/hooks/useFolders";
 import { useNotebooks } from "@/hooks/useNotebooks";
-import { getLastOpen } from "@/lib/lastOpen";
+import { getLastOpen, setLastOpen } from "@/lib/lastOpen";
 import { getNoteById } from "@/lib/db/notes";
 import { listenForReferenceFollows } from "@/lib/references/navigate";
 import { useAppStore } from "@/stores/appStore";
@@ -22,17 +22,15 @@ import { SYSTEM_THEME_VALUE } from "@/components/topbar/AccountMenu";
 // Wires auth, the sync engine and the data hooks into the app lifecycle. It's a
 // client component because app/layout.tsx is a server component.
 //
-// Public routes are never redirected to /login. /spike-* pages handle their own
-// sign-in.
-const PUBLIC_ROUTES = ["/login", "/register"];
+// Public routes are never redirected to /login.
+const PUBLIC_ROUTES = ["/login", "/register", "/forgot-password"];
 
 function isPublicRoute(pathname: string | null): boolean {
   if (!pathname) return false;
   // trailingSlash: true makes usePathname() return "/register/", so strip the
   // slash before matching.
   const normalized = pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname;
-  if (PUBLIC_ROUTES.includes(normalized)) return true;
-  return normalized.startsWith("/spike-");
+  return PUBLIC_ROUTES.includes(normalized);
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -52,9 +50,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const normalizedPathname =
     pathname && pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname;
   const isRootRoute = normalizedPathname === "/";
-  // Narrower than publicRoute: spike pages expect the default theme, but login
-  // and register can still be themed.
-  const isSpikeRoute = normalizedPathname?.startsWith("/spike-") ?? false;
 
   // Sticky notes and the image editor open in their own windows: still
   // auth-gated, but rendered without AppLayout.
@@ -62,12 +57,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const isImageEditorRoute = normalizedPathname === "/image-editor";
 
-  // No user id on spike pages: they drive the sync engine themselves, and the
-  // engine is a module-level singleton that AppShell would otherwise start a
-  // second time. Pop-out windows are excluded too, because each window is its
-  // own JS runtime and would boot its own engine and subscriptions.
+  // No user id on public routes or in pop-out windows: each window is its own
+  // JS runtime and would boot its own engine and subscriptions.
   const syncUserId =
     publicRoute || isStickyRoute || isImageEditorRoute ? undefined : user?.uid;
+
+  // Declared before the data hooks so their effects see the reset store. The
+  // first render's uid is the baseline, so it doesn't reset.
+  const resetForUser = useAppStore((s) => s.resetForUser);
+  const lastUid = useRef(user?.uid ?? null);
+  const uid = user?.uid ?? null;
+  useEffect(() => {
+    if (lastUid.current === uid) return;
+    lastUid.current = uid;
+    resetForUser();
+  }, [uid, resetForUser]);
 
   useSyncEngine(syncUserId);
   useNotes(syncUserId);
@@ -91,11 +95,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Restore the saved theme on mount. It's per-device UI state, so it doesn't
   // wait for a user. Built-in themes and "System" apply immediately to avoid a
   // flash of default styling; user themes apply once they've loaded from disk.
-  // An id that matches nothing leaves the default theme in place. Skipped on
-  // spike pages.
+  // An id that matches nothing leaves the default theme in place.
   useEffect(() => {
-    if (isSpikeRoute) return;
-
     const persistedId = getSelectedThemeId();
 
     if (persistedId === SYSTEM_THEME_VALUE || !persistedId) {
@@ -145,7 +146,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isSpikeRoute, setAvailableThemes, setUserThemesLoaded, setSelectedThemeId]);
+  }, [setAvailableThemes, setUserThemesLoaded, setSelectedThemeId]);
 
   // On "/", reopen the last note if it still exists. Otherwise restore just the
   // notebook selection so the picker can show it.
@@ -154,7 +155,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     let cancelled = false;
 
-    const lastOpen = getLastOpen();
+    const lastOpen = getLastOpen(user.uid);
     if (!lastOpen) return;
 
     if (!lastOpen.noteId) {
@@ -166,8 +167,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    void getNoteById(lastOpen.noteId).then((note) => {
-      if (cancelled || !note) return;
+    void getNoteById(lastOpen.noteId, user.uid).then((note) => {
+      if (cancelled) return;
+      if (!note || note.userId !== user.uid) {
+        // Stale or foreign: forget it so the next load goes to the picker.
+        setLastOpen(user.uid, { notebookId: null, folderId: null, noteId: null });
+        return;
+      }
       // Use the note's own notebookId: lastOpen.notebookId is null for notes
       // without a folder. Check it against the loaded notebooks, because it can
       // point at a deleted notebook; if notebooks haven't loaded yet, set it

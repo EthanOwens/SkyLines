@@ -1,442 +1,302 @@
-# Ready for friends: private accounts, reliable sync, easy setup
+# First-run and sign-in polish
 
-Source: planning.md, 2026-10-19
+Source: review of the sign-in and startup flow in conversation, 2026-10-23
 
 ## Goal
 
-Get SkyLines ready for friends to build from the codebase and use with their own accounts. Each account's data is locked to that account in Firestore, and dev-only things stay out of release builds. Sync no longer stalls on one bad note: pictures live as local files instead of inside synced documents, canvas data is stored in a form Firestore accepts, and sticky notes sync too. When something goes wrong, friends can send a bug report with the app version, commit and recent logs. A setup script and a README "Getting started" section take a new user from a clean machine to a running app.
+Make SkyLines easier for someone opening it for the first time. The first screens stop showing developer placeholder text, there's always a way to sign out, sign-in and sign-up errors say what actually went wrong, and Google sign-in is offered on sign-up too. "Forgot password?" becomes an in-app flow: the user gets a 6-digit code by email, types it into SkyLines and sets a new password there. A last task clears out code nothing uses.
 
 ## Context
 
-- **Shape of the app.** Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`. Windows `main`, `sticky-<id>` and `image-editor-<id>` are separate JS runtimes with their own capability files in `src-tauri/capabilities/` (`default.json`, `sticky.json`, `image-editor.json`). Any new plugin permission has to go into each window's file that uses it.
-- **Sync engine.**
-  - `lib/sync/engine.ts` runs only in the main window: `components/AppShell.tsx` starts it via `hooks/useSyncEngine.ts`.
-  - Local writes call `notifyDataChange("local")` (`lib/db/events.ts`), which schedules a push with a 10 s debounce and a 15 s max wait. That event only fires within one JS runtime.
-  - Status is a module-level value with listeners (`getSyncStatus` / `subscribeSyncStatus`), mirrored into `stores/appStore.ts`. It's shown by `components/topbar/AccountMenu.tsx` (`SYNC_STATUS_DISPLAY`) and `SyncBadge` in `components/sidebar/Sidebar.tsx`.
-- **Push** (`lib/sync/push.ts`).
-  - `pushDirtyRows` runs folders, then notes, then notebooks, then pages, one `setDoc(..., { merge: true })` per row, each followed by `markXSynced`.
-  - Any throw aborts the whole pass. The engine sets status `"error"` and retries with backoff (2 s up to 60 s).
-  - Doc id is the local row id. Every doc carries `userId`, and `updatedAt` is the client edit time.
-- **Pull** (`lib/sync/pull.ts`).
-  - One `onSnapshot` per collection, `where("userId", "==", uid)`.
-  - `decidePull` does last-write-wins with conflict backups, through `recordSyncConflict` in `lib/db/syncConflicts.ts`. Its `tableName` union lists the four collections.
-  - `toRemoteNoteData` / `toRemotePageData` read `canvasData` and `content` as objects.
-- **Firestore today.**
-  - Collections are `folders`, `notes`, `notebooks`, `pages`. There's no rules file, `firebase.json` or `.firebaserc` in the repo.
-  - `lib/sync/cleanup.ts` (tombstone hard-delete) is only called from spike pages, never in production.
-- **Canvas data.**
-  - `page.canvasData` is a full tldraw snapshot. Rich-text boxes keep Tiptap JSON in shape `props.content`.
-  - The snapshot is saved from `components/canvas/CanvasEditor.tsx` (debounced 800 ms) through `updatePage` in `lib/db/pages.ts`, which stringifies it into SQLite.
-  - The Firestore error "Property canvasData contains an invalid nested entity" is most likely the 20-level map/array depth limit: a rich-text box's text already sits about 13 levels deep, and nested lists add 4 levels each. It isn't nested arrays: the SDK reports those with a different message.
-- **Pictures today.**
-  - `ImageWithId` (`lib/tiptap/imageId.ts`, configured in `lib/tiptap/extensions.ts` with `allowBase64: true`) keeps an `id` attr rendered as `data-image-id`. References, reveal (`revealImage`) and the context menu rely on that attr.
-  - Pictures enter as `data:` URLs from several places:
-    - Ribbon upload (`components/ribbon/Ribbon.tsx` `insertImage`)
-    - HTML paste
-    - screenshot stickies (`components/sticky/StickyNotesHome.tsx`, `ScreenshotCapture.tsx`)
-    - the image editor's save (`components/editor/ImageEditor.tsx` emits `image-editor:saved:<uuid>` with a data URL)
-  - The double-click handlers in `RichTextShape.tsx`, `StickyNoteEditor.tsx` and `RichTextEditor.tsx` pass the DOM `src` to `openImageEditorWindow` (`lib/imageEditorWindow.ts`, which assumes a data URL). They patch the node back only when `node.attrs.src === originalSrc`.
-  - `RichTextEditor.tsx` isn't mounted anywhere; the live editors are `RichTextShape` and `StickyNoteEditor`.
-  - Native tldraw images use tldraw's default inline base64 asset store. `<Tldraw>` in `CanvasEditor.tsx` has no `assets` prop, and an asset store needs a stable module-level identity like `shapeUtils`.
-- **Code that reads a picture's `src`:**
-  - `lib/tiptap/extractText.ts` (`extractFirstImageSrc`, `findImageSrc`)
-  - `lib/references/resolve.ts` (`shapeImage`, `imageAsset`, `canvasPreview`, `previewImage`)
-  - `lib/tiptap/hoverPreview.ts`
-- **Showing local files.**
-  - The CSP already allows `img-src asset: https://asset.localhost data: blob:`.
-  - The asset protocol needs `app.security.assetProtocol` (`enable`, `scope`) in `src-tauri/tauri.conf.json` and the `protocol-asset` feature on `tauri` in `src-tauri/Cargo.toml`. Both `tauri` entries are target-specific, so add the feature to both.
-  - The fs plugin is installed.
-- **Sticky notes.**
-  - The `sticky_notes` table already has `dirty` / `synced_at`.
-  - `lib/db/stickyNotes.ts` has `getDirtyStickyNotes`, `markStickyNoteSynced`, `upsertStickyNoteFromRemote` and `getStickyNoteRowById`, none of them called.
-  - Writes emit the Tauri event `STICKY_NOTE_CHANGED_EVENT` (`"sticky-note:changed"`, `{id}`). `StickyNoteEditor.tsx` listens to it only to close itself on delete. It takes `note.content` once at mount, and applies pinned (`setAlwaysOnTop`) only on mount.
-- **Dev-only things in release.**
-  - The Dev Login button and its credentials in `app/login/page.tsx` render unconditionally.
-  - 16 `app/spike-*` pages ship in `out/` and are public: see `isPublicRoute`, `isSpikeRoute` and nearby comments in `AppShell.tsx`.
-  - `app/instance-probe.tsx`, mounted in `app/layout.tsx`, exists only for the spike-a/b checks.
-  - `tauri dev` runs `next dev`, so `NODE_ENV` is `"development"`. `tauri build` runs `next build`, so it's `"production"`. Next inlines `process.env.NODE_ENV` at compile time.
-- **Logging and UI patterns.**
-  - There's no logging plugin, error boundary, `window.onerror` or `unhandledrejection` handler. There are 24 `console.error` calls; the sync ones are prefixed `[sync/...]`.
-  - Clipboard writes use a dynamic import of `@tauri-apps/plugin-clipboard-manager` (see `lib/references/copy.ts`).
-  - The copy-with-feedback menu item pattern is `components/references/CopyReferenceItem.tsx`. The app has no toast system.
-  - Opening a folder follows `components/theme/ThemeEditor.tsx` (`openPath`, scoped by `opener:allow-open-path` in `default.json`).
-- **Version.**
-  - `0.1.0` is in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
-  - `next.config.ts` has no `env` block. The README's Windows install paths hardcode `0.1.0`.
-- **Local toolchain.** Node 26.10, Rust 1.99. There's no `.nvmrc`, `rust-toolchain.toml` or `engines`.
+- **Shape of the app.** Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`. Firebase is client-only today: `firebase.json` only deploys `firestore.rules`, and there are no Cloud Functions and no Firebase Hosting. The Firebase CLI isn't installed globally; use `npx firebase-tools` in docs, and never deploy or log in from an agent.
+- **Auth plumbing.** `components/AuthProvider.tsx` (`useAuthContext()`) is the only auth state source. `components/AppShell.tsx` gates routes: `PUBLIC_ROUTES = ["/login", "/register"]`, with paths normalized for the trailing slash. Signed-in users visiting a public route are not redirected away. `lib/firebase.ts` exports `auth`, `db` and the default `app`.
+- **Sign-in screens.** `app/login/page.tsx` and `app/register/page.tsx` share a centered `max-w-sm space-y-6` card, use `Input` and `PasswordInput` (`components/ui/`), and show errors as `{error && <p className="text-sm text-destructive">{error}</p>}`. Register checks `password.length < 6` and then that the two passwords match. Login has an "or" divider before "Continue with Google", and a dev-only `DevLogin` block.
+- **Google sign-in** is `handleGoogle` in `app/login/page.tsx`. It runs a loopback OAuth flow: `google_oauth_listen` / `google_oauth_exchange` in Rust, helpers in `lib/auth/googleOAuth.ts`, including `isGoogleSignInConfigured()`. When unconfigured it currently sets an error naming the two `NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_*` env vars.
+- **Forgot password today.** `handleForgotPassword` in `app/login/page.tsx` calls Firebase's `sendPasswordResetEmail`, which sends a link to Firebase's hosted reset page. With an empty email field it falls back to `window.prompt`.
+- **Shell layout.** `components/shell/AppLayout.tsx` renders the top bar (`components/topbar/TopBar.tsx`, which holds `AccountMenu`), the sidebar and the ribbon only when a notebook is selected. Otherwise, as on the notebook picker, it renders the page full-screen with no account menu. Sign-out exists only in `AccountMenu` and `components/sidebar/Sidebar.tsx`. Once a notebook is selected there's no UI path back to the picker.
+- **Home route** `app/page.tsx` shows the picker. When a notebook is selected and the route is `/`, it shows placeholder text: "Notebook "X" is open" and "Sidebar/note view coming in a later subtask." `AppShell`'s restore effect redirects `/` to the last note when `skylines:lastOpen:<uid>` (localStorage, `lib/lastOpen.ts`) has a `noteId`. With only a `notebookId`, it selects the notebook and stays on `/`.
+- **Creating a note.** `newNote()` in `components/sidebar/Sidebar.tsx` (~L75-97) creates a canvas note in the selected notebook and folder (falling back to `getOrCreateDefaultNotebookId`), appends it with `nextOrderValue`, and pushes `/canvas?id=<id>`.
+- **Firestore rules** (`firestore.rules`) allow client access only to `folders`, `notes`, `notebooks`, `pages` and `stickyNotes`. Any other collection is denied to clients, while the Admin SDK in Cloud Functions bypasses the rules.
 
 ## Decisions
 
-- **Old test pages.** Delete all `app/spike-*` pages and `app/instance-probe.tsx`, along with the spike special cases in `AppShell.tsx` (user's choice). `lib/sync/cleanup.ts` stays as it is, unused.
-- **Dev Login.** Render the button and handler only when `process.env.NODE_ENV === "development"`. Keep the credentials inside code that's dropped from production builds, so a release bundle doesn't contain `DevLogin123!`. Agent testing under `npm run tauri dev` keeps working.
-- **Security rules.**
-  - Commit `firestore.rules` and a minimal `firebase.json` that points at it. Don't commit `.firebaserc`; the project id goes on the command line.
-  - The user deploys the rules themselves with `npx firebase-tools deploy --only firestore:rules --project <id>`. No agent deploys them.
-  - The rules cover `folders`, `notes`, `notebooks`, `pages` and `stickyNotes`:
-    - read, update and delete only when `resource.data.userId == request.auth.uid`
-    - create and update only when `request.resource.data.userId == request.auth.uid`, so a doc can't be moved to another account
-    - everything else is denied
-- **Canvas and content as strings.**
-  - Notes and pages push `canvasJson` and `contentJson` (JSON strings) and remove the old map fields `canvasData` and `content` with `deleteField()`.
-  - Pull prefers the string fields and falls back to the old maps for docs that haven't been re-pushed.
-  - No backfill: docs move to the new fields on their next push.
-  - Older app builds on other computers will misread new docs, so every computer needs updating before editing (noted in the README).
-- **Sync failures.**
-  - A row whose push fails with a data error is skipped. It stays dirty, the rest of the pass carries on, and the failure is remembered with the table, row id, display name and reason. Data errors are Firestore `invalid-argument`, or a payload over Firestore's size limit.
-  - Network or auth errors (`unavailable`, `deadline-exceeded`, `unauthenticated`, offline) still abort the pass and back off, as now.
-  - Failed rows retry on the next push pass (a new edit, reconnect or app resume), not on their own timer.
-  - Status is `"error"` while any failure remains.
-  - The account menu's sync line shows "Couldn't sync: <name> (too big)" or "(rejected)", plus "and N more" when there are several (user's choice). Each failure is logged.
-- **Pictures are local files.**
-  - Each picture is saved once as `$APPDATA/images/<uuid>.<ext>`.
-  - Content stores a device-independent token in `src`, `skylines-image:<uuid>.<ext>`, never an absolute path or a data URL.
-  - Rendering maps the token to an asset-protocol URL (`convertFileSrc`). The asset scope is `$APPDATA/images/**`, which also covers sticky windows.
-  - When the file is missing, as on another computer, the picture shows a placeholder saying "Picture is on another device", and the node keeps its `data-image-id`.
-  - Files are keyed by their own uuid, not by the image node id, because copies share a file. Files are never deleted in this round.
-- **Existing embedded pictures** are moved when opened (user's choice). Opening a page converts every `data:` picture in its rich-text boxes and tldraw assets to files and saves the page. Opening a sticky note does the same for its content. Pages and stickies that are never opened keep their data URLs and may show up as "too big" sync failures until they're opened.
-- **Image editor** keeps working with files. It opens from the file behind the token, and its save writes a new file and replaces the node's token. The old file is left in place.
-- **Sticky sync.**
-  - The collection is `stickyNotes`, with `contentJson` as a string, using the same last-write-wins and conflict backups as notes.
-  - **Pinned stays on each computer** (user's choice). It isn't pushed, pull keeps the local value, and a sticky first pulled onto a computer starts unpinned.
-  - Favourite, title, colour and content sync.
-  - The main window listens for `STICKY_NOTE_CHANGED_EVENT` to schedule a push.
-  - A remote change reloads an open sticky window unless it has an unsaved local edit. A remote delete closes it, as now.
-  - Pull never opens windows.
-  - Tombstone cleanup stays out of scope.
-- **Version.**
-  - The version is set to `0.9.1` in `package.json` and its lockfile. `tauri.conf.json`'s `version` becomes `"../package.json"`. `Cargo.toml` stays at `0.1.0`, unused.
-  - `next.config.ts` bakes in `NEXT_PUBLIC_APP_VERSION` (from `package.json`) and `NEXT_PUBLIC_BUILD_COMMIT` (`git rev-parse --short HEAD`, or `"unknown"` when git isn't available).
-  - The account menu shows "SkyLines v0.9.1 (abc1234)".
-- **Logs.**
-  - Use `tauri-plugin-log` with `@tauri-apps/plugin-log`, writing to the OS log dir. Rotate at about 1 MB and keep 2 old files. Level is info and above.
-  - In every window, a client component mounted in `app/layout.tsx` forwards `console.error` and `console.warn` and handles `window` `error` and `unhandledrejection`. Each line is prefixed with the window label and capped at 2000 characters.
-  - Code never logs note text: sync failures log table, id and reason only.
-- **Bug report.**
-  - The account menu gets "Copy bug report" and "Open logs folder".
-  - The report is plain text: version and commit, `navigator.userAgent`, sync status, current sync failures, the last 200 log lines, and an empty "What happened:" line.
-  - It doesn't add the OS plugin or an error-tracking service.
-- **Setup.**
-  - `scripts/setup.sh` (macOS) and `scripts/setup.ps1` (Windows) install only what's missing and can be re-run safely.
-  - Node is pinned with `.nvmrc` `24` (the LTS that `winget` and installers give) and `engines.node` `>=24`. Rust is pinned with `rust-toolchain.toml` channel `1.99`.
-  - On macOS, Node comes from Homebrew when `brew` exists. Otherwise the script prints the nodejs.org link and stops.
+- **Notebook empty state** (item 1): on `/` with a notebook open, show the notebook's name, "Pick a note in the sidebar, or create a new one." and a "New note" button. The button does exactly what the sidebar's New note does, through one shared function rather than a copy.
+- **Account menu on the picker** (item 2): when no notebook is selected, `AppLayout` also renders `AccountMenu` pinned to the top-right corner. Nothing else from the top bar is added there.
+- **Error messages** (item 3) come from one helper, `authErrorMessage(err, fallback)` in `lib/auth/errors.ts`, which maps Firebase error codes:
+  - `auth/network-request-failed`: "Can't reach the sign-in service. Check your internet connection and try again."
+  - `auth/too-many-requests`: "Too many attempts. Wait a few minutes and try again."
+  - `auth/invalid-email`: "That email address doesn't look right."
+  - `auth/weak-password`: "That password is too weak. Try a longer one."
+  - `auth/email-already-in-use`: "An account with this email already exists. Sign in instead, or use Continue with Google if you signed up that way."
+  - `auth/invalid-credential`, `auth/wrong-password`, `auth/user-not-found`: "Invalid email or password."
+  - `auth/user-disabled`: "This account has been disabled."
+  - Anything else gets the caller's fallback and is logged with `console.error`, so it reaches the log file.
+- **Login heading** (item 4): "Sign in to Skylines", with the subtitle "Use your email or Google account." The UI keeps its existing "Skylines" spelling.
+- **Google on sign-up** (item 4): register gets the same "or" divider and "Continue with Google" button as login, through one shared `components/auth/GoogleSignInButton.tsx` that owns the flow now in `handleGoogle`.
+- **Google not configured** (item 6): the button still shows, disabled, with a muted line below it: "Google sign-in isn't set up in this build." The env-var names go only to `console.warn`, never into the UI.
+- **Password reset** (item 5, user's choices):
+  - The email carries a 6-digit typeable code.
+  - It's sent by Cloud Functions (Blaze plan) through Gmail SMTP with a Gmail app password (`nodemailer`).
+  - A reset works for any account with that email. On a Google-only account it adds a password.
+- **Reset rules** (defaults chosen):
+  - Codes expire after 15 minutes, and a new request replaces the previous code.
+  - Codes can be resent after 60 seconds, at most 5 sends per email per rolling hour.
+  - 5 wrong guesses delete the code.
+  - The new password needs at least 6 characters (same as register).
+  - On success, the server revokes the account's refresh tokens (signing out other devices). The app then signs in with the new password and goes to `/`.
+- **No account enumeration**: requesting a reset for an email with no account returns the same success as a real one and sends nothing. Confirming with no stored code fails as "invalid code".
+- **Reset storage**: Firestore `passwordResets/{sha256(normalized email)}`, written only by the functions. The code is stored as a hash, never in plain text. `firestore.rules` stays unchanged, since it already denies this collection to clients.
+- **Error contract** between the functions and the app: failures are `HttpsError`s carrying `details.reason`, one of:
+  - `invalid-email`, `cooldown` (with `details.retryAfterSeconds`), `too-many-requests`
+  - `invalid-code`, `expired`, `too-many-attempts`, `weak-password`
+- **Login's "Forgot password?"** becomes a link to `/forgot-password?email=<current email field>`. `sendPasswordResetEmail` and `window.prompt` go away.
+- **Cleanup** (item 7): one task at the end reviews the whole project for unused code and removes it, including `hooks/useAuth.ts`.
+- **Hide-to-tray hint** (review item 8): not wanted.
 
 ## Out of scope
 
-- Syncing pictures between computers (Firebase Storage), deleting unused picture files, and compressing pictures.
-- Pasting a raw image file (with no HTML) into a text box. It inserts nothing today and still won't.
-- Scheduling tombstone cleanup, wiping local data on sign-out, and user-scoping the by-id getters.
-- Code signing, notarisation, auto-update and installers for friends. Friends build from the codebase.
-- Android.
-- Backfilling Firestore docs to the new string fields, and compatibility with older app builds.
+- **Phone numbers and SMS reset.** This is planned for a later spec. The user wants an optional phone number both on sign-up and on a new account settings screen. It needs the Blaze plan and an early task proving Firebase's reCAPTCHA works inside the Tauri window on macOS and Windows.
+- An account settings screen.
+- App Check, CAPTCHA or per-IP limits on reset requests.
+- A way back from an open notebook to the picker.
+- A hint that closing the window hides SkyLines to the tray.
+- Deploying functions or changing Firebase console settings. Those are manual steps for the user.
 
 ## Tasks
 
-### T1 Keep dev-only things out of release builds
+### T1 An open notebook shows a real empty state
 
-Status: todo
+Status: done
 Depends on: none
-Tester: no, the change only shows in a release build, which the reviewer checks by searching `out/`. Dev mode looks the same as before.
+Tester: yes. The empty state and the note it creates are observable in the DOM and the URL.
 
-- In `app/login/page.tsx`, show the dashed "dev only" divider and the Dev Login button only when `process.env.NODE_ENV === "development"`. Move `DEV_EMAIL`, `DEV_PASSWORD` and `handleDevLogin` so a production build drops them, for example into a small component in the same file, rendered only under that condition.
-- Delete every `app/spike-*` directory and `app/instance-probe.tsx`, and remove its mount from `app/layout.tsx`.
-- Remove the spike special cases from `components/AppShell.tsx`: the `/spike-` public-route rule, `isSpikeRoute`, and the comments about spike pages.
-- Check `lib/themes/loader.ts` for spike references and drop any that are dead.
+- Replace the placeholder branch in `app/page.tsx` (the `selectedNotebookId && selectedNotebook` case) with the empty state from Decisions, in the same centered layout style.
+- Move the body of `newNote()` from `components/sidebar/Sidebar.tsx` into a shared hook, `hooks/useCreateNote.ts`, that returns the create function and a `creating` flag. Use it in both the sidebar and the empty state, so neither keeps its own copy.
 
-Files: `app/login/page.tsx`, `app/layout.tsx`, `components/AppShell.tsx`, `app/spike-*/`, `app/instance-probe.tsx`, possibly `lib/themes/loader.ts`
+Files: `app/page.tsx`, `components/sidebar/Sidebar.tsx`, new `hooks/useCreateNote.ts`
 
 Acceptance:
-- `npm run build` succeeds, `out/` has no `spike-*` directories, and searching `out/` for `DevLogin123` and `dev@skylines.local` finds nothing.
-- Under `npm run tauri dev`, the login page still shows the Dev Login button.
-- No file outside git history refers to `spike-` routes or `__instanceId`.
-- Signed-out users are still redirected to `/login`, and `/login` and `/register` are still public.
+- The strings "is open" and "coming in a later subtask" no longer appear in `app/page.tsx`.
+- With a notebook open on `/`, the main area shows the notebook name, the hint line and a "New note" button.
+- Clicking "New note" creates a canvas note in the open notebook (and selected folder, if any), placed after its siblings, and navigates to `/canvas?id=<new id>`. The button is disabled while creating.
+- The sidebar's New note behaves as before and uses the same hook.
 
 Test steps:
-1. With `npm run tauri dev` running, the login page shows Dev Login (manual: needs signing out).
-2. After `npm run build`, run `grep -r "DevLogin123" out/`: no matches.
+1. Signed in as `dev@skylines.local`. Save the current value of localStorage `skylines:lastOpen:<uid>`, then set it to `{"notebookId":"<an existing notebook id>","folderId":null,"noteId":null}` and reload the main window.
+2. The top bar and sidebar are visible and the main area shows the notebook name, the hint and "New note". No placeholder text appears.
+3. Click "New note". The URL becomes `/canvas?id=…` and the new note appears in the sidebar.
+4. The sidebar's New note still creates and opens a note.
+5. Delete both notes you created and restore the saved lastOpen value.
 
-### T2 Lock each account's data with Firestore security rules
+### T2 The account menu shows on the notebook picker
 
-Status: todo
+Status: done
 Depends on: none
-Tester: no, the rules only take effect once the user deploys them
+Tester: yes. The menu and its contents are visible in the DOM. The tester must not click Sign out.
 
-- Add `firestore.rules` at the repo root, following the rule in Decisions, for `folders`, `notes`, `notebooks`, `pages` and `stickyNotes`. Use a helper function so all five collections share one rule body. Deny everything not matched.
-- Add `firebase.json` containing only `{ "firestore": { "rules": "firestore.rules" } }`.
-- In the README, add a short "Deploying Firestore rules" section under a maintainers heading: the `npx firebase-tools deploy --only firestore:rules --project <NEXT_PUBLIC_FIREBASE_PROJECT_ID>` command, plus a note to compare with the rules in the console before the first deploy.
+- In `components/shell/AppLayout.tsx`, when no notebook is selected and a user is signed in, render `AccountMenu` in a fixed top-right container alongside `children`. Keep the existing full layout unchanged when a notebook is selected.
+- Check the comment in `AccountMenu` about where it mounts, and update it if it's no longer accurate.
 
-Files: `firestore.rules`, `firebase.json`, `README.md`
+Files: `components/shell/AppLayout.tsx`, possibly `components/topbar/AccountMenu.tsx` (comment only)
 
 Acceptance:
-- `firestore.rules` uses `rules_version = '2'` and allows reads and writes only through the userId checks in Decisions.
-- A create whose `userId` isn't the caller's uid is denied, and so is an update that changes `userId`.
-- Unknown collections are denied.
-- The pull queries' shape (`where("userId", "==", uid)`) is allowed by the read rule.
-- `.firebaserc` isn't added.
+- On the picker (signed in, no notebook selected), the account menu button is visible in the top-right corner. Opening it shows the signed-in email and a "Sign out" item.
+- Public routes and pop-out windows (`/sticky`, `/image-editor`) don't render it, because `AppLayout` isn't used there.
+- With a notebook open, there is exactly one account menu (the top bar's).
 
-Test steps (manual, after the user deploys):
-1. In the app, edit a note. The account menu's sync line returns to "Saved".
-2. In the Firebase console's Rules Playground, a `get` on `notes/<someone else's id>` as another uid is denied.
+Test steps:
+1. Signed in as `dev@skylines.local`. Save localStorage `skylines:lastOpen:<uid>`, remove it, and reload. The notebook picker shows.
+2. The account menu button is in the top-right corner. Open it: it shows `dev@skylines.local` and a "Sign out" item. Don't click Sign out. Close the menu.
+3. Open a notebook from the picker. Exactly one account menu exists (in the top bar).
+4. Restore the saved lastOpen value and reload.
 
-### T3 Store canvas and content as JSON strings in Firestore
+### T3 Sign-in and sign-up errors say what went wrong
 
-Status: todo
+Status: done
 Depends on: none
-Tester: yes, push and pull can be checked with the Firebase SDK from the webview, and a deeply nested list reproduces the error
+Tester: no. The new messages need a signed-out app, an offline network or rate limiting, which the tester can't create safely.
 
-- In `lib/sync/push.ts`, `noteToFirestoreDoc` and `pageToFirestoreDoc` write `canvasJson` and `contentJson` as `JSON.stringify(...)`, or `null`. They write `canvasData` and `content` as `deleteField()`, so merged docs drop the old maps.
-- In `lib/sync/pull.ts`, `toRemoteNoteData` and `toRemotePageData` parse the string field when it's a string, and otherwise fall back to the old map field (or `null`).
-- Keep the SQLite side unchanged.
+- Add `lib/auth/errors.ts` with `authErrorMessage(err: unknown, fallback: string): string`, mapping the codes listed in Decisions. Use `FirebaseError` from `firebase/app`.
+- Use it in `handleEmail` on login (fallback "Sign-in failed. Please try again.") and in `handleSubmit` on register (fallback "Registration failed. Please try again."), replacing the hard-coded message and the `msg.includes` check.
+- Keep the length and match checks on register as they are.
 
-Files: `lib/sync/push.ts`, `lib/sync/pull.ts`
-
-Acceptance:
-- Pushed note and page docs contain `canvasJson` and `contentJson` strings, and no `canvasData` or `content` field.
-- Pull gives the same local `canvasData` and `content` objects for a doc with the new string fields as for an old doc with map fields.
-- A page whose text box holds a bulleted list nested 6 levels deep syncs without error: status returns to `"saved"`, and the doc's `updatedAt` matches the local row's.
-
-Test steps:
-1. In a test notebook, create a test note and give its page a text box with a bulleted list nested 6 levels deep.
-2. Wait for sync (up to about 20 s). The account menu shows "Saved", not an error.
-3. From `webview_execute_js`, read `pages/<page id>` with the app's Firestore instance. It has a string `canvasJson` and no `canvasData`.
-4. Reload the app and reopen the page: the nested list is intact.
-5. Delete the test note.
-
-### T4 One note that can't sync doesn't block the rest
-
-Status: todo
-Depends on: T3
-Tester: yes, an oversized text box can be created, and the account menu and other docs observed
-
-- In `lib/sync/push.ts`, each per-row `setDoc` is wrapped. A data error, as defined in Decisions, records a failure and moves on. Before `setDoc`, a payload whose JSON length is over about 1,000,000 bytes is treated as "too big" without calling Firestore. Network and auth errors still throw.
-- `pushDirtyRows` returns the pass's failures, as a list of `{ table, id, name, reason: "too-big" | "rejected", message }`. A table's failures are replaced on each pass, so fixed rows drop off.
-- In `lib/sync/engine.ts`, keep the failures in a module-level value with a getter and subscribe function, using the same pattern as status. Set status `"error"` while any failure remains, without scheduling a backoff retry for failures alone. Log each failure with `console.error("[sync/push] ...")`, giving table, id and reason only.
-- In `AccountMenu.tsx`, the sync status line shows "Couldn't sync: <name> (too big)" or "(rejected)", plus "and N more" when there are several. Names come from the row: note or page title, folder or notebook name.
-- Widen `tableName` and the failure table type now, so T7 can add `stickyNotes`.
-
-Files: `lib/sync/push.ts`, `lib/sync/engine.ts`, `components/topbar/AccountMenu.tsx`, possibly `hooks/useSyncEngine.ts`, `stores/appStore.ts`, `types/index.ts`
+Files: new `lib/auth/errors.ts`, `app/login/page.tsx`, `app/register/page.tsx`
 
 Acceptance:
-- With one page over the size limit and another page edited, the edited page's doc reaches Firestore in the same pass.
-- The account menu shows "Couldn't sync: <oversized page title> (too big)", and `SyncBadge` shows the error icon.
-- Shrinking the oversized page below the limit clears the failure on the next push, and status returns to "Saved".
-- Going offline mid-push still gives status `"offline"` and a backoff retry, as before.
-- Log lines for failures contain no note or page content.
-
-Test steps:
-1. Create a test note A with a page whose text box holds about 1.2 MB of text (insert it through the editor in `webview_execute_js`). Create test note B with a short text box.
-2. Wait for sync. The account menu shows "Couldn't sync: <A's page title> (too big)".
-3. Edit B's text and wait. Reading B's page doc from Firestore shows the new text.
-4. Delete most of A's text and wait. The failure line goes away and the status shows "Saved".
-5. Delete both test notes.
-
-### T5 Pictures in text boxes and sticky notes are saved as local files
-
-Status: todo
-Depends on: T4
-Tester: yes, pictures can be inserted through the editor API and checked in the DOM, in the saved content and on disk
-
-- **Display.** Enable the asset protocol (both `tauri` feature entries in `Cargo.toml`, plus `app.security.assetProtocol` in `tauri.conf.json` with scope `$APPDATA/images/**`). Grant fs `mkdir`/`write-file`/`read-file`/`exists` for `$APPDATA/images` in `default.json` and `sticky.json`. Grant read in `image-editor.json` if the editor reads files itself.
-- **Helpers.** Add a small module, for example `lib/images/localImages.ts`:
-  - save a data URL or bytes to `$APPDATA/images/<uuid>.<ext>` and return the token
-  - map a token to a display URL (cache `appDataDir()` once at startup so rendering stays synchronous)
-  - check whether a token's file exists
-- **ImageWithId** (`lib/tiptap/imageId.ts`):
-  - It renders a token `src` as the asset URL, and renders the "Picture is on another device" placeholder when the file is missing. The placeholder keeps `data-image-id`.
-  - `parseHTML` maps an asset URL back to its token, so copying a picture inside the app keeps the token.
-  - A plugin converts any `data:` `src` that appears in the doc into a file and swaps in the token. This covers Ribbon upload, HTML paste, screenshot stickies and old content. The swap must not create an extra undo step the user would notice.
-- **Old pictures.** When a page opens, `CanvasEditor.tsx` also converts `data:` srcs inside every rich-text shape's `props.content` and saves. The editors aren't mounted for boxes that aren't being edited, so the plugin alone doesn't reach them. When a sticky window opens, `StickyNoteEditor.tsx` does the same through the plugin and saves.
-- **Image editor.** `openImageEditorWindow` and the three double-click handlers work from the node's stored token, not the DOM `src`. On save, the editor's result is written as a new file, and the node's token is replaced when it still matches the original token.
-- **Readers of `src`.** `resolve.ts`, `hoverPreview.ts` and `extractText.ts` resolve tokens for hover previews.
-
-Files: `lib/tiptap/imageId.ts`, `lib/tiptap/extensions.ts`, new `lib/images/localImages.ts`, `lib/imageEditorWindow.ts`, `components/editor/ImageEditor.tsx`, `components/canvas/RichTextShape.tsx`, `components/canvas/CanvasEditor.tsx`, `components/editor/StickyNoteEditor.tsx`, `components/editor/RichTextEditor.tsx`, `components/sticky/StickyNotesHome.tsx`, `components/ribbon/Ribbon.tsx`, `lib/references/resolve.ts`, `lib/tiptap/hoverPreview.ts`, `lib/tiptap/extractText.ts`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/capabilities/*.json`
-
-Acceptance:
-- After inserting a picture into a text box or a sticky note and saving, the stored content has `src: "skylines-image:<uuid>.<ext>"`, the file exists in `$APPDATA/images`, and the `<img>` has `naturalWidth > 0`.
-- No `data:` image `src` remains in a page's saved `canvasData` or a sticky's saved `content` after it has been opened once.
-- A token whose file doesn't exist renders the placeholder text, with the same `data-image-id`. Copy reference and reveal still find it.
-- Editing a picture in the image editor and closing it replaces the picture in the note with the edited one.
-- Hover previews of references to pictures still show the picture.
-
-Test steps:
-1. In a test note, insert a small PNG data URL picture into a text box through the editor (`setImage`). Wait for the save.
-2. The saved page content has a `skylines-image:` token, and the picture is visible (`naturalWidth > 0`).
-3. Insert an image node whose token names a nonexistent file: the placeholder "Picture is on another device" shows, with a `data-image-id`.
-4. Seed a page with a text box holding a `data:` picture, through the DB or editor while the conversion is off, then reload and open it. The picture is converted to a token, and the file exists.
-5. Create a sticky note and insert a picture: its saved content has a token.
-6. Double-click a picture to open the image editor, then close it (manual if the window can't be driven). The note shows the edited picture.
-7. Delete the test note and sticky note.
-
-### T6 Pictures placed directly on the canvas are saved as local files
-
-Status: todo
-Depends on: T5
-Tester: yes, assets can be created through the tldraw editor and their stored `src` checked
-
-- Pass a module-level `TLAssetStore` as `assets` on `<Tldraw>` in `CanvasEditor.tsx`:
-  - `upload` saves the file with T5's helper and returns the token
-  - `resolve` returns the asset URL, or `null` when the file is missing so tldraw shows its broken-image state
-  - `remove` does nothing (files are never deleted)
-- When a page opens, convert every `asset:*` record whose `props.src` is a `data:` URL to a file and token, then save.
-- `resolve.ts`'s `imageAsset` and `canvasPreview` resolve tokens.
-
-Files: `components/canvas/CanvasEditor.tsx`, `lib/images/localImages.ts`, `lib/references/resolve.ts`
-
-Acceptance:
-- Dropping or pasting a picture on the canvas stores an asset whose `props.src` starts with `skylines-image:`, and the picture shows.
-- Opening a page that has a `data:` asset rewrites it to a token and saves.
-- A token with a missing file doesn't crash the canvas.
-
-Test steps:
-1. In a test note's page, create an image asset and shape with a small PNG data URL through the editor API, then reload and reopen the page.
-2. The asset's `props.src` is a `skylines-image:` token, the file exists, and the image shape renders.
-3. Delete the test note.
-
-### T7 Sync sticky notes
-
-Status: todo
-Depends on: T2, T3, T4, T5
-Tester: yes, docs can be read and written with the Firebase SDK from the webview, and the home list and sticky windows observed
-
-- **Push.** In `push.ts`, add `stickyNoteToFirestoreDoc`, with `userId`, `title`, `contentJson` (string), `topBarColor`, `favorite`, `createdAt`, `updatedAt` and `deletedAt`, and no `pinned`. Add `pushDirtyStickyNotes` with the same per-row failure handling as T4, and call it from `pushDirtyRows`.
-- **Pull.** In `pull.ts`, add a `stickyNotes` subscription using the shared `decidePull` / `applyDecision` flow, and wire it into `startPullSync`.
-  - `upsertStickyNoteFromRemote` keeps the local `pinned`, or uses 0 for a new row.
-  - After applying a remote change, emit `STICKY_NOTE_CHANGED_EVENT`.
-  - Widen the `tableName` unions in `pull.ts` and `syncConflicts.ts`.
-- **Main window.** `useSyncEngine` (or the engine) listens for `STICKY_NOTE_CHANGED_EVENT` and schedules a push, since sticky windows don't run the engine.
-- **Sticky window.** `StickyNoteEditor.tsx` reloads title, colour, favourite and content when the event reports a newer `updatedAt` than the window's own last save and the window has no pending save. Remote deletes close the window, as now.
-
-Files: `lib/sync/push.ts`, `lib/sync/pull.ts`, `lib/db/stickyNotes.ts`, `lib/db/syncConflicts.ts`, `hooks/useSyncEngine.ts`, `components/editor/StickyNoteEditor.tsx`, possibly `components/sticky/StickyNotesHome.tsx`
-
-Acceptance:
-- Editing a sticky note in its own window leads to a `stickyNotes/<id>` doc with the new `contentJson` within about 20 s, and the doc has no `pinned` field.
-- A remote doc with a newer `updatedAt` updates the home list and an open sticky window that has no pending save.
-- Pinning a sticky note doesn't change its Firestore doc, and a remote change doesn't unpin it.
-- Deleting a sticky note pushes `deletedAt`, and a remote `deletedAt` closes the open window.
-- An oversized sticky note is reported like other sync failures.
-
-Test steps:
-1. Create a test sticky note, open its window and type text. Wait for sync, then read `stickyNotes/<id>` with the SDK: it has the text, and no `pinned`.
-2. With the window open and idle, write the doc from the main window's SDK with a newer `updatedAt` and new title and content. The window and the home list show them.
-3. Pin the sticky, wait, and read the doc: unchanged apart from any edit. Repeat step 2: the sticky stays pinned (`pinned` = 1 in SQLite).
-4. Delete the sticky note. Its doc gets `deletedAt` and the window closes.
-5. Clean up: the test sticky is deleted locally. Delete its Firestore doc with the SDK.
-
-### T8 Version 0.9.1 with the build's commit shown in the app
-
-Status: todo
-Depends on: none
-Tester: yes, the account menu text is visible in the DOM
-
-- Set `version` to `0.9.1` in `package.json` and the two top-level version fields of `package-lock.json`, and set `src-tauri/tauri.conf.json`'s `version` to `"../package.json"`.
-- In `next.config.ts`, add an `env` block with `NEXT_PUBLIC_APP_VERSION` (read from `package.json`) and `NEXT_PUBLIC_BUILD_COMMIT` (`execSync("git rev-parse --short HEAD")` in try/catch, falling back to `"unknown"`).
-- At the bottom of the account menu, add a disabled item reading "SkyLines v<version> (<commit>)".
-
-Files: `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `next.config.ts`, `components/topbar/AccountMenu.tsx`
-
-Acceptance:
-- `npm run build` succeeds, and the account menu shows "SkyLines v0.9.1 (<7-character hash>)".
-- Building without git available still works and shows "(unknown)".
-- `npm run tauri build` would name installers `…_0.9.1_…`, because Tauri reads the version from `package.json`.
-
-Test steps:
-1. Open the account menu. It shows "SkyLines v0.9.1 (" followed by a short hash and ")".
-
-### T9 Write logs to a file in every window
-
-Status: todo
-Depends on: T4
-Tester: yes, errors can be raised in each window with `webview_execute_js` and the log file read from disk
-
-- Add `tauri-plugin-log` (Rust) and `@tauri-apps/plugin-log` (JS).
-  - Register the plugin in `src-tauri/src/lib.rs` with targets log dir and stdout, max file size about 1 MB, keep 2 rotated files, level info.
-  - Add `log:default` to `default.json`, `sticky.json` and `image-editor.json`.
-- Add a client component, for example `components/LogBridge.tsx`, mounted in `app/layout.tsx`.
-  - It wraps `console.error` and `console.warn` so they still print and also go to the plugin's `error` / `warn`.
-  - It handles `window` `error` and `unhandledrejection`.
-  - Each line starts with the window label and is capped at 2000 characters. Load the plugin with a dynamic import, as the clipboard code does.
-- Check the existing `console.error` call sites for any that print note text, and trim them to ids.
-
-Files: `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/capabilities/default.json`, `sticky.json`, `image-editor.json`, `package.json`, `app/layout.tsx`, new `components/LogBridge.tsx`
-
-Acceptance:
-- A `console.error("x")` in the main window and in a sticky window each produce a line in the app's log file, tagged with that window's label.
-- An uncaught error and an unhandled promise rejection are logged.
-- The log file rotates at about 1 MB and keeps at most 2 old files.
-- No log call includes note, page or sticky content.
-
-Test steps:
-1. In the main window, run `console.error("logtest-main")`, and throw inside a `setTimeout`.
-2. Open a test sticky note and run `console.error("logtest-sticky")` in its window.
-3. Read the log file (macOS `~/Library/Logs/com.skylines.app/`). It holds all three lines, with `main` and `sticky-<id>` labels.
-4. Delete the test sticky note.
-
-### T10 Report a bug from the account menu
-
-Status: todo
-Depends on: T4, T8, T9
-Tester: yes, the copied text can be read back through the clipboard plugin, though opening the folder is OS-level
-
-- Add two items to the account menu:
-  - **"Copy bug report"** follows the `CopyReferenceItem` pattern (closeOnClick false, then a "Copied" flash). It builds the text described in Decisions: version and commit, `navigator.userAgent`, sync status, current sync failures, the last 200 lines of the current log file, and "What happened:".
-  - **"Open logs folder"** opens the log dir with `openPath`.
-- Grant `fs:allow-read-file` for `$APPLOG/*` and `opener:allow-open-path` for `$APPLOG` in `default.json`.
-
-Files: `components/topbar/AccountMenu.tsx`, possibly a small `lib/bugReport.ts`, `src-tauri/capabilities/default.json`
-
-Acceptance:
-- After clicking "Copy bug report", the clipboard contains the version line, the commit, the sync status, at most 200 log lines and "What happened:".
-- The report contains no note content beyond what the log already holds.
-- "Open logs folder" calls `openPath` with the log dir, and the capability allows it.
-
-Test steps:
-1. Run `console.error("bugreport-marker")`, then open the account menu and click "Copy bug report". The item shows "Copied".
-2. Read the clipboard with `readText`. It includes "v0.9.1", the commit, the sync status, "bugreport-marker" and "What happened:".
-3. Click "Open logs folder" (manual: a Finder or Explorer window opens on the logs folder).
-
-### T11 Setup scripts and a Getting started README
-
-Status: todo
-Depends on: T1, T2, T7, T8, T9, T10
-Tester: no, installing toolchains and reading docs can't be checked in the running app
-
-- **`scripts/setup.sh` (macOS, `set -euo pipefail`).** It can be re-run safely and stops with a clear message on failure.
-  - Xcode Command Line Tools via `xcode-select -p`, else `xcode-select --install`, then wait for the user.
-  - Rust through rustup when `cargo` is missing.
-  - Node 24 or newer from Homebrew when `brew` exists, else print the nodejs.org link and stop.
-  - Then `npm ci`, a check that `.env.local` exists (if not, explain who to ask), and `npx tauri info`.
-- **`scripts/setup.ps1` (Windows).** Uses `winget`:
-  - `Microsoft.VisualStudio.2022.BuildTools` with the C++ workload, `Rustlang.Rustup`, `OpenJS.NodeJS.LTS`
-  - then refreshes PATH and does the same `npm ci`, `.env.local` check and `npx tauri info`
-- **Pins.** Add `.nvmrc` (`24`), `engines.node` (`>=24`) in `package.json`, and `src-tauri/rust-toolchain.toml` (channel `1.99`).
-- **README.**
-  - **"Getting started"** goes at the top. It covers, in order:
-    - running the setup script, or what to install by hand
-    - cloning
-    - getting `.env.local` and putting it in the repo root
-    - `npm run tauri dev`
-    - `npm run tauri build` and installing the result: building it yourself avoids the "unidentified developer" and SmartScreen warnings
-    - signing up
-    - updating (`git pull`, re-run `npm ci`, rebuild)
-    - where logs are and how to use "Copy bug report"
-    - known limits: pictures stay on the computer they were added on, pinned is per computer, and every computer must be updated before editing
-  - **macOS.** Add a macOS section next to Windows.
-  - **Windows.** Replace the hardcoded `0.1.0` install paths with `<version>`.
-  - **Maintainers.** Add releasing with `npm version patch|minor|major` (it commits and tags; `minor` from 0.9 gives 0.10.0, so use `major` or `npm version 1.0.0`) next to the T2 rules section.
-  - **Clean-up.** Remove the stale "Notes" section (no app shell, `/home`, spike routes) and the link to `../note_taking_app/SPEC_iter1.md`.
-
-Files: `scripts/setup.sh`, `scripts/setup.ps1`, `.nvmrc`, `package.json`, `src-tauri/rust-toolchain.toml`, `README.md`
-
-Acceptance:
-- `bash -n scripts/setup.sh` passes. Re-running the script on this machine, where everything is installed, installs nothing, then runs `npm ci` and `npx tauri info` and exits 0.
-- `setup.ps1` installs only the missing tools, through `winget`, and stops with a message when `winget` isn't available.
-- The README's first section is "Getting started" and covers every item listed above, with log paths for macOS and Windows that match where T9's plugin writes.
-- The README no longer mentions spike routes, `/home` or `0.1.0`.
+- Login no longer shows "Invalid email or password." for network or rate-limit failures; each code in Decisions maps to its message.
+- Register maps `email-already-in-use`, `invalid-email`, `weak-password`, network and rate-limit errors to their messages.
+- Unmapped errors show the fallback and are logged with `console.error`.
 
 Test steps (manual):
-1. On this Mac, run `bash scripts/setup.sh`. It reports each tool as already installed and ends with `npx tauri info` output.
-2. On a Windows machine (or VM), run `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`, then `npm run tauri dev`.
-3. Read "Getting started" as a new user and follow it to a signed-up account.
+1. Signed out, turn off Wi-Fi and sign in. "Can't reach the sign-in service…" shows.
+2. Sign in with a wrong password. "Invalid email or password." shows.
+3. Sign up with an email that already has an account. The "already exists" message shows.
+
+### T4 Google sign-in on sign-up, and a clear note when it isn't set up
+
+Status: done
+Depends on: none
+Tester: yes. Both pages render while signed in, so headings and button state can be checked without clicking Google.
+
+- Move `handleGoogle` and its button from `app/login/page.tsx` into `components/auth/GoogleSignInButton.tsx`. Its props are `disabled`, `onBusyChange(busy)` and `onError(message)`. On success it does `router.replace("/")`, as today. Keep its comments about the system browser and the 5-minute limit.
+- Use the component on login (unchanged behaviour) and on register, below the form, behind the same "or" divider markup as login.
+- When `isGoogleSignInConfigured()` is false, render the button disabled, with the muted note from Decisions, and `console.warn` the missing env-var names once.
+- Change the login heading and subtitle as in Decisions.
+
+Files: new `components/auth/GoogleSignInButton.tsx`, `app/login/page.tsx`, `app/register/page.tsx`
+
+Acceptance:
+- Login and register both show "Continue with Google". Only one copy of the Google flow exists in the codebase.
+- While Google sign-in runs, the other buttons on that page are disabled and the button reads "Waiting for browser…", as login does today.
+- Unconfigured builds show the disabled button and "Google sign-in isn't set up in this build.". No UI text mentions env-var names.
+- The login heading is "Sign in to Skylines". "Welcome back" no longer appears.
+
+Test steps:
+1. Navigate the main window to `/login`. The heading is "Sign in to Skylines" and "Continue with Google" is enabled (`.env.local` has both Google vars). Don't click it.
+2. Navigate to `/register`. An "or" divider and an enabled "Continue with Google" button show below the form.
+3. Navigate back to `/`.
+4. Manual: from sign-up, Continue with Google with a new Google account creates the account and lands on `/`.
+
+### T5 Server side of the 6-digit password reset
+
+Status: done
+Depends on: none
+Tester: no. Nothing runs until the user deploys the functions.
+
+- **Package.** Create a `functions/` package in TypeScript:
+  - Dependencies: `firebase-functions` (v2 API), `firebase-admin`, `nodemailer` and `@types/nodemailer`.
+  - `engines.node` is a runtime Cloud Functions supports (22), and the build outputs to `functions/lib`.
+- **Firebase config.** Add a `functions` entry to `firebase.json` (`source: "functions"`, with a predeploy build).
+- **Git and type checking.** Add `functions/lib` and `functions/node_modules` to `.gitignore`. Exclude `functions` from the root `tsconfig.json`, so `npx tsc --noEmit` and `npm run build` don't type-check it.
+- **Pure helpers** in `functions/src/resetCode.ts`:
+  - email normalization (trim and lowercase)
+  - the doc id, `sha256(email)`
+  - code generation with `crypto.randomInt`, zero-padded to 6 digits
+  - code hashing
+  - the cooldown and hourly-limit decision
+
+  Add a small `node:test` file for them, run by `npm test` in `functions/`.
+- **Callables** in `functions/src/index.ts`, built with `onCall` and secrets `defineSecret("GMAIL_USER")` and `defineSecret("GMAIL_APP_PASSWORD")`:
+  - `requestPasswordReset({ email })`
+    - Validates the email (`invalid-email`).
+    - Applies the cooldown and hourly limit (`cooldown` with `retryAfterSeconds`, or `too-many-requests`).
+    - Looks up the user with `getAuth().getUserByEmail`. With no user, it returns `{ ok: true }` without sending.
+    - Otherwise it stores the hashed code, expiry, attempt count and send times in `passwordResets/{docId}`, then emails the code through nodemailer with Gmail SMTP. The subject is "Your Skylines password reset code", and the body gives the code, says it expires in 15 minutes, and says to ignore the email if the user didn't ask for it.
+  - `confirmPasswordReset({ email, code, newPassword })`
+    - Runs in a Firestore transaction.
+    - A missing doc gives `invalid-code`. A past expiry gives `expired`.
+    - A wrong code increments the attempts and gives `invalid-code`, or deletes the doc and gives `too-many-attempts` at 5.
+    - A password shorter than 6 characters gives `weak-password`.
+    - On success it runs `updateUser(uid, { password })` and `revokeRefreshTokens(uid)`, deletes the doc and returns `{ ok: true }`.
+  - All errors are `HttpsError` with `details.reason`, as in Decisions.
+- **Docs.** Add a "Password reset email" section to `README.md` with the manual setup:
+  1. Upgrade the project to Blaze.
+  2. Create a Gmail app password (needs 2-Step Verification).
+  3. Run `npx firebase-tools login`.
+  4. Set both secrets with `npx firebase-tools functions:secrets:set …`.
+  5. Deploy with `npx firebase-tools deploy --only functions --project <project id>`.
+- **CLAUDE.md.** Add `(cd functions && npm run build && npm test)` to `## Verification`. Add a Gotcha that functions are deployed manually by the user and that agents must never deploy.
+
+Files: new `functions/package.json`, `functions/tsconfig.json`, `functions/src/index.ts`, `functions/src/resetCode.ts`, `functions/src/resetCode.test.ts`; `firebase.json`, `.gitignore`, `tsconfig.json`, `README.md`, `CLAUDE.md`
+
+Acceptance:
+- `(cd functions && npm install && npm run build && npm test)` exits 0, and the root verification commands still pass.
+- The code is never stored or logged in plain text. A new request replaces the old code. The expiry, cooldown, hourly-limit and attempt rules match Decisions.
+- A reset request for an unknown email returns `{ ok: true }` and sends nothing. Confirming with no stored code returns `invalid-code`.
+- `firestore.rules` is unchanged.
+- The README lists every manual setup step, and nothing in the task runs `firebase login` or a deploy.
+
+Test steps (manual, after the user deploys):
+1. Request a reset for your real email. An email with a 6-digit code arrives.
+2. Request again within 60 seconds. The call fails with reason `cooldown`.
+
+### T6 Forgot-password screens in the app
+
+Status: done
+Depends on: T3, T5
+Tester: yes. The screens, validation and the unknown-email path are observable. Reading a real code from an inbox is manual.
+
+- Export `functions = getFunctions(app)` from `lib/firebase.ts`. Add `/forgot-password` to `PUBLIC_ROUTES` in `components/AppShell.tsx`.
+- New `app/forgot-password/page.tsx`, in the same card layout as login:
+  - **Step 1, "Reset your password".** An email field (prefilled from `?email=`), a "Send code" button and a "Back to sign in" link. It calls `requestPasswordReset` through `httpsCallable`.
+  - **Step 2.** The line "If an account exists for <email>, we've emailed a 6-digit code. It expires in 15 minutes." Then:
+    - A code field (`inputMode="numeric"`, `autoComplete="one-time-code"`, keeps digits only, max 6, so a pasted "123 456" works).
+    - "New password" and "Confirm password" `PasswordInput`s (`new-password`), checked like register: length first, then match.
+    - A "Reset password" button.
+    - "Resend code", disabled with a "Resend code in Ns" countdown for 60 seconds after each send, or for `retryAfterSeconds` on `cooldown`.
+    - "Use a different email" (back to step 1).
+- **On success**, run `signInWithEmailAndPassword` with the new password, then `router.replace("/")`. If that sign-in fails, go to `/login`.
+- **Error messages by reason:**
+  - `invalid-code`: "That code isn't right."
+  - `expired`: "That code has expired. Send a new one."
+  - `too-many-attempts`: "Too many wrong codes. Send a new one."
+  - `cooldown`: wait message using the seconds
+  - `too-many-requests`: "Too many codes requested. Try again in an hour."
+  - `invalid-email`: "That email address doesn't look right."
+  - `weak-password`: "Password must be at least 6 characters."
+  - Anything else, including the functions not being deployed: "Couldn't reach the password reset service. Try again later." Use `authErrorMessage` for network errors.
+- **In `app/login/page.tsx`**, replace the "Forgot password?" button with the link from Decisions, and remove `handleForgotPassword`, `resetMessage`, `resetLoading`, `sendPasswordResetEmail` and `window.prompt`.
+
+Files: new `app/forgot-password/page.tsx`, `lib/firebase.ts`, `components/AppShell.tsx`, `app/login/page.tsx`
+
+Acceptance:
+- "Forgot password?" on login opens `/forgot-password` with the typed email prefilled. The page works signed out.
+- Step 2 can't submit with a code that isn't 6 digits, a short password or mismatched passwords, and these checks make no server call.
+- Resend is disabled during its countdown and re-enables afterwards.
+- A successful reset signs the user in with the new password and lands on `/`.
+- `app/login/page.tsx` no longer references `sendPasswordResetEmail` or `window.prompt`.
+
+Test steps:
+1. Navigate the main window to `/login`, type `nobody-reset-test@example.com` and click "Forgot password?". `/forgot-password` shows with that email filled in.
+2. Click "Send code".
+   - If the functions are deployed, step 2 shows the "If an account exists…" line and Resend shows a countdown.
+   - If they aren't deployed, "Couldn't reach the password reset service…" shows. Stop here and report it.
+3. Type `12a3` in the code field. Only `123` remains. Enter `123456`, password `abcdef` and confirm `abcdeg`, then submit. "Passwords don't match." shows and no request is sent.
+4. Make both passwords `abcdef` and submit. "That code isn't right." shows (no code exists for that email).
+5. "Use a different email" returns to step 1. Navigate back to `/`.
+6. Manual: signed out, reset your real account's password with the emailed code. You end up signed in on `/`, and the new password works on login.
+
+### T7 Remove code nothing uses
+
+Status: done
+Depends on: T1, T2, T3, T4, T5, T6
+Tester: yes, as a smoke test. The app still starts, opens notebooks, notes and sticky notes, and the sign-in pages render.
+
+- **What to look for.** Review the whole project (`app/`, `components/`, `lib/`, `hooks/`, `stores/`, `types/`, `src-tauri/`, `functions/`) for code nothing uses, and remove it:
+  - unused files, exports, components and hooks (known: `hooks/useAuth.ts`, a duplicate of `AuthProvider`)
+  - npm and Cargo dependencies nothing imports
+  - Tauri plugins and capability permissions nothing calls
+  - commented-out code
+- **Deep-link plugin.** The `skylines://` deep-link plugin is believed unused (`@tauri-apps/plugin-deep-link`, `tauri-plugin-deep-link`, its `tauri.conf.json` config). Remove it only after confirming nothing reads deep links, including features of `tauri-plugin-single-instance`.
+- **Tools.** One-off tools such as `npx knip` are fine; don't add them to `package.json`.
+- **Never remove:**
+  - existing SQL migrations
+  - capability files for window labels
+  - Tauri commands invoked by string from the frontend
+  - `scripts/`
+  - `DevLogin`
+  - anything reached only through dynamic strings
+- **Handover.** List every removal with its reason.
+
+Files: across the project; lockfiles update with dependency removals
+
+Acceptance:
+- `hooks/useAuth.ts` is gone, and every removed item is listed in the handover with why it was unused.
+- All verification commands, including the functions build and test, pass.
+- No user-visible behaviour changes.
+
+Test steps:
+1. Reload the main window. The app starts signed in as `dev@skylines.local`, and opening a notebook and a note works.
+2. Open an existing sticky note window and close it again.
+3. Navigate to `/login`, `/register` and `/forgot-password`. Each renders. Navigate back to `/`.
 
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 An open notebook shows a real empty state
+- [x] T2 The account menu shows on the notebook picker
+- [x] T3 Sign-in and sign-up errors say what went wrong
+- [x] T4 Google sign-in on sign-up, and a clear note when it isn't set up
+- [x] T5 Server side of the 6-digit password reset
+- [x] T6 Forgot-password screens in the app
+- [x] T7 Remove code nothing uses

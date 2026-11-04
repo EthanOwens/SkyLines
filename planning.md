@@ -1,19 +1,9 @@
-Things to change:
-- Lock each account to its own data in Firestore. Write security rules so a signed-in user can only read, create, update or delete documents whose userId is their own uid (for folders, notes, notebooks, pages and sticky notes). Keep the rules in the repo (firestore.rules) so they're versioned, and deploy them with the Firebase CLI.
-- Leave the Dev Login button out of release builds. Show it only when running `npm run tauri dev`.
-- Sync sticky notes the same way as notes: push, live pull, cleanup of deleted ones, and security rules. The table already tracks unsynced changes, but nothing pushes them yet.
-- Keep pictures on this computer for now. Store pasted, uploaded and screenshot images as local files instead of inside the note, so synced notes stay small. On another computer, show a placeholder saying the image is on a different device. Later, Firebase Storage can sync the images themselves.
-- One note that fails to sync shouldn't block all the others. Skip it, keep syncing the rest, and say which note failed and why (too big, or data Firestore won't accept).
-- Fix "canvasData contains an invalid nested entity": Firestore can't store some canvas data as-is. Probably store the canvas as a JSON string instead.
-- One-step setup for friends. Add a setup script for macOS (`scripts/setup.sh`) and Windows (`scripts/setup.ps1`) that installs what's missing (Xcode Command Line Tools or Visual Studio C++ Build Tools, Rust via rustup, Node LTS), runs `npm ci`, checks that `.env.local` exists, and finishes with `npx tauri info`. Pin the Node and Rust versions so everyone builds with the same ones. Add a "Getting started" section at the top of the README for a new user, covering:
-  - what to install, or run the setup script
-  - cloning the repo
-  - getting `.env.local` from me and where to put it
-  - running `npm run tauri dev` to try the app
-  - running `npm run tauri build` and installing the app
-  - signing up for an account
-  - updating to a newer version (`git pull`, then rebuild)
-  - where the log file is and how to report a bug
-  - known limits (sticky notes and pictures stay on this computer for now)
-- Logs friends can send me. Write logs to a file with the official log plugin (tauri-plugin-log), including the webview's console errors, uncaught errors and sync failures. Rotate the file so it stays small, and never log note text. Add "Report a bug" to the account menu: it copies app version, OS, sync status and the recent log to the clipboard, and has a button that opens the logs folder so the file can be attached.
-- Versioning. Set the version to 0.9.1, kept only in `package.json`: point `tauri.conf.json`'s version at `"../package.json"` so there's one number to change. Bake the commit hash into each build (read from git when building, no commit needed) and show "v0.9.1 (abc1234)" in the account menu and in bug reports, so I know exactly which code a friend is running. Document `npm version patch|minor|major` in the README for releases.
+Things to update:
+- The google redirect would be nice to just close then refocus the skylines window instead of opening a web page 
+- For creating an account there should be 2 password boxes so the user has to re-type the password a second time to confirm they match
+- All password boxes (on login page and create account page) should have a toggle between making the password appear in plain text and back to hidden
+
+
+
+Bugs to fix:
+- When opening a different account it looks like it reads in the local page and loads that instead of the other users info. What I did was log in to my owensitf3@gmail.com account, made a page with some text in a text box, then logged out, logged into my ewowens42@gmail.com account and it showed a buggy page with just the page and canvas and no other gui options

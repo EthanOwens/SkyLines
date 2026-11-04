@@ -6,6 +6,7 @@ import { getPageById, getPages } from "@/lib/db/pages";
 import { getStickyNoteById } from "@/lib/db/stickyNotes";
 import { extractFirstImageSrc, extractPlainText, findImageSrc } from "@/lib/tiptap/extractText";
 import type { Folder } from "@/types";
+import { auth } from "@/lib/firebase";
 
 export interface ResolvedReference {
   exists: boolean;
@@ -101,13 +102,13 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
 }
 
-async function folderChain(folderId: string | null): Promise<Folder[] | null> {
+async function folderChain(folderId: string | null, userId: string): Promise<Folder[] | null> {
   const chain: Folder[] = [];
   const seen = new Set<string>();
   let id = folderId;
   while (id && !seen.has(id)) {
     seen.add(id);
-    const folder = await getFolderById(id);
+    const folder = await getFolderById(id, userId);
     if (!folder) return null;
     chain.unshift(folder);
     id = folder.parentId;
@@ -120,18 +121,19 @@ async function folderChain(folderId: string | null): Promise<Folder[] | null> {
 async function containerPath(
   notebookId: string | null,
   folderId: string | null,
+  userId: string,
 ): Promise<string[] | null> {
-  const folders = await folderChain(folderId);
+  const folders = await folderChain(folderId, userId);
   if (!folders) return null;
-  const notebook = notebookId ? await getNotebookById(notebookId) : null;
+  const notebook = notebookId ? await getNotebookById(notebookId, userId) : null;
   if (notebookId && !notebook) return null;
   return [...(notebook ? [notebook.name] : []), ...folders.map((f) => f.name)];
 }
 
-async function notePath(noteId: string) {
-  const note = await getNoteById(noteId);
+async function notePath(noteId: string, userId: string) {
+  const note = await getNoteById(noteId, userId);
   if (!note) return null;
-  const path = await containerPath(note.notebookId, note.folderId);
+  const path = await containerPath(note.notebookId, note.folderId, userId);
   return path ? { note, path } : null;
 }
 
@@ -139,27 +141,29 @@ async function notePath(noteId: string) {
 // image-editor windows too. Database errors propagate, so callers can tell a
 // failed read from a missing target.
 export async function resolveReference(ref: Reference): Promise<ResolvedReference> {
+  const userId = auth.currentUser?.uid;
+  if (!userId) return NOT_FOUND;
   switch (ref.kind) {
     case "notebook": {
-      const notebook = await getNotebookById(ref.id);
+      const notebook = await getNotebookById(ref.id, userId);
       if (!notebook) return NOT_FOUND;
       return { exists: true, title: notebook.name, path: [], previewText: "", previewImage: null };
     }
     case "folder": {
-      const folder = await getFolderById(ref.id);
+      const folder = await getFolderById(ref.id, userId);
       if (!folder) return NOT_FOUND;
-      const path = await containerPath(folder.notebookId, folder.parentId);
+      const path = await containerPath(folder.notebookId, folder.parentId, userId);
       if (!path) return NOT_FOUND;
       return { exists: true, title: folder.name, path, previewText: "", previewImage: null };
     }
     case "note": {
-      const found = await notePath(ref.id);
+      const found = await notePath(ref.id, userId);
       if (!found) return NOT_FOUND;
       const { note, path } = found;
       let previewText = extractPlainText(note.content, PREVIEW_LENGTH);
       let previewImage = extractFirstImageSrc(note.content);
       if (!previewText && !previewImage) {
-        const [firstPage] = await getPages(note.id);
+        const [firstPage] = await getPages(note.id, userId);
         const preview = canvasPreview(firstPage?.canvasData);
         previewText = preview.text;
         previewImage = preview.image;
@@ -167,9 +171,9 @@ export async function resolveReference(ref: Reference): Promise<ResolvedReferenc
       return { exists: true, title: note.title, path, previewText, previewImage };
     }
     case "page": {
-      const page = await getPageById(ref.id);
+      const page = await getPageById(ref.id, userId);
       if (!page) return NOT_FOUND;
-      const found = await notePath(page.noteId);
+      const found = await notePath(page.noteId, userId);
       if (!found) return NOT_FOUND;
       const preview = canvasPreview(page.canvasData);
       return {
@@ -181,14 +185,14 @@ export async function resolveReference(ref: Reference): Promise<ResolvedReferenc
       };
     }
     case "shape": {
-      const page = await getPageById(ref.pageId);
+      const page = await getPageById(ref.pageId, userId);
       if (!page) return NOT_FOUND;
       const records = snapshotRecords(page.canvasData);
       const shape = records.find((r) => r.id === ref.shapeId && isShape(r)) as
         | ShapeRecord
         | undefined;
       if (!shape) return NOT_FOUND;
-      const found = await notePath(page.noteId);
+      const found = await notePath(page.noteId, userId);
       if (!found) return NOT_FOUND;
       const doc = shapeDoc(shape);
       return {
@@ -201,7 +205,7 @@ export async function resolveReference(ref: Reference): Promise<ResolvedReferenc
     }
     case "image": {
       if (ref.stickyId !== undefined) {
-        const sticky = await getStickyNoteById(ref.stickyId);
+        const sticky = await getStickyNoteById(ref.stickyId, userId);
         const src = sticky ? findImageSrc(sticky.content, ref.id) : null;
         if (!sticky || src === null) return NOT_FOUND;
         return {
@@ -212,7 +216,7 @@ export async function resolveReference(ref: Reference): Promise<ResolvedReferenc
           previewImage: src || null,
         };
       }
-      const page = await getPageById(ref.pageId);
+      const page = await getPageById(ref.pageId, userId);
       if (!page) return NOT_FOUND;
       const records = snapshotRecords(page.canvasData);
       const shape = records.find((r) => r.id === ref.shapeId && isShape(r)) as
@@ -220,7 +224,7 @@ export async function resolveReference(ref: Reference): Promise<ResolvedReferenc
         | undefined;
       const src = findImageSrc(shape ? shapeDoc(shape) : null, ref.id);
       if (!shape || src === null) return NOT_FOUND;
-      const found = await notePath(page.noteId);
+      const found = await notePath(page.noteId, userId);
       if (!found) return NOT_FOUND;
       return {
         exists: true,
@@ -231,7 +235,7 @@ export async function resolveReference(ref: Reference): Promise<ResolvedReferenc
       };
     }
     case "sticky": {
-      const sticky = await getStickyNoteById(ref.id);
+      const sticky = await getStickyNoteById(ref.id, userId);
       if (!sticky) return NOT_FOUND;
       return {
         exists: true,

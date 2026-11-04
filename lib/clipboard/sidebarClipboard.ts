@@ -25,6 +25,7 @@ export interface PasteTarget {
  * the folder/notebook tree at all, see `ClipboardEntry`'s comment above). */
 export interface PagePasteTarget {
   noteId: string;
+  userId: string;
 }
 
 /** createNote can't take content, so this creates then updates. */
@@ -220,7 +221,7 @@ export async function pastePageClipboardEntry(
   const page = allPages.find((p) => p.id === entry.id);
   if (!page) return false;
 
-  const siblingPages = await getPages(target.noteId);
+  const siblingPages = await getPages(target.noteId, target.userId);
   const siblingOrders = siblingPages
     .filter((p) => p.id !== entry.id)
     .map((p) => p.order);

@@ -45,11 +45,11 @@ function rowToPage(row: PageRow): Page {
  * `order_index` ascending (a note's pages have a stable display order, the
  * same way a folder's notes do via `Note.order`).
  */
-export async function getPages(noteId: string): Promise<Page[]> {
+export async function getPages(noteId: string, userId: string): Promise<Page[]> {
   const db = await getDb();
   const rows = await db.select<PageRow[]>(
-    `SELECT * FROM ${TABLE} WHERE note_id = $1 AND deleted_at IS NULL ORDER BY order_index ASC`,
-    [noteId],
+    `SELECT * FROM ${TABLE} WHERE note_id = $1 AND user_id = $2 AND deleted_at IS NULL ORDER BY order_index ASC`,
+    [noteId, userId],
   );
   return rows.map(rowToPage);
 }
@@ -90,19 +90,19 @@ export async function hardDeletePage(pageId: string): Promise<void> {
   notifyDataChange("remote");
 }
 
-export async function getPageById(pageId: string): Promise<Page | null> {
+export async function getPageById(pageId: string, userId: string): Promise<Page | null> {
   const db = await getDb();
   const rows = await db.select<PageRow[]>(
-    `SELECT * FROM ${TABLE} WHERE id = $1 AND deleted_at IS NULL`,
-    [pageId],
+    `SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+    [pageId, userId],
   );
   return rows.length > 0 ? rowToPage(rows[0]) : null;
 }
 
 /** Includes soft-deleted rows; see getNoteRowById. */
-export async function getPageRowById(pageId: string): Promise<Page | null> {
+export async function getPageRowById(pageId: string, userId: string): Promise<Page | null> {
   const db = await getDb();
-  const rows = await db.select<PageRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [pageId]);
+  const rows = await db.select<PageRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2`, [pageId, userId]);
   return rows.length > 0 ? rowToPage(rows[0]) : null;
 }
 

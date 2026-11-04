@@ -14,6 +14,7 @@ Run all of these after every change. Each must exit 0:
 - `npx tsc --noEmit`
 - `npm run build`
 - `(cd src-tauri && cargo check)`
+- `(cd functions && npm run build && npm test)`
 
 ## Testing
 
@@ -32,13 +33,14 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 
 ### Lessons
 
-- While the app window is hidden, screenshots come back stale, and timers and close animations stall: closed dialogs linger with `data-closed`, and awaited timeouts in `webview_execute_js` time out. The window goes hidden whenever another app takes focus, and `manage_window` focus doesn't wake it: run `osascript -e 'tell application "System Events" to set frontmost of process "skylines" to true'` before each batch of steps, and rely on DOM and computed-style evidence.
+- While the app window is hidden, screenshots come back stale, and timers and close animations stall: closed dialogs linger with `data-closed`, and awaited timeouts in `webview_execute_js` time out. The window goes hidden whenever another app takes focus, and `manage_window` focus doesn't wake it: run `osascript -e 'tell application "System Events" to set frontmost of process "skylines" to true'` before each batch of steps, and rely on DOM and computed-style evidence. A new window stuck on its loading spinner: reload it, or close it from inside (`plugin:window|close`, `sticky-*` only) and reopen it.
 - Simulated events can't start a native window drag or trigger real keyboard focus, so mark those steps for the user.
 - To make a text box, `editor.setCurrentTool('rich-text')` (not `text`, which makes a tldraw shape with no Cmd+K or ribbon), then dispatch synthetic `pointerdown` then `pointerup` on `.tl-canvas` (no awaits). The first click only deselects the previous box, so click twice.
 - (fragile) Seed canvas data through the tldraw editor, reached by a React fiber walk from `.tl-container` (`memoizedState.memoizedState.current.createShape`). Use a fresh shape id after one hits an error boundary, and keep `webview_execute_js` scripts synchronous (`await` times out). Seed `rich-text` shapes, not tldraw `text`, and enter edit mode (`setEditingShape`): only that editor has hover cards and chip handling.
 - After code changes to modules with module-level state (e.g. `mainWindowRouter` in `lib/references/navigate.ts`), run `location.reload()` and re-enter a notebook before testing; hot reload leaves that state stale.
 - Canvas changes reach SQLite on a debounce. Wait for a save (e.g. reopen the dialog) before expecting new text boxes in DB-backed views: the picker, chips and missing state.
 - To test paste, dispatch `new ClipboardEvent('paste', {clipboardData})` on the ProseMirror DOM; `view.pasteText()` has no clipboardData, so custom paste handlers are skipped. Do setup and the paste in separate `webview_execute_js` calls.
+- Canvas-note content syncs to the Firestore `pages` collection, not `notes` (its `canvasJson` stays null). To check it, use REST `runQuery` with the bearer token from IndexedDB `firebaseLocalStorageDb` and a `userId == uid` filter (unfiltered returns 403; a 403 on a filtered query means the deployed rules lack that collection, so ask the user to publish `firestore.rules`). Run fetch/IndexedDB scripts fire-and-forget, store the result on `window`, and read it in a second call.
 
 ## Gotchas
 
@@ -47,3 +49,8 @@ Behaviour is tested in the running app through the Tauri MCP server (`.mcp.json`
 - Every window created at runtime needs a capability file in `src-tauri/capabilities/` matching its label (`main`, `sticky-*`, `image-editor-*`), or its webview gets no permissions.
 - The app is built on both Windows and macOS. On macOS, Rust linking needs `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk` because of a stray beta SDK.
 - `.env.local` holds the Firebase `NEXT_PUBLIC_*` config, which is baked in at build time.
+- Cloud Functions (`functions/`) are deployed manually by the user. Agents must never deploy them, run `firebase login` or set secrets.
+
+## Preferences and notes
+
+<!-- Add: how you like changes made, non-negotiables (platforms, offline, accessibility), things outside the repo (consoles, secrets), areas to leave alone and known issues. -->

@@ -43,19 +43,19 @@ export async function getNotebooks(userId: string): Promise<Notebook[]> {
   return rows.map(rowToNotebook);
 }
 
-export async function getNotebookById(notebookId: string): Promise<Notebook | null> {
+export async function getNotebookById(notebookId: string, userId: string): Promise<Notebook | null> {
   const db = await getDb();
   const rows = await db.select<NotebookRow[]>(
-    `SELECT * FROM ${TABLE} WHERE id = $1 AND deleted_at IS NULL`,
-    [notebookId],
+    `SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+    [notebookId, userId],
   );
   return rows.length > 0 ? rowToNotebook(rows[0]) : null;
 }
 
 /** Includes soft-deleted rows; see getFolderRowById. */
-export async function getNotebookRowById(notebookId: string): Promise<Notebook | null> {
+export async function getNotebookRowById(notebookId: string, userId: string): Promise<Notebook | null> {
   const db = await getDb();
-  const rows = await db.select<NotebookRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1`, [notebookId]);
+  const rows = await db.select<NotebookRow[]>(`SELECT * FROM ${TABLE} WHERE id = $1 AND user_id = $2`, [notebookId, userId]);
   return rows.length > 0 ? rowToNotebook(rows[0]) : null;
 }
 

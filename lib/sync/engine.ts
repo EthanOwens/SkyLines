@@ -1,4 +1,4 @@
-import type { SyncStatus } from "@/types";
+import type { SyncFailure, SyncStatus } from "@/types";
 import { pushDirtyRows } from "./push";
 import { startPullSync, type PullHooks } from "./pull";
 
@@ -39,9 +39,33 @@ let status: SyncStatus = "saved";
 const statusListeners = new Set<(status: SyncStatus) => void>();
 
 function setStatus(next: SyncStatus): void {
+  // Rows that can't sync keep the status on "error" until they're fixed.
+  if (next === "saved" && failures.length > 0) next = "error";
   if (next === status) return;
   status = next;
   for (const listener of statusListeners) listener(status);
+}
+
+// Rows the last push pass couldn't sync (data errors), replaced on every pass.
+let failures: SyncFailure[] = [];
+const failureListeners = new Set<(failures: SyncFailure[]) => void>();
+
+function setFailures(next: SyncFailure[]): void {
+  if (next.length === 0 && failures.length === 0) return;
+  failures = next;
+  for (const listener of failureListeners) listener(failures);
+}
+
+export function getSyncFailures(): SyncFailure[] {
+  return failures;
+}
+
+/** Subscribes to sync failure changes. Returns an unsubscribe function. */
+export function subscribeSyncFailures(listener: (failures: SyncFailure[]) => void): () => void {
+  failureListeners.add(listener);
+  return () => {
+    failureListeners.delete(listener);
+  };
 }
 
 export function getSyncStatus(): SyncStatus {
@@ -127,7 +151,9 @@ function flushPush(): void {
   void attemptPush(pendingPushUserId);
 }
 
-function scheduleBackoffRetry(userId: string): void {
+function scheduleBackoffRetry(userId: string, gen: number): void {
+  // A stopped or replaced engine must not leave a timer retrying the old user.
+  if (gen !== generation || !engineRunning) return;
   if (pushBackoffTimer) clearTimeout(pushBackoffTimer);
   pushBackoffTimer = setTimeout(() => {
     pushBackoffTimer = null;
@@ -142,6 +168,8 @@ function scheduleBackoffRetry(userId: string): void {
  * status on "syncing". pendingPushUserId stays set so reconnect retries.
  */
 async function attemptPush(userId: string): Promise<void> {
+  if (!engineRunning) return;
+  const gen = generation;
   if (pushBackoffTimer) {
     clearTimeout(pushBackoffTimer);
     pushBackoffTimer = null;
@@ -164,7 +192,11 @@ async function attemptPush(userId: string): Promise<void> {
   setStatus("syncing");
   let needsFollowUp = false;
   try {
-    await pushDirtyRows(userId);
+    const passFailures = await pushDirtyRows(userId);
+    for (const f of passFailures) {
+      console.error(`[sync/push] ${f.table} ${f.id} ${f.reason}`);
+    }
+    setFailures(passFailures);
     pushBackoffMs = BASE_BACKOFF_MS;
     if (pushRequestCounter === servicedRequest) {
       // No new request during the push, so everything dirty has been pushed.
@@ -181,11 +213,11 @@ async function attemptPush(userId: string): Promise<void> {
   } catch (err) {
     console.error("[sync/engine] push failed, scheduling backoff retry", err);
     setStatus(isOnline() ? "error" : "offline");
-    scheduleBackoffRetry(userId);
+    scheduleBackoffRetry(userId, gen);
   } finally {
     pushInFlight = false;
-    if (needsFollowUp) {
-      void attemptPush(userId);
+    if (needsFollowUp && gen === generation && pendingPushUserId) {
+      void attemptPush(pendingPushUserId);
     }
   }
 }
@@ -302,6 +334,7 @@ function handleVisibilityChange(): void {
 // teardown only acts if that generation is still current. A late cleanup from
 // an old React effect is then a no-op instead of stopping the live engine.
 let generation = 0;
+let engineRunning = false;
 
 export function startSyncEngine(userId: string): () => void {
   if (typeof window === "undefined" || typeof document === "undefined") {
@@ -309,6 +342,8 @@ export function startSyncEngine(userId: string): () => void {
   }
 
   const myGeneration = ++generation;
+  engineRunning = true;
+  setFailures([]);
   setStatus("saved"); // fresh session, don't inherit a stale status from a prior sign-in/out cycle
 
   startOrRestartPull(userId);
@@ -329,6 +364,7 @@ export function startSyncEngine(userId: string): () => void {
       return;
     }
 
+    engineRunning = false;
     pullUnsubscribe?.();
     pullUnsubscribe = null;
     activePullUserId = null;
@@ -345,6 +381,7 @@ export function startSyncEngine(userId: string): () => void {
     pendingPushUserId = null;
     pushBackoffMs = BASE_BACKOFF_MS;
     pullBackoffMs = BASE_BACKOFF_MS;
+    setFailures([]);
     setStatus("saved"); // reset before this engine instance's state is torn down, so the next session (if any) starts clean too
 
     window.removeEventListener("online", handleOnline);
