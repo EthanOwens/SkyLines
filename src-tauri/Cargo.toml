@@ -28,7 +28,7 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-screenshots = "2"
 tauri-plugin-clipboard-manager = "2"
-tauri-plugin-mcp-bridge = "=0.13.0"
+tauri-plugin-mcp-bridge = "=0.13.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 base64 = "0.22"
 url = "2"
@@ -47,7 +47,7 @@ tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset",
 # Sets sticky note windows' AppUserModelID so they get their own taskbar group.
 # Same major version as Tauri's, so HWND types line up.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Storage_EnhancedStorage",
   "Win32_System_Com_StructuredStorage",
