@@ -524,7 +524,9 @@ pub fn run() {
     #[cfg(desktop)]
     {
         // Registered first so a second launch exits before anything else starts.
-        builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}));
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main_window(app);
+        }));
 
         // Only the handler is set up here. The shortcut itself is registered in
         // setup(), so a collision with another app's shortcut can't fail

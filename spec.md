@@ -58,7 +58,7 @@ Add a Settings dialog (opened from the account menu) with synced preferences, an
 
 ### T1 Relaunching the app shows the hidden window
 
-Status: todo
+Status: done
 Depends on: none
 Tester: no. A second launch and the tray are outside the tester's reach.
 
@@ -272,3 +272,4 @@ Test steps:
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 Relaunching the app shows the hidden window
