@@ -339,167 +339,275 @@ export type PullHooks = {
   onListenError?: (err: unknown) => void;
 };
 
-/** Returns the unsubscribe function. */
-export function subscribeFolderPull(userId: string, hooks?: PullHooks): Unsubscribe {
-  const q = query(collection(db, FOLDERS_COLLECTION), where("userId", "==", userId));
+type Gate = { promise: Promise<void>; release: () => void };
+
+function createGate(): Gate {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+type PendingChange = {
+  retry: () => Promise<void>;
+  onError: (err: unknown) => void;
+  attempts: number;
+};
+
+/** Retries per orphaned change; after that it waits for a listener restart. */
+const MAX_FK_RETRIES = 5;
+
+/**
+ * Per-startPullSync state. Each restart builds a fresh one, which is what
+ * resets the gates and the pending list.
+ */
+type PullContext = {
+  notebooksReady: Gate;
+  foldersReady: Gate;
+  notesReady: Gate;
+  pending: PendingChange[];
+  retrying: boolean;
+  cancelled: boolean;
+};
+
+function createPullContext(): PullContext {
+  return {
+    notebooksReady: createGate(),
+    foldersReady: createGate(),
+    notesReady: createGate(),
+    pending: [],
+    retrying: false,
+    cancelled: false,
+  };
+}
+
+function isForeignKeyError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes("FOREIGN KEY constraint failed");
+}
+
+/** Retries deferred changes until a pass makes no progress. */
+async function retryPending(ctx: PullContext): Promise<void> {
+  if (ctx.retrying || ctx.cancelled) return;
+  ctx.retrying = true;
+  try {
+    let progress = true;
+    while (progress && !ctx.cancelled) {
+      progress = false;
+      for (const entry of [...ctx.pending]) {
+        if (entry.attempts >= MAX_FK_RETRIES) continue;
+        try {
+          await entry.retry();
+          ctx.pending.splice(ctx.pending.indexOf(entry), 1);
+          progress = true;
+        } catch (err) {
+          if (isForeignKeyError(err)) {
+            entry.attempts += 1;
+          } else {
+            ctx.pending.splice(ctx.pending.indexOf(entry), 1);
+            console.error("[sync/pull] failed to apply deferred change", err);
+            entry.onError(err);
+          }
+        }
+      }
+    }
+  } finally {
+    ctx.retrying = false;
+  }
+}
+
+/** Folders whose parent is in the same snapshot come after that parent. */
+function sortFolderChanges(
+  changes: DocumentChange<DocumentData>[],
+): DocumentChange<DocumentData>[] {
+  const parentById = new Map<string, string | null>();
+  for (const change of changes) {
+    parentById.set(change.doc.id, (change.doc.data()?.parentId as string | null) ?? null);
+  }
+  const depth = (id: string): number => {
+    let d = 0;
+    let current = parentById.get(id) ?? null;
+    while (current && parentById.has(current) && d <= parentById.size) {
+      d += 1;
+      current = parentById.get(current) ?? null;
+    }
+    return d;
+  };
+  return [...changes].sort((a, b) => depth(a.doc.id) - depth(b.doc.id));
+}
+
+type CollectionSubscription = {
+  name: string;
+  collectionName: string;
+  userId: string;
+  ctx: PullContext;
+  hooks?: PullHooks;
+  apply: (change: DocumentChange<DocumentData>) => Promise<void>;
+  /** Parent gates that must open before this collection applies anything. */
+  waitFor?: Gate[];
+  /** Opened once the first snapshot has been applied (or the listener dies). */
+  ready?: Gate;
+  /** Parent collections: a successful apply may unblock deferred children. */
+  unblocksChildren?: boolean;
+  orderChanges?: (
+    changes: DocumentChange<DocumentData>[],
+  ) => DocumentChange<DocumentData>[];
+};
+
+function subscribeCollection(opts: CollectionSubscription): Unsubscribe {
+  const { name, ctx, hooks, apply, waitFor, ready } = opts;
+  const q = query(collection(db, opts.collectionName), where("userId", "==", opts.userId));
   // A write from this client arrives twice (the optimistic cache event, then
   // the server ack). Processing snapshots one at a time stops both reading the
   // same stale row and applying the change twice.
   let queue: Promise<void> = Promise.resolve();
+  let first = true;
+
   return onSnapshot(
     q,
     (snapshot) => {
-      const changes = snapshot.docChanges();
+      const isFirst = first;
+      first = false;
+      let changes = snapshot.docChanges();
       if (changes.length > 0) hooks?.onActivity?.();
+      if (opts.orderChanges) changes = opts.orderChanges(changes);
       queue = queue
         .then(async () => {
+          if (waitFor) await Promise.all(waitFor.map((gate) => gate.promise));
           for (const change of changes) {
-            await applyFolderChange(change);
+            if (ctx.cancelled) return;
+            try {
+              await apply(change);
+              if (opts.unblocksChildren && ctx.pending.length > 0) await retryPending(ctx);
+            } catch (err) {
+              if (isForeignKeyError(err)) {
+                ctx.pending.push({
+                  retry: () => apply(change),
+                  onError: (e) => hooks?.onApplyError?.(e),
+                  attempts: 0,
+                });
+              } else {
+                console.error(`[sync/pull] failed to apply ${name} change`, err);
+                hooks?.onApplyError?.(err);
+              }
+            }
           }
+          if (ctx.pending.length > 0) await retryPending(ctx);
         })
         .catch((err) => {
-          console.error("[sync/pull] failed to apply folder changes", err);
+          console.error(`[sync/pull] failed to apply ${name} changes`, err);
           hooks?.onApplyError?.(err);
         })
         .finally(() => {
+          if (isFirst) ready?.release();
           if (changes.length > 0) hooks?.onIdle?.();
         });
     },
     (err) => {
-      console.error("[sync/pull] folders onSnapshot error", err);
+      console.error(`[sync/pull] ${name} onSnapshot error`, err);
+      ready?.release();
       hooks?.onListenError?.(err);
     },
   );
+}
+
+/** Returns the unsubscribe function. */
+export function subscribeFolderPull(
+  userId: string,
+  ctx: PullContext,
+  hooks?: PullHooks,
+): Unsubscribe {
+  return subscribeCollection({
+    name: "folders",
+    collectionName: FOLDERS_COLLECTION,
+    userId,
+    ctx,
+    hooks,
+    apply: applyFolderChange,
+    waitFor: [ctx.notebooksReady],
+    ready: ctx.foldersReady,
+    unblocksChildren: true,
+    orderChanges: sortFolderChanges,
+  });
 }
 
 /** Same as `subscribeFolderPull`, for the `notes` collection. */
-export function subscribeNotePull(userId: string, hooks?: PullHooks): Unsubscribe {
-  const q = query(collection(db, NOTES_COLLECTION), where("userId", "==", userId));
-  let queue: Promise<void> = Promise.resolve();
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const changes = snapshot.docChanges();
-      if (changes.length > 0) hooks?.onActivity?.();
-      queue = queue
-        .then(async () => {
-          for (const change of changes) {
-            await applyNoteChange(change);
-          }
-        })
-        .catch((err) => {
-          console.error("[sync/pull] failed to apply note changes", err);
-          hooks?.onApplyError?.(err);
-        })
-        .finally(() => {
-          if (changes.length > 0) hooks?.onIdle?.();
-        });
-    },
-    (err) => {
-      console.error("[sync/pull] notes onSnapshot error", err);
-      hooks?.onListenError?.(err);
-    },
-  );
+export function subscribeNotePull(userId: string, ctx: PullContext, hooks?: PullHooks): Unsubscribe {
+  return subscribeCollection({
+    name: "notes",
+    collectionName: NOTES_COLLECTION,
+    userId,
+    ctx,
+    hooks,
+    apply: applyNoteChange,
+    waitFor: [ctx.notebooksReady, ctx.foldersReady],
+    ready: ctx.notesReady,
+    unblocksChildren: true,
+  });
 }
 
 /** Same as `subscribeFolderPull`, for the `notebooks` collection. */
-export function subscribeNotebookPull(userId: string, hooks?: PullHooks): Unsubscribe {
-  const q = query(collection(db, NOTEBOOKS_COLLECTION), where("userId", "==", userId));
-  let queue: Promise<void> = Promise.resolve();
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const changes = snapshot.docChanges();
-      if (changes.length > 0) hooks?.onActivity?.();
-      queue = queue
-        .then(async () => {
-          for (const change of changes) {
-            await applyNotebookChange(change);
-          }
-        })
-        .catch((err) => {
-          console.error("[sync/pull] failed to apply notebook changes", err);
-          hooks?.onApplyError?.(err);
-        })
-        .finally(() => {
-          if (changes.length > 0) hooks?.onIdle?.();
-        });
-    },
-    (err) => {
-      console.error("[sync/pull] notebooks onSnapshot error", err);
-      hooks?.onListenError?.(err);
-    },
-  );
+export function subscribeNotebookPull(
+  userId: string,
+  ctx: PullContext,
+  hooks?: PullHooks,
+): Unsubscribe {
+  return subscribeCollection({
+    name: "notebooks",
+    collectionName: NOTEBOOKS_COLLECTION,
+    userId,
+    ctx,
+    hooks,
+    apply: applyNotebookChange,
+    ready: ctx.notebooksReady,
+    unblocksChildren: true,
+  });
 }
 
 /** Same as `subscribeFolderPull`, for the `pages` collection. */
-export function subscribePagePull(userId: string, hooks?: PullHooks): Unsubscribe {
-  const q = query(collection(db, PAGES_COLLECTION), where("userId", "==", userId));
-  let queue: Promise<void> = Promise.resolve();
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const changes = snapshot.docChanges();
-      if (changes.length > 0) hooks?.onActivity?.();
-      queue = queue
-        .then(async () => {
-          for (const change of changes) {
-            await applyPageChange(change);
-          }
-        })
-        .catch((err) => {
-          console.error("[sync/pull] failed to apply page changes", err);
-          hooks?.onApplyError?.(err);
-        })
-        .finally(() => {
-          if (changes.length > 0) hooks?.onIdle?.();
-        });
-    },
-    (err) => {
-      console.error("[sync/pull] pages onSnapshot error", err);
-      hooks?.onListenError?.(err);
-    },
-  );
+export function subscribePagePull(userId: string, ctx: PullContext, hooks?: PullHooks): Unsubscribe {
+  return subscribeCollection({
+    name: "pages",
+    collectionName: PAGES_COLLECTION,
+    userId,
+    ctx,
+    hooks,
+    apply: applyPageChange,
+    waitFor: [ctx.notesReady],
+  });
 }
 
 /** Same as `subscribeFolderPull`, for the `stickyNotes` collection. */
-export function subscribeStickyNotePull(userId: string, hooks?: PullHooks): Unsubscribe {
-  const q = query(collection(db, STICKY_NOTES_COLLECTION), where("userId", "==", userId));
-  let queue: Promise<void> = Promise.resolve();
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const changes = snapshot.docChanges();
-      if (changes.length > 0) hooks?.onActivity?.();
-      queue = queue
-        .then(async () => {
-          for (const change of changes) {
-            await applyStickyNoteChange(change);
-          }
-        })
-        .catch((err) => {
-          console.error("[sync/pull] failed to apply sticky note changes", err);
-          hooks?.onApplyError?.(err);
-        })
-        .finally(() => {
-          if (changes.length > 0) hooks?.onIdle?.();
-        });
-    },
-    (err) => {
-      console.error("[sync/pull] stickyNotes onSnapshot error", err);
-      hooks?.onListenError?.(err);
-    },
-  );
+export function subscribeStickyNotePull(
+  userId: string,
+  ctx: PullContext,
+  hooks?: PullHooks,
+): Unsubscribe {
+  return subscribeCollection({
+    name: "stickyNotes",
+    collectionName: STICKY_NOTES_COLLECTION,
+    userId,
+    ctx,
+    hooks,
+    apply: applyStickyNoteChange,
+  });
 }
 
 /** Starts every pull listener and returns one combined unsubscribe. */
 export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
-  const unsubscribeFolders = subscribeFolderPull(userId, hooks);
-  const unsubscribeNotes = subscribeNotePull(userId, hooks);
-  const unsubscribeNotebooks = subscribeNotebookPull(userId, hooks);
-  const unsubscribePages = subscribePagePull(userId, hooks);
-  const unsubscribeStickyNotes = subscribeStickyNotePull(userId, hooks);
+  const ctx = createPullContext();
+  const unsubscribeFolders = subscribeFolderPull(userId, ctx, hooks);
+  const unsubscribeNotes = subscribeNotePull(userId, ctx, hooks);
+  const unsubscribeNotebooks = subscribeNotebookPull(userId, ctx, hooks);
+  const unsubscribePages = subscribePagePull(userId, ctx, hooks);
+  const unsubscribeStickyNotes = subscribeStickyNotePull(userId, ctx, hooks);
   return () => {
+    ctx.cancelled = true;
+    ctx.pending.length = 0;
+    ctx.notebooksReady.release();
+    ctx.foldersReady.release();
+    ctx.notesReady.release();
     unsubscribeFolders();
     unsubscribeNotes();
     unsubscribeNotebooks();

@@ -95,7 +95,7 @@ Test steps (manual):
 
 ### T3 Pull applies parents before children and survives orphans
 
-Status: todo
+Status: done
 Depends on: T2
 Tester: no. Reproducing needs a fresh database and a race, which can't be set up safely in the shared test account.
 
@@ -274,3 +274,4 @@ Test steps:
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Relaunching the app shows the hidden window
 - [x] T2 Sticky notes (and every collection) push independently
+- [x] T3 Pull applies parents before children and survives orphans
