@@ -1,302 +1,274 @@
-# First-run and sign-in polish
+# Color-coded notes, synced settings and bug fixes
 
-Source: review of the sign-in and startup flow in conversation, 2026-10-23
+Source: planning.md, 2026-11-05
 
 ## Goal
 
-Make SkyLines easier for someone opening it for the first time. The first screens stop showing developer placeholder text, there's always a way to sign out, sign-in and sign-up errors say what actually went wrong, and Google sign-in is offered on sign-up too. "Forgot password?" becomes an in-app flow: the user gets a 6-digit code by email, types it into SkyLines and sets a new password there. A last task clears out code nothing uses.
+Add a Settings dialog (opened from the account menu) with synced preferences, and use it to drive color-coding of notes and pages in the sidebar: each new note or page gets a palette color, shown as a left bookend, a faded highlight or both. The palette is part of the theme. Alongside, fix three bugs: relaunching a tray-hidden app does nothing, sticky notes never sync, and pages can fail to restore on a fresh database.
 
 ## Context
 
-- **Shape of the app.** Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`. Firebase is client-only today: `firebase.json` only deploys `firestore.rules`, and there are no Cloud Functions and no Firebase Hosting. The Firebase CLI isn't installed globally; use `npx firebase-tools` in docs, and never deploy or log in from an agent.
-- **Auth plumbing.** `components/AuthProvider.tsx` (`useAuthContext()`) is the only auth state source. `components/AppShell.tsx` gates routes: `PUBLIC_ROUTES = ["/login", "/register"]`, with paths normalized for the trailing slash. Signed-in users visiting a public route are not redirected away. `lib/firebase.ts` exports `auth`, `db` and the default `app`.
-- **Sign-in screens.** `app/login/page.tsx` and `app/register/page.tsx` share a centered `max-w-sm space-y-6` card, use `Input` and `PasswordInput` (`components/ui/`), and show errors as `{error && <p className="text-sm text-destructive">{error}</p>}`. Register checks `password.length < 6` and then that the two passwords match. Login has an "or" divider before "Continue with Google", and a dev-only `DevLogin` block.
-- **Google sign-in** is `handleGoogle` in `app/login/page.tsx`. It runs a loopback OAuth flow: `google_oauth_listen` / `google_oauth_exchange` in Rust, helpers in `lib/auth/googleOAuth.ts`, including `isGoogleSignInConfigured()`. When unconfigured it currently sets an error naming the two `NEXT_PUBLIC_GOOGLE_DESKTOP_OAUTH_*` env vars.
-- **Forgot password today.** `handleForgotPassword` in `app/login/page.tsx` calls Firebase's `sendPasswordResetEmail`, which sends a link to Firebase's hosted reset page. With an empty email field it falls back to `window.prompt`.
-- **Shell layout.** `components/shell/AppLayout.tsx` renders the top bar (`components/topbar/TopBar.tsx`, which holds `AccountMenu`), the sidebar and the ribbon only when a notebook is selected. Otherwise, as on the notebook picker, it renders the page full-screen with no account menu. Sign-out exists only in `AccountMenu` and `components/sidebar/Sidebar.tsx`. Once a notebook is selected there's no UI path back to the picker.
-- **Home route** `app/page.tsx` shows the picker. When a notebook is selected and the route is `/`, it shows placeholder text: "Notebook "X" is open" and "Sidebar/note view coming in a later subtask." `AppShell`'s restore effect redirects `/` to the last note when `skylines:lastOpen:<uid>` (localStorage, `lib/lastOpen.ts`) has a `noteId`. With only a `notebookId`, it selects the notebook and stays on `/`.
-- **Creating a note.** `newNote()` in `components/sidebar/Sidebar.tsx` (~L75-97) creates a canvas note in the selected notebook and folder (falling back to `getOrCreateDefaultNotebookId`), appends it with `nextOrderValue`, and pushes `/canvas?id=<id>`.
-- **Firestore rules** (`firestore.rules`) allow client access only to `folders`, `notes`, `notebooks`, `pages` and `stickyNotes`. Any other collection is denied to clients, while the Admin SDK in Cloud Functions bypasses the rules.
+- **Shape of the app.** Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`. SQL migrations in `src-tauri/src/lib.rs` are checksummed and never edited. The latest is version 8 (`sticky_notes.favorite`); add new versions after it.
+- **Terminology.** The code says "note" (`Note`, type `"note" | "canvas"`) and "page" (`Page`). The planning file's "notesheet" means a note. Every note has at least one page, created with it in `createNote`.
+- **Sidebar rows.** `components/sidebar/NoteItem.tsx` and `PageItem.tsx` render one row each: a `div` with `group flex items-center gap-1.5 rounded-md ...`, background `bg-sidebar-accent` when active and `hover:bg-sidebar-accent` on hover (Tailwind classes, so an inline background would hide them). `menuItems()` in each is shared by the `···` dropdown and the right-click menu. `NoteItem` is also rendered by `FolderItem.tsx` and `FolderTree.tsx`. `PageItem` is rendered by `PageSidebar.tsx`.
+- **Data layer.** `lib/db/notes.ts` and `lib/db/pages.ts` hold `rowToNote`/`rowToPage`, `createNote`/`createPage`, `updateNote`/`updatePage` (set `updated_at` and `dirty = 1`) and `upsertNoteFromRemote`/`upsertPageFromRemote`. The upserts use positional `$n` params in the column list, the VALUES list and `ON CONFLICT DO UPDATE SET`: all must change together, or pull silently breaks. `createNote` inserts the note and its first page with hardcoded column lists in one BEGIN/COMMIT string. Types are in `types/index.ts`; `StickyNote.topBarColor` is the precedent for a nullable color string.
+- **Creation call sites.** Notes: `hooks/useCreateNote.ts`, `components/sidebar/FolderItem.tsx` (~L151), `lib/clipboard/sidebarClipboard.ts` (`duplicateNote`). Pages: `components/canvas/CanvasEditor.tsx` (~L202), `components/sidebar/PageSidebar.tsx` (~L65), `lib/clipboard/sidebarClipboard.ts` (`duplicatePage`).
+- **Sync.** `lib/sync/push.ts` (`noteToFirestoreDoc`, `pageToFirestoreDoc`, `pushRows`, `pushDirtyRows`) and `lib/sync/pull.ts` (`toRemoteNoteData`, `toRemotePageData`, five independent `onSnapshot` listeners with one promise queue each, `applyDecision`, `startPullSync`). `lib/sync/engine.ts` runs push with backoff. Writes use `setDoc(..., {merge: true})`; last write wins by `updatedAt`.
+- **Firestore rules** (`firestore.rules`) have no per-field validation. A generic `match /{collection}/{id}` checks that the collection is in an allowed list and that `userId` equals the signed-in uid. A new collection needs adding to that list, and the user deploys rules manually. Agents never deploy.
+- **Themes.** Tailwind v4 CSS variables in `app/globals.css` (`@theme inline` maps `--color-*` to `--*`; `:root` and `.dark` define values). `lib/themes/types.ts` defines `ThemeVariableKey`/`THEME_VARIABLE_KEYS` (27 keys; `isTheme()` rejects unknown keys). `lib/themes/builtin.ts` has `LIGHT_THEME` and `DARK_THEME`, which must stay identical to the `globals.css` blocks. `lib/themes/apply.ts` sets inline styles on `<html>`. The editor is `components/theme/ThemeEditor.tsx` with `ThemeColorField.tsx`. User theme files simply lack new keys and fall through to `globals.css`.
+- **Account menu.** `components/topbar/AccountMenu.tsx` is a `DropdownMenu` (email, sync status, Theme submenu with "Edit themes...", "Copy bug report", "Open logs folder", "Sign out", version). It owns dialog state beside the menu, as `ThemeEditor` does (`themeEditorOpen`). It is mounted by `TopBar` and, on the notebook picker, by `AppLayout`.
+- **Existing preferences** are per-device localStorage modules in `lib/` (`quickAccessPrefs.ts`, `lastOpen.ts`, `themes/selection.ts`). The new settings are different: they sync.
+- **No sync tests exist** in the root project; the only test file is `functions/src/resetCode.test.ts`. Sync tasks are verified by type checks, builds and reading, plus the tester where something is observable.
 
 ## Decisions
 
-- **Notebook empty state** (item 1): on `/` with a notebook open, show the notebook's name, "Pick a note in the sidebar, or create a new one." and a "New note" button. The button does exactly what the sidebar's New note does, through one shared function rather than a copy.
-- **Account menu on the picker** (item 2): when no notebook is selected, `AppLayout` also renders `AccountMenu` pinned to the top-right corner. Nothing else from the top bar is added there.
-- **Error messages** (item 3) come from one helper, `authErrorMessage(err, fallback)` in `lib/auth/errors.ts`, which maps Firebase error codes:
-  - `auth/network-request-failed`: "Can't reach the sign-in service. Check your internet connection and try again."
-  - `auth/too-many-requests`: "Too many attempts. Wait a few minutes and try again."
-  - `auth/invalid-email`: "That email address doesn't look right."
-  - `auth/weak-password`: "That password is too weak. Try a longer one."
-  - `auth/email-already-in-use`: "An account with this email already exists. Sign in instead, or use Continue with Google if you signed up that way."
-  - `auth/invalid-credential`, `auth/wrong-password`, `auth/user-not-found`: "Invalid email or password."
-  - `auth/user-disabled`: "This account has been disabled."
-  - Anything else gets the caller's fallback and is logged with `console.error`, so it reaches the log file.
-- **Login heading** (item 4): "Sign in to Skylines", with the subtitle "Use your email or Google account." The UI keeps its existing "Skylines" spelling.
-- **Google on sign-up** (item 4): register gets the same "or" divider and "Continue with Google" button as login, through one shared `components/auth/GoogleSignInButton.tsx` that owns the flow now in `handleGoogle`.
-- **Google not configured** (item 6): the button still shows, disabled, with a muted line below it: "Google sign-in isn't set up in this build." The env-var names go only to `console.warn`, never into the UI.
-- **Password reset** (item 5, user's choices):
-  - The email carries a 6-digit typeable code.
-  - It's sent by Cloud Functions (Blaze plan) through Gmail SMTP with a Gmail app password (`nodemailer`).
-  - A reset works for any account with that email. On a Google-only account it adds a password.
-- **Reset rules** (defaults chosen):
-  - Codes expire after 15 minutes, and a new request replaces the previous code.
-  - Codes can be resent after 60 seconds, at most 5 sends per email per rolling hour.
-  - 5 wrong guesses delete the code.
-  - The new password needs at least 6 characters (same as register).
-  - On success, the server revokes the account's refresh tokens (signing out other devices). The app then signs in with the new password and goes to `/`.
-- **No account enumeration**: requesting a reset for an email with no account returns the same success as a real one and sends nothing. Confirming with no stored code fails as "invalid code".
-- **Reset storage**: Firestore `passwordResets/{sha256(normalized email)}`, written only by the functions. The code is stored as a hash, never in plain text. `firestore.rules` stays unchanged, since it already denies this collection to clients.
-- **Error contract** between the functions and the app: failures are `HttpsError`s carrying `details.reason`, one of:
-  - `invalid-email`, `cooldown` (with `details.retryAfterSeconds`), `too-many-requests`
-  - `invalid-code`, `expired`, `too-many-attempts`, `weak-password`
-- **Login's "Forgot password?"** becomes a link to `/forgot-password?email=<current email field>`. `sendPasswordResetEmail` and `window.prompt` go away.
-- **Cleanup** (item 7): one task at the end reviews the whole project for unused code and removes it, including `hooks/useAuth.ts`.
-- **Hide-to-tray hint** (review item 8): not wanted.
+- **Settings UI**: a dialog opened from a new "Settings" item in the account menu (above "Copy bug report"), not a route. It works on the picker and with a notebook open, needs no `AppLayout` changes and avoids the `/` last-note restore bounce. The existing Theme submenu and "Edit themes..." stay where they are.
+- **Settings sync** (user's choice): settings sync across devices. One row per user.
+  - SQLite table `user_settings` (migration), keyed by `user_id`, with columns for the three settings, `updated_at`, `dirty` and `synced_at`.
+  - Firestore collection `userSettings`, doc id = uid, with a `userId` field for the rules.
+  - Whole-row last-write-wins by `updated_at`, like other collections.
+  - `firestore.rules` gets `userSettings` in its allowed list; the user must deploy it. Until then settings still work locally and the push error is logged.
+- **Settings contents** (this round): an "Aesthetics" section only, with three toggles:
+  - "Automatic color coding", default on.
+  - "Color bookend", default on.
+  - "Color highlight", default off.
+  - Bookend and highlight are independent; both, one or neither may be on.
+- **Where colors show**: note rows and page rows in the sidebar only. Folders, notebooks, reference chips/picker and sticky notes are not colored.
+- **Color model** (user's choice): a note or page stores a palette slot, one of `note-1` … `note-8`, or NULL for none. Slots resolve through the theme variables `--note-1` … `--note-8`, so a theme change recolors items. Existing notes and pages stay NULL (no retroactive coloring).
+- **Palette**: 8 slots, new `ThemeVariableKey`s `note-1`…`note-8`, with default values in `globals.css` for light and dark, mirrored in `LIGHT_THEME`/`DARK_THEME`, and editable in `ThemeEditor`. Chosen to be distinguishable hues at similar lightness in oklch.
+- **Auto assignment** (user's choice): when "Automatic color coding" is on, a new note or page takes the slot after the most recently created sibling that has a color, wrapping from 8 to 1; with no colored sibling it takes `note-1`. Siblings of a note are the non-deleted notes of the same notebook; siblings of a page are the non-deleted pages of the same note. A page's color is independent of its note's.
+- **Auto off** (user's choice): new items get NULL; items that already have a color keep it and still render per the display toggles. Colors can always be changed or cleared by hand.
+- **Manual change**: a "Color" submenu in the note and page row menus (both the `···` dropdown and the right-click menu, via the shared `menuItems()`): eight swatches plus "None".
+- **Duplicates** (copy/paste of a note or page) keep the original's color. A duplicated note's first page keeps the color of its source page.
+- **Display rules**: bookend is a narrow bar on the row's left edge; highlight is a faded tint over the whole row. The tint must not hide the active or hover state. Rows with no color render as today.
+- **Sticky-note sync fix**: the repo's rules and push mapping have no mismatch and `stickyNotes` has been in the rules since the first commit, so the likely cause is deployed rules or an earlier collection throwing. The code fix is to isolate each collection's push so one thrown error doesn't starve the others, and to record the error code where it reaches the log file. Confirming and deploying rules is the user's manual step.
+- **Pull ordering fix**: use a combination of (a) parents-first ordering across collections (notebooks, then folders, then notes, then pages), (b) a per-change try/catch so one failure doesn't drop the rest of a batch, (c) in-memory deferral and retry of changes that fail with an FK error, and (d) parents-first sorting of folders within a snapshot. FKs stay enforced.
+- **Relaunch fix**: the single-instance callback calls `show_main_window(app)`.
 
 ## Out of scope
 
-- **Phone numbers and SMS reset.** This is planned for a later spec. The user wants an optional phone number both on sign-up and on a new account settings screen. It needs the Blaze plan and an early task proving Firebase's reCAPTCHA works inside the Tauri window on macOS and Windows.
-- An account settings screen.
-- App Check, CAPTCHA or per-IP limits on reset requests.
-- A way back from an open notebook to the picker.
-- A hint that closing the window hides SkyLines to the tray.
-- Deploying functions or changing Firebase console settings. Those are manual steps for the user.
+- Syncing the theme selection or the Theme submenu, or moving them into Settings.
+- Coloring folders, notebooks, references or sticky notes.
+- Retroactively coloring existing notes and pages.
+- A free-form hex color per note or page.
+- Deploying Firestore rules or Cloud Functions, and checking the Firebase console. Those are manual steps for the user.
+- Cross-window live propagation of theme or settings changes to open sticky or image-editor windows.
 
 ## Tasks
 
-### T1 An open notebook shows a real empty state
+### T1 Relaunching the app shows the hidden window
 
-Status: done
+Status: todo
 Depends on: none
-Tester: yes. The empty state and the note it creates are observable in the DOM and the URL.
+Tester: no. A second launch and the tray are outside the tester's reach.
 
-- Replace the placeholder branch in `app/page.tsx` (the `selectedNotebookId && selectedNotebook` case) with the empty state from Decisions, in the same centered layout style.
-- Move the body of `newNote()` from `components/sidebar/Sidebar.tsx` into a shared hook, `hooks/useCreateNote.ts`, that returns the create function and a `creating` flag. Use it in both the sidebar and the empty state, so neither keeps its own copy.
+In `src-tauri/src/lib.rs` (~L527) the `tauri_plugin_single_instance::init` callback is empty. Make it call `show_main_window(app)` (defined at ~L180, `#[cfg(desktop)]`, already used by the tray and the global shortcut). The closure is already inside the `#[cfg(desktop)]` block, so no extra gating is needed.
 
-Files: `app/page.tsx`, `components/sidebar/Sidebar.tsx`, new `hooks/useCreateNote.ts`
+Files: `src-tauri/src/lib.rs`
 
 Acceptance:
-- The strings "is open" and "coming in a later subtask" no longer appear in `app/page.tsx`.
-- With a notebook open on `/`, the main area shows the notebook name, the hint line and a "New note" button.
-- Clicking "New note" creates a canvas note in the open notebook (and selected folder, if any), placed after its siblings, and navigates to `/canvas?id=<new id>`. The button is disabled while creating.
-- The sidebar's New note behaves as before and uses the same hook.
-
-Test steps:
-1. Signed in as `dev@skylines.local`. Save the current value of localStorage `skylines:lastOpen:<uid>`, then set it to `{"notebookId":"<an existing notebook id>","folderId":null,"noteId":null}` and reload the main window.
-2. The top bar and sidebar are visible and the main area shows the notebook name, the hint and "New note". No placeholder text appears.
-3. Click "New note". The URL becomes `/canvas?id=…` and the new note appears in the sidebar.
-4. The sidebar's New note still creates and opens a note.
-5. Delete both notes you created and restore the saved lastOpen value.
-
-### T2 The account menu shows on the notebook picker
-
-Status: done
-Depends on: none
-Tester: yes. The menu and its contents are visible in the DOM. The tester must not click Sign out.
-
-- In `components/shell/AppLayout.tsx`, when no notebook is selected and a user is signed in, render `AccountMenu` in a fixed top-right container alongside `children`. Keep the existing full layout unchanged when a notebook is selected.
-- Check the comment in `AccountMenu` about where it mounts, and update it if it's no longer accurate.
-
-Files: `components/shell/AppLayout.tsx`, possibly `components/topbar/AccountMenu.tsx` (comment only)
-
-Acceptance:
-- On the picker (signed in, no notebook selected), the account menu button is visible in the top-right corner. Opening it shows the signed-in email and a "Sign out" item.
-- Public routes and pop-out windows (`/sticky`, `/image-editor`) don't render it, because `AppLayout` isn't used there.
-- With a notebook open, there is exactly one account menu (the top bar's).
-
-Test steps:
-1. Signed in as `dev@skylines.local`. Save localStorage `skylines:lastOpen:<uid>`, remove it, and reload. The notebook picker shows.
-2. The account menu button is in the top-right corner. Open it: it shows `dev@skylines.local` and a "Sign out" item. Don't click Sign out. Close the menu.
-3. Open a notebook from the picker. Exactly one account menu exists (in the top bar).
-4. Restore the saved lastOpen value and reload.
-
-### T3 Sign-in and sign-up errors say what went wrong
-
-Status: done
-Depends on: none
-Tester: no. The new messages need a signed-out app, an offline network or rate limiting, which the tester can't create safely.
-
-- Add `lib/auth/errors.ts` with `authErrorMessage(err: unknown, fallback: string): string`, mapping the codes listed in Decisions. Use `FirebaseError` from `firebase/app`.
-- Use it in `handleEmail` on login (fallback "Sign-in failed. Please try again.") and in `handleSubmit` on register (fallback "Registration failed. Please try again."), replacing the hard-coded message and the `msg.includes` check.
-- Keep the length and match checks on register as they are.
-
-Files: new `lib/auth/errors.ts`, `app/login/page.tsx`, `app/register/page.tsx`
-
-Acceptance:
-- Login no longer shows "Invalid email or password." for network or rate-limit failures; each code in Decisions maps to its message.
-- Register maps `email-already-in-use`, `invalid-email`, `weak-password`, network and rate-limit errors to their messages.
-- Unmapped errors show the fallback and are logged with `console.error`.
+- The single-instance callback calls `show_main_window` with the app handle and no longer has an empty body.
+- `(cd src-tauri && cargo check)` passes.
 
 Test steps (manual):
-1. Signed out, turn off Wi-Fi and sign in. "Can't reach the sign-in service…" shows.
-2. Sign in with a wrong password. "Invalid email or password." shows.
-3. Sign up with an email that already has an account. The "already exists" message shows.
+1. Run the app, close the window so it hides to the tray, then launch SkyLines again from the Start menu or desktop. The existing window reappears and no second instance stays running.
 
-### T4 Google sign-in on sign-up, and a clear note when it isn't set up
+### T2 Sticky notes (and every collection) push independently
 
-Status: done
+Status: todo
 Depends on: none
-Tester: yes. Both pages render while signed in, so headings and button state can be checked without clicking Google.
+Tester: no. Reproducing needs a failing Firestore, which the tester can't create safely.
 
-- Move `handleGoogle` and its button from `app/login/page.tsx` into `components/auth/GoogleSignInButton.tsx`. Its props are `disabled`, `onBusyChange(busy)` and `onError(message)`. On success it does `router.replace("/")`, as today. Keep its comments about the system browser and the 5-minute limit.
-- Use the component on login (unchanged behaviour) and on register, below the form, behind the same "or" divider markup as login.
-- When `isGoogleSignInConfigured()` is false, render the button disabled, with the muted note from Decisions, and `console.warn` the missing env-var names once.
-- Change the login heading and subtitle as in Decisions.
+In `lib/sync/push.ts`, `pushDirtyRows` pushes folders, notes, notebooks, pages and stickyNotes sequentially, and `pushRows` rethrows any error that isn't `invalid-argument`, aborting the whole pass. Change it so each collection's push runs in its own try/catch: a thrown error in one collection is recorded and the remaining collections still push. After all collections have run, the pass still reports failure (so `lib/sync/engine.ts` schedules its backoff retry), and the first error is rethrown or returned. Make sure the Firestore error `code` and message are written somewhere that reaches the Tauri log file, not only the webview console: find how other frontend code gets into the log file (the `tauri-plugin-log` usage or console attach) and follow it; add that to the `engine.ts` push-failure log at ~L213. Add one line to the README's Firebase section: if sticky notes stay dirty with a `permission-denied` error, publish `firestore.rules` (`npx firebase-tools deploy --only firestore:rules --project <project id>`), a manual step.
 
-Files: new `components/auth/GoogleSignInButton.tsx`, `app/login/page.tsx`, `app/register/page.tsx`
+Files: `lib/sync/push.ts`, `lib/sync/engine.ts`, `README.md`
 
 Acceptance:
-- Login and register both show "Continue with Google". Only one copy of the Google flow exists in the codebase.
-- While Google sign-in runs, the other buttons on that page are disabled and the button reads "Waiting for browser…", as login does today.
-- Unconfigured builds show the disabled button and "Google sign-in isn't set up in this build.". No UI text mentions env-var names.
-- The login heading is "Sign in to Skylines". "Welcome back" no longer appears.
+- An error thrown while pushing one collection does not prevent later collections from being pushed in the same pass.
+- A pass where any collection threw still ends in the engine's error/backoff path, and the error code and message are logged through a path that reaches the log file.
+- `invalid-argument` and `too-big` handling is unchanged.
+- The README mentions publishing `firestore.rules` for a `permission-denied` on sticky notes. No code runs a deploy.
+
+Test steps (manual):
+1. With deployed rules lacking `stickyNotes` (or a deliberately failing collection), edit a note and a sticky note. The note syncs; the sticky push error code appears in the logs folder.
+2. After publishing `firestore.rules`, the dirty sticky notes sync on the next pass.
+
+### T3 Pull applies parents before children and survives orphans
+
+Status: todo
+Depends on: T2
+Tester: no. Reproducing needs a fresh database and a race, which can't be set up safely in the shared test account.
+
+In `lib/sync/pull.ts`, fix the FK failures ("FOREIGN KEY constraint failed" when a page arrives before its note, a note before its folder or notebook, a child folder before its parent):
+- **Gate.** Each collection's apply waits for its parents' first snapshot to finish applying: notebooks, then folders, then notes, then pages. Sticky notes are independent. A per-collection "ready" promise resolved after the first snapshot's queue drains is enough; make sure a listener restart resets the gates and that a listener that errors still releases them.
+- **Per-change isolation.** In each `subscribeXPull`, wrap each change in its own try/catch so one failing change doesn't drop the rest of the batch. Non-FK errors still go to the existing `console.error` and `onApplyError` path.
+- **Deferral.** A change that fails with an FK error is held in an in-memory pending list and retried after the next successful apply in any parent collection and after the batch drains. Retries are bounded so a permanently orphaned doc (parent never arrives) cannot loop; it stays pending until the listener restarts and is not reported as an error.
+- **Folders.** Within one snapshot, apply folders parents-first (sort by `parentId` depth, or defer on FK as above).
+
+Keep the change small and local to `pull.ts`; don't disable foreign keys.
+
+Files: `lib/sync/pull.ts` (and `lib/sync/engine.ts` only if the listener-restart hook needs it)
+
+Acceptance:
+- Pages, notes and folders arriving ahead of their parents are applied once the parent is applied, with no "FOREIGN KEY constraint failed" error surfacing and no restart needed.
+- A failure on one change in a snapshot does not stop the remaining changes in that snapshot from being applied.
+- Retries are bounded, and a restart of the pull listeners resets the gate and pending state.
+- Existing behaviour for dirty local rows (`decidePull` returns skip) is unchanged.
+
+Test steps (manual):
+1. On a fresh database (new local profile or deleted app data) signed in to an account with notes and pages, launch the app. All notebooks, notes and pages appear on the first launch and the log has no FK errors.
+
+### T4 Notes and pages can store a color
+
+Status: todo
+Depends on: T3
+Tester: no. There is no UI yet; T8 and T9 exercise it end to end.
+
+Add a nullable `color` (palette slot string, NULL = none) to notes and pages, through the whole data path:
+- **Migration.** In `src-tauri/src/lib.rs` add the next version (9) with `ALTER TABLE notes ADD COLUMN color TEXT` and `ALTER TABLE pages ADD COLUMN color TEXT`, following the v5/v8 style. Don't edit existing migrations.
+- **Types and rows.** Add `color: string | null` to `Note` and `Page` in `types/index.ts` and to `NoteRow`/`PageRow` and `rowToNote`/`rowToPage`.
+- **Writes.** Add `color` to `updateNote` and `updatePage`'s accepted fields. Extend `createNote` and `createPage` with an optional color parameter (default null); `createNote`'s optional color applies to the note, and an optional first-page color parameter (default null) applies to its first page. Keep the BEGIN/COMMIT string and its numbered params consistent.
+- **Remote.** Add `color` to `RemoteNoteData`/`RemotePageData` and to `upsertNoteFromRemote`/`upsertPageFromRemote`: the column list, VALUES count, `ON CONFLICT DO UPDATE SET` and params array together.
+- **Sync.** Add `color` to `noteToFirestoreDoc` and `pageToFirestoreDoc` in `push.ts`, and `color: (data.color as string | null) ?? null` to `toRemoteNoteData` and `toRemotePageData` in `pull.ts`.
+- **Conflict snapshots.** Check `lib/sync/cleanup.ts` and `lib/db/syncConflicts.ts` and make sure a color column doesn't break them.
+- **Slot type.** Add a shared module `lib/colors/noteColors.ts` exporting `NOTE_COLOR_SLOTS` (`note-1`…`note-8`), an `isNoteColorSlot` guard and `noteColorVar(slot)` returning `var(--note-N)`. A stored value that isn't a valid slot is treated as no color by readers.
+
+Files: `src-tauri/src/lib.rs`, `types/index.ts`, `lib/db/notes.ts`, `lib/db/pages.ts`, `lib/sync/push.ts`, `lib/sync/pull.ts`, `lib/sync/cleanup.ts`, `lib/db/syncConflicts.ts`, new `lib/colors/noteColors.ts`
+
+Acceptance:
+- Migration 9 exists, adds both columns, and no existing migration changed.
+- `Note.color` and `Page.color` round-trip through create, update, push and pull; an old remote doc without the field reads as null.
+- Every upsert's column list, VALUES count, SET clause and params agree.
+- All verification commands pass.
 
 Test steps:
-1. Navigate the main window to `/login`. The heading is "Sign in to Skylines" and "Continue with Google" is enabled (`.env.local` has both Google vars). Don't click it.
-2. Navigate to `/register`. An "or" divider and an enabled "Continue with Google" button show below the form.
-3. Navigate back to `/`.
-4. Manual: from sign-up, Continue with Google with a new Google account creates the account and lands on `/`.
+1. After the app reloads (the new migration runs), existing notes and pages open and sync normally; `webview_execute_js` against the SQL plugin shows a `color` column on both tables, all NULL.
 
-### T5 Server side of the 6-digit password reset
+### T5 The theme has an 8-color note palette
 
-Status: done
+Status: todo
 Depends on: none
-Tester: no. Nothing runs until the user deploys the functions.
+Tester: yes. The CSS variables and editor fields are observable in the DOM and computed styles.
 
-- **Package.** Create a `functions/` package in TypeScript:
-  - Dependencies: `firebase-functions` (v2 API), `firebase-admin`, `nodemailer` and `@types/nodemailer`.
-  - `engines.node` is a runtime Cloud Functions supports (22), and the build outputs to `functions/lib`.
-- **Firebase config.** Add a `functions` entry to `firebase.json` (`source: "functions"`, with a predeploy build).
-- **Git and type checking.** Add `functions/lib` and `functions/node_modules` to `.gitignore`. Exclude `functions` from the root `tsconfig.json`, so `npx tsc --noEmit` and `npm run build` don't type-check it.
-- **Pure helpers** in `functions/src/resetCode.ts`:
-  - email normalization (trim and lowercase)
-  - the doc id, `sha256(email)`
-  - code generation with `crypto.randomInt`, zero-padded to 6 digits
-  - code hashing
-  - the cooldown and hourly-limit decision
+Add `note-1`…`note-8` to `ThemeVariableKey` and `THEME_VARIABLE_KEYS` in `lib/themes/types.ts`, define light and dark default values in `app/globals.css` (`:root` and `.dark`, as `--note-N`) and mirror them in `LIGHT_THEME` and `DARK_THEME` in `lib/themes/builtin.ts`, which must stay identical to the CSS. Use eight distinguishable oklch hues of similar lightness, readable as a thin bar and as a faded tint over `--sidebar` in both modes. Expose the eight values in `ThemeEditor` as a "Note colors" group using `ThemeColorField`, and in `ThemePreview` if it fits without redesign. Existing user theme files lacking the keys must still load (`isTheme()` accepts missing keys) and fall through to the CSS defaults.
 
-  Add a small `node:test` file for them, run by `npm test` in `functions/`.
-- **Callables** in `functions/src/index.ts`, built with `onCall` and secrets `defineSecret("GMAIL_USER")` and `defineSecret("GMAIL_APP_PASSWORD")`:
-  - `requestPasswordReset({ email })`
-    - Validates the email (`invalid-email`).
-    - Applies the cooldown and hourly limit (`cooldown` with `retryAfterSeconds`, or `too-many-requests`).
-    - Looks up the user with `getAuth().getUserByEmail`. With no user, it returns `{ ok: true }` without sending.
-    - Otherwise it stores the hashed code, expiry, attempt count and send times in `passwordResets/{docId}`, then emails the code through nodemailer with Gmail SMTP. The subject is "Your Skylines password reset code", and the body gives the code, says it expires in 15 minutes, and says to ignore the email if the user didn't ask for it.
-  - `confirmPasswordReset({ email, code, newPassword })`
-    - Runs in a Firestore transaction.
-    - A missing doc gives `invalid-code`. A past expiry gives `expired`.
-    - A wrong code increments the attempts and gives `invalid-code`, or deletes the doc and gives `too-many-attempts` at 5.
-    - A password shorter than 6 characters gives `weak-password`.
-    - On success it runs `updateUser(uid, { password })` and `revokeRefreshTokens(uid)`, deletes the doc and returns `{ ok: true }`.
-  - All errors are `HttpsError` with `details.reason`, as in Decisions.
-- **Docs.** Add a "Password reset email" section to `README.md` with the manual setup:
-  1. Upgrade the project to Blaze.
-  2. Create a Gmail app password (needs 2-Step Verification).
-  3. Run `npx firebase-tools login`.
-  4. Set both secrets with `npx firebase-tools functions:secrets:set …`.
-  5. Deploy with `npx firebase-tools deploy --only functions --project <project id>`.
-- **CLAUDE.md.** Add `(cd functions && npm run build && npm test)` to `## Verification`. Add a Gotcha that functions are deployed manually by the user and that agents must never deploy.
-
-Files: new `functions/package.json`, `functions/tsconfig.json`, `functions/src/index.ts`, `functions/src/resetCode.ts`, `functions/src/resetCode.test.ts`; `firebase.json`, `.gitignore`, `tsconfig.json`, `README.md`, `CLAUDE.md`
+Files: `lib/themes/types.ts`, `lib/themes/builtin.ts`, `app/globals.css`, `components/theme/ThemeEditor.tsx` (and `ThemePreview.tsx` if used)
 
 Acceptance:
-- `(cd functions && npm install && npm run build && npm test)` exits 0, and the root verification commands still pass.
-- The code is never stored or logged in plain text. A new request replaces the old code. The expiry, cooldown, hourly-limit and attempt rules match Decisions.
-- A reset request for an unknown email returns `{ ok: true }` and sends nothing. Confirming with no stored code returns `invalid-code`.
-- `firestore.rules` is unchanged.
-- The README lists every manual setup step, and nothing in the task runs `firebase login` or a deploy.
-
-Test steps (manual, after the user deploys):
-1. Request a reset for your real email. An email with a 6-digit code arrives.
-2. Request again within 60 seconds. The call fails with reason `cooldown`.
-
-### T6 Forgot-password screens in the app
-
-Status: done
-Depends on: T3, T5
-Tester: yes. The screens, validation and the unknown-email path are observable. Reading a real code from an inbox is manual.
-
-- Export `functions = getFunctions(app)` from `lib/firebase.ts`. Add `/forgot-password` to `PUBLIC_ROUTES` in `components/AppShell.tsx`.
-- New `app/forgot-password/page.tsx`, in the same card layout as login:
-  - **Step 1, "Reset your password".** An email field (prefilled from `?email=`), a "Send code" button and a "Back to sign in" link. It calls `requestPasswordReset` through `httpsCallable`.
-  - **Step 2.** The line "If an account exists for <email>, we've emailed a 6-digit code. It expires in 15 minutes." Then:
-    - A code field (`inputMode="numeric"`, `autoComplete="one-time-code"`, keeps digits only, max 6, so a pasted "123 456" works).
-    - "New password" and "Confirm password" `PasswordInput`s (`new-password`), checked like register: length first, then match.
-    - A "Reset password" button.
-    - "Resend code", disabled with a "Resend code in Ns" countdown for 60 seconds after each send, or for `retryAfterSeconds` on `cooldown`.
-    - "Use a different email" (back to step 1).
-- **On success**, run `signInWithEmailAndPassword` with the new password, then `router.replace("/")`. If that sign-in fails, go to `/login`.
-- **Error messages by reason:**
-  - `invalid-code`: "That code isn't right."
-  - `expired`: "That code has expired. Send a new one."
-  - `too-many-attempts`: "Too many wrong codes. Send a new one."
-  - `cooldown`: wait message using the seconds
-  - `too-many-requests`: "Too many codes requested. Try again in an hour."
-  - `invalid-email`: "That email address doesn't look right."
-  - `weak-password`: "Password must be at least 6 characters."
-  - Anything else, including the functions not being deployed: "Couldn't reach the password reset service. Try again later." Use `authErrorMessage` for network errors.
-- **In `app/login/page.tsx`**, replace the "Forgot password?" button with the link from Decisions, and remove `handleForgotPassword`, `resetMessage`, `resetLoading`, `sendPasswordResetEmail` and `window.prompt`.
-
-Files: new `app/forgot-password/page.tsx`, `lib/firebase.ts`, `components/AppShell.tsx`, `app/login/page.tsx`
-
-Acceptance:
-- "Forgot password?" on login opens `/forgot-password` with the typed email prefilled. The page works signed out.
-- Step 2 can't submit with a code that isn't 6 digits, a short password or mismatched passwords, and these checks make no server call.
-- Resend is disabled during its countdown and re-enables afterwards.
-- A successful reset signs the user in with the new password and lands on `/`.
-- `app/login/page.tsx` no longer references `sendPasswordResetEmail` or `window.prompt`.
+- `getComputedStyle(document.documentElement).getPropertyValue("--note-1")` through `--note-8` are non-empty in both light and dark.
+- `LIGHT_THEME`/`DARK_THEME` and the `globals.css` blocks agree for the new keys.
+- The theme editor shows eight editable note-color fields, and editing one changes the variable live.
+- An existing saved user theme without these keys still loads and applies.
 
 Test steps:
-1. Navigate the main window to `/login`, type `nobody-reset-test@example.com` and click "Forgot password?". `/forgot-password` shows with that email filled in.
-2. Click "Send code".
-   - If the functions are deployed, step 2 shows the "If an account exists…" line and Resend shows a countdown.
-   - If they aren't deployed, "Couldn't reach the password reset service…" shows. Stop here and report it.
-3. Type `12a3` in the code field. Only `123` remains. Enter `123456`, password `abcdef` and confirm `abcdeg`, then submit. "Passwords don't match." shows and no request is sent.
-4. Make both passwords `abcdef` and submit. "That code isn't right." shows (no code exists for that email).
-5. "Use a different email" returns to step 1. Navigate back to `/`.
-6. Manual: signed out, reset your real account's password with the emailed code. You end up signed in on `/`, and the new password works on login.
+1. Read `--note-1`…`--note-8` from `document.documentElement` in the main window. All are non-empty.
+2. Open the account menu → Theme → Edit themes. A "Note colors" group with eight fields shows. Don't save anything; close the dialog and discard changes.
+3. Switch the theme between System/Light/Dark if available without changing saved themes, and check the variables stay non-empty. Restore the original selection.
 
-### T7 Remove code nothing uses
+### T6 Synced user settings store
 
-Status: done
-Depends on: T1, T2, T3, T4, T5, T6
-Tester: yes, as a smoke test. The app still starts, opens notebooks, notes and sticky notes, and the sign-in pages render.
+Status: todo
+Depends on: T4
+Tester: no. There is no UI until T7; T7's tester covers the store end to end.
 
-- **What to look for.** Review the whole project (`app/`, `components/`, `lib/`, `hooks/`, `stores/`, `types/`, `src-tauri/`, `functions/`) for code nothing uses, and remove it:
-  - unused files, exports, components and hooks (known: `hooks/useAuth.ts`, a duplicate of `AuthProvider`)
-  - npm and Cargo dependencies nothing imports
-  - Tauri plugins and capability permissions nothing calls
-  - commented-out code
-- **Deep-link plugin.** The `skylines://` deep-link plugin is believed unused (`@tauri-apps/plugin-deep-link`, `tauri-plugin-deep-link`, its `tauri.conf.json` config). Remove it only after confirming nothing reads deep links, including features of `tauri-plugin-single-instance`.
-- **Tools.** One-off tools such as `npx knip` are fine; don't add them to `package.json`.
-- **Never remove:**
-  - existing SQL migrations
-  - capability files for window labels
-  - Tauri commands invoked by string from the frontend
-  - `scripts/`
-  - `DevLogin`
-  - anything reached only through dynamic strings
-- **Handover.** List every removal with its reason.
+Build the settings data path so a single per-user row syncs:
+- **Migration.** Next version (10) in `src-tauri/src/lib.rs` creating `user_settings` (`user_id TEXT PRIMARY KEY`, `auto_color INTEGER NOT NULL DEFAULT 1`, `color_bookend INTEGER NOT NULL DEFAULT 1`, `color_highlight INTEGER NOT NULL DEFAULT 0`, `updated_at INTEGER`, `dirty INTEGER NOT NULL DEFAULT 0`, `synced_at INTEGER`), following the timestamp conventions of the other tables. No row exists until the user first changes something or one is pulled; readers use the defaults.
+- **DB layer.** New `lib/db/userSettings.ts`: `getUserSettings(userId)` (returns defaults when no row), `updateUserSettings(userId, partial)` (upserts, bumps `updated_at`, sets `dirty = 1`), `getDirtyUserSettings`, `markUserSettingsSynced` and `upsertUserSettingsFromRemote` (consistent column lists), plus the `UserSettings` type in `types/index.ts`.
+- **Sync.** Push: add a `userSettings` collection to `push.ts`, doc id = `userId`, fields the three settings plus `userId`, `updatedAt`. Pull: a sixth listener in `pull.ts` for `userSettings` (independent of the parent gate) filtered by `userId == uid` like the others, applying through `decidePull` and `upsertUserSettingsFromRemote`. Follow how an existing simple collection (stickyNotes) is wired, including error isolation from T2/T3. Check `lib/sync/cleanup.ts` for anything that should include the new table.
+- **Rules.** Add `userSettings` to the allowed collections in `firestore.rules`. The user must publish it; note this in the README Firebase section.
+- **Store/hook.** A zustand slice or a `hooks/useUserSettings.ts` that loads the signed-in user's settings, exposes them and a setter that writes through `updateUserSettings` and triggers a push (as other data hooks do via `useSyncEngine`), and updates when a pull applies a change. It resets when the user changes (follow `resetForUser()` in `stores/appStore.ts`) so one account never shows another's settings.
 
-Files: across the project; lockfiles update with dependency removals
+Files: `src-tauri/src/lib.rs`, `types/index.ts`, new `lib/db/userSettings.ts`, `lib/sync/push.ts`, `lib/sync/pull.ts`, `lib/sync/engine.ts`/`hooks/useSyncEngine.ts` (as needed), `stores/appStore.ts` or new `hooks/useUserSettings.ts`, `firestore.rules`, `README.md`
 
 Acceptance:
-- `hooks/useAuth.ts` is gone, and every removed item is listed in the handover with why it was unused.
-- All verification commands, including the functions build and test, pass.
-- No user-visible behaviour changes.
+- Migration 10 exists and no existing migration changed.
+- With no row, readers get defaults: auto on, bookend on, highlight off.
+- Updating a setting stores it locally, marks it dirty and pushes it to `userSettings/{uid}`; a remote change updates the local row and the in-memory settings.
+- Settings never leak between accounts after switching users.
+- `firestore.rules` allows `userSettings` under the same `userId` check as other collections.
+- All verification commands pass.
 
 Test steps:
-1. Reload the main window. The app starts signed in as `dev@skylines.local`, and opening a notebook and a note works.
-2. Open an existing sticky note window and close it again.
-3. Navigate to `/login`, `/register` and `/forgot-password`. Each renders. Navigate back to `/`.
+1. After reload, `webview_execute_js` confirms the `user_settings` table exists and the settings hook returns the defaults for `dev@skylines.local`.
+
+### T7 Settings dialog with an Aesthetics section
+
+Status: todo
+Depends on: T6
+Tester: yes. The dialog, toggles and their persistence are observable in the DOM.
+
+Add a "Settings" item to `components/topbar/AccountMenu.tsx`, above "Copy bug report", that opens a new `components/settings/SettingsDialog.tsx` (use `components/ui/dialog.tsx`; hold the open state in `AccountMenu` beside the menu, as `themeEditorOpen` does). The dialog has an "Aesthetics" section with three switches bound to the settings from T6:
+- "Automatic color coding" (new notes and pages get a color automatically).
+- "Color bookend" (a bar on the left of the note or page name).
+- "Color highlight" (a faded tint over the whole name card).
+
+Use the existing UI components for toggles (add a switch component only if none exists, following `components/ui/` conventions). Short helper text under each switch. Works on the notebook picker and with a notebook open.
+
+Files: `components/topbar/AccountMenu.tsx`, new `components/settings/SettingsDialog.tsx`, `components/ui/switch.tsx` (only if missing)
+
+Acceptance:
+- The account menu has a "Settings" item that opens the dialog on the picker and inside a notebook.
+- The dialog shows an "Aesthetics" heading and the three switches with defaults on, on, off for an account with no stored settings.
+- Toggling a switch updates the store immediately and survives closing and reopening the dialog and reloading the window.
+- No existing account-menu item changed.
+
+Test steps:
+1. Signed in as `dev@skylines.local`. Open the account menu and click "Settings". The dialog opens with "Aesthetics" and three switches: automatic on, bookend on, highlight off (if the account already has other values, note them and restore them at the end).
+2. Turn "Color highlight" on and "Color bookend" off. Close and reopen the dialog: the switches keep those values. Reload the window and reopen: still the same.
+3. Restore the original values of all three switches and close the dialog.
+
+### T8 New notes and pages get a color automatically
+
+Status: todo
+Depends on: T4, T5, T6
+Tester: yes. The new rows' `color` values are readable from SQLite or a DOM attribute.
+
+Add a shared helper in `lib/colors/noteColors.ts` (or a sibling `lib/colors/autoColor.ts`): given the settings and the siblings' colors (ordered by creation), it returns the slot for a new item per Decisions (next after the most recent colored sibling, wrapping 8 → 1, `note-1` when none, null when automatic coloring is off). Add a function that reads the current settings and the right siblings from SQLite (non-deleted notes of the notebook for a note; non-deleted pages of the note for a page), and use it at every creation site:
+- Notes: `hooks/useCreateNote.ts` and `components/sidebar/FolderItem.tsx`. A new note's first page also gets a color (the page rule, computed against an empty page list, so `note-1` when automatic coloring is on).
+- Pages: `components/sidebar/PageSidebar.tsx` and `components/canvas/CanvasEditor.tsx` (~L202).
+- Duplicates in `lib/clipboard/sidebarClipboard.ts`: `duplicateNote` and `duplicatePage` copy the source's color instead (ignoring the auto setting), the duplicated note's first page keeping its source page's color.
+
+Files: `lib/colors/noteColors.ts` (or new `lib/colors/autoColor.ts`), `hooks/useCreateNote.ts`, `components/sidebar/FolderItem.tsx`, `components/sidebar/PageSidebar.tsx`, `components/canvas/CanvasEditor.tsx`, `lib/clipboard/sidebarClipboard.ts`
+
+Acceptance:
+- With automatic coloring on, creating notes in a notebook yields consecutive slots `note-1`, `note-2`, … wrapping after `note-8`; the same holds for pages within a note.
+- With it off, new notes and pages get no color.
+- Duplicating a note or page keeps the source's color in both modes.
+- Existing notes and pages are not recolored. All verification commands pass.
+
+Test steps:
+1. Signed in as `dev@skylines.local` with "Automatic color coding" on. Create a new note (sidebar "New note"). Read its row from SQLite via `webview_execute_js`: its `color` is the slot after the notebook's most recent colored note, or `note-1` if none, and its first page has a color.
+2. Add two pages with the page "+" button. Their colors are consecutive slots.
+3. Turn automatic coloring off in Settings and create another note and page. Both have NULL color.
+4. Delete the notes you created and restore the setting.
+
+### T9 Color shows on rows and can be changed by hand
+
+Status: todo
+Depends on: T4, T5, T7
+Tester: yes. Row attributes and computed styles are observable; "looks right" is left to the user.
+
+In `NoteItem.tsx` and `PageItem.tsx`, render a note's or page's color according to the settings: if it has a valid slot and "Color bookend" is on, show a narrow bar on the row's left edge (the row needs `relative`; keep the indent and layout unchanged); if "Color highlight" is on, show a faded tint (for example `color-mix(in oklab, var(--note-N) 18%, transparent)`) over the whole row. Layer the tint with a pseudo-element or background-image so the active (`bg-sidebar-accent`) and hover states still show. Both on, one on or neither all work, and a row with no color or an invalid stored slot looks as it does today. Put `data-note-color="<slot>"` on the row when it has a color so the tester can read it, and give the bar and tint elements stable `data-` hooks.
+
+Add a "Color" submenu to `menuItems()` in each (so it appears in both the `···` dropdown and the right-click menu): eight swatches (each using the slot's variable) plus "None", marking the current one, calling `updateNote`/`updatePage` with the slot or null. Choosing a color works regardless of the automatic setting.
+
+Files: `components/sidebar/NoteItem.tsx`, `components/sidebar/PageItem.tsx`, possibly a shared `components/sidebar/ColorMenu.tsx`
+
+Acceptance:
+- With bookend on, a colored row has a left-edge bar whose color is the slot's CSS variable; with highlight on it has a tint; with both on it has both; with both off it has neither.
+- The active and hover backgrounds are still visible on colored rows.
+- Rows without a color are unchanged.
+- The "Color" submenu is in both the dropdown and right-click menus of notes and pages; choosing a swatch sets the row's `data-note-color` and persists it (and marks it dirty for sync); "None" clears it.
+- All verification commands pass.
+
+Test steps:
+1. Signed in as `dev@skylines.local`; note the Settings toggle values and restore them at the end. Create a note with automatic coloring on. Its sidebar row has `data-note-color` and, with bookend on, a bar element.
+2. In Settings turn highlight on: the same row also has the tint element; turn bookend off: the bar is gone; turn both off: neither shows.
+3. Use the row's `···` → Color to pick a different swatch: `data-note-color` changes. Pick "None": the attribute is gone.
+4. Repeat 3 on a page row in the page sidebar.
+5. Delete the notes you created and restore the settings.
+6. Manual: judge that the bar and tint look right in light and dark, and with the row active and hovered.
 
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
-- [x] T1 An open notebook shows a real empty state
-- [x] T2 The account menu shows on the notebook picker
-- [x] T3 Sign-in and sign-up errors say what went wrong
-- [x] T4 Google sign-in on sign-up, and a clear note when it isn't set up
-- [x] T5 Server side of the 6-digit password reset
-- [x] T6 Forgot-password screens in the app
-- [x] T7 Remove code nothing uses
