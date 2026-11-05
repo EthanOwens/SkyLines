@@ -211,7 +211,11 @@ async function attemptPush(userId: string): Promise<void> {
       setStatus(isOnline() ? "syncing" : "offline");
     }
   } catch (err) {
-    console.error("[sync/engine] push failed, scheduling backoff retry", err);
+    const code = (err as { code?: string }).code;
+    console.error(
+      `[sync/engine] push failed (code: ${code ?? "none"}): ${(err as Error).message}; scheduling backoff retry`,
+      err,
+    );
     setStatus(isOnline() ? "error" : "offline");
     scheduleBackoffRetry(userId, gen);
   } finally {

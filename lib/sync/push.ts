@@ -155,10 +155,29 @@ export async function pushDirtyStickyNotes(userId: string): Promise<SyncFailure[
 /** One push pass; scheduling and debouncing live in lib/sync/engine.ts. */
 export async function pushDirtyRows(userId: string): Promise<SyncFailure[]> {
   const failures: SyncFailure[] = [];
-  failures.push(...(await pushDirtyFolders(userId)));
-  failures.push(...(await pushDirtyNotes(userId)));
-  failures.push(...(await pushDirtyNotebooks(userId)));
-  failures.push(...(await pushDirtyPages(userId)));
-  failures.push(...(await pushDirtyStickyNotes(userId)));
+  const passes: [string, () => Promise<SyncFailure[]>][] = [
+    ["folders", () => pushDirtyFolders(userId)],
+    ["notes", () => pushDirtyNotes(userId)],
+    ["notebooks", () => pushDirtyNotebooks(userId)],
+    ["pages", () => pushDirtyPages(userId)],
+    ["stickyNotes", () => pushDirtyStickyNotes(userId)],
+  ];
+  let firstError: unknown;
+  let hasError = false;
+  // One collection throwing must not starve the others; rethrow afterwards so
+  // the engine still schedules its backoff retry.
+  for (const [name, run] of passes) {
+    try {
+      failures.push(...(await run()));
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      console.error(`[sync/push] ${name} push threw (code: ${code ?? "none"}): ${(err as Error).message}`);
+      if (!hasError) {
+        hasError = true;
+        firstError = err;
+      }
+    }
+  }
+  if (hasError) throw firstError;
   return failures;
 }

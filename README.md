@@ -90,6 +90,8 @@ npx firebase-tools deploy --only firestore:rules --project <NEXT_PUBLIC_FIREBASE
 
 Before the first deploy, compare it with the rules currently in the Firebase console so you don't overwrite anything you need.
 
+If sticky notes stay dirty and the logs show a `permission-denied` error, the deployed rules are out of date: publish `firestore.rules` with the command above (a manual step).
+
 ### Password reset email
 
 "Forgot password?" emails a 6-digit code from the Cloud Functions in `functions/`, through Gmail SMTP. One-time setup:

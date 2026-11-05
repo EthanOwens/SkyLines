@@ -75,7 +75,7 @@ Test steps (manual):
 
 ### T2 Sticky notes (and every collection) push independently
 
-Status: todo
+Status: done
 Depends on: none
 Tester: no. Reproducing needs a failing Firestore, which the tester can't create safely.
 
@@ -273,3 +273,4 @@ Test steps:
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Relaunching the app shows the hidden window
+- [x] T2 Sticky notes (and every collection) push independently
