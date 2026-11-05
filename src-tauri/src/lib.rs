@@ -517,6 +517,16 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
+        // Palette slot (note-1..note-8) for sidebar color coding; NULL = none.
+        tauri_plugin_sql::Migration {
+            version: 9,
+            description: "add notes.color and pages.color",
+            sql: "
+                ALTER TABLE notes ADD COLUMN color TEXT;
+                ALTER TABLE pages ADD COLUMN color TEXT;
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
     ];
 
     let mut builder = tauri::Builder::default();

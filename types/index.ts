@@ -48,6 +48,8 @@ export interface Note {
   canvasData?: object | null; // Tldraw snapshot
   // Order among siblings in the sidebar.
   order: number;
+  // Palette slot (note-1..note-8); null = none.
+  color: string | null;
   createdAt: number;
   updatedAt: number;
   // Sync bookkeeping.
@@ -67,6 +69,7 @@ export interface Page {
   canvasData?: object | null; // Tldraw snapshot
   // Sibling display order within a note, mirroring `Note.order`.
   order: number;
+  color: string | null;
   createdAt: number;
   updatedAt: number;
   // Sync bookkeeping.

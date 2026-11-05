@@ -120,7 +120,7 @@ Test steps (manual):
 
 ### T4 Notes and pages can store a color
 
-Status: todo
+Status: done
 Depends on: T3
 Tester: no. There is no UI yet; T8 and T9 exercise it end to end.
 
@@ -275,3 +275,4 @@ Test steps:
 - [x] T1 Relaunching the app shows the hidden window
 - [x] T2 Sticky notes (and every collection) push independently
 - [x] T3 Pull applies parents before children and survives orphans
+- [x] T4 Notes and pages can store a color

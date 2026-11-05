@@ -15,6 +15,7 @@ type PageRow = {
   content: string | null;
   canvas_data: string | null;
   order_index: number;
+  color: string | null;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -32,6 +33,7 @@ function rowToPage(row: PageRow): Page {
     canvasData:
       row.canvas_data !== null ? (JSON.parse(row.canvas_data) as object | null) : null,
     order: row.order_index,
+    color: row.color ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     dirty: row.dirty === 1,
@@ -115,6 +117,7 @@ export type RemotePageData = {
   content: object | null;
   canvasData: object | null;
   order: number;
+  color: string | null;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
@@ -129,8 +132,8 @@ export async function upsertPageFromRemote(
   const db = await getDb();
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, note_id, title, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       (id, note_id, title, user_id, content, canvas_data, order_index, color, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      ON CONFLICT(id) DO UPDATE SET
        note_id = excluded.note_id,
        title = excluded.title,
@@ -138,6 +141,7 @@ export async function upsertPageFromRemote(
        content = excluded.content,
        canvas_data = excluded.canvas_data,
        order_index = excluded.order_index,
+       color = excluded.color,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        deleted_at = excluded.deleted_at,
@@ -151,6 +155,7 @@ export async function upsertPageFromRemote(
       remote.content === null ? null : JSON.stringify(remote.content),
       remote.canvasData === null ? null : JSON.stringify(remote.canvasData),
       remote.order,
+      remote.color,
       remote.createdAt,
       remote.updatedAt,
       remote.deletedAt,
@@ -170,6 +175,7 @@ export async function createPage(
   userId: string,
   title = "Untitled",
   order = 0,
+  color: string | null = null,
 ): Promise<string> {
   const db = await getDb();
   const id = crypto.randomUUID();
@@ -177,9 +183,9 @@ export async function createPage(
 
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, note_id, title, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, NULL, NULL, $5, $6, $7, NULL, 1, NULL)`,
-    [id, noteId, title, userId, order, now, now],
+       (id, note_id, title, user_id, content, canvas_data, order_index, color, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, NULL, NULL, $5, $8, $6, $7, NULL, 1, NULL)`,
+    [id, noteId, title, userId, order, now, now, color],
   );
 
   notifyDataChange("local");
@@ -188,7 +194,7 @@ export async function createPage(
 
 export async function updatePage(
   pageId: string,
-  updates: Partial<Pick<Page, "title" | "content" | "canvasData" | "order">>,
+  updates: Partial<Pick<Page, "title" | "content" | "canvasData" | "order" | "color">>,
 ): Promise<void> {
   const db = await getDb();
   const now = Date.now();
@@ -212,6 +218,10 @@ export async function updatePage(
   if (updates.order !== undefined) {
     setClauses.push(`order_index = $${i++}`);
     params.push(updates.order);
+  }
+  if (updates.color !== undefined) {
+    setClauses.push(`color = $${i++}`);
+    params.push(updates.color);
   }
 
   setClauses.push(`updated_at = $${i++}`);

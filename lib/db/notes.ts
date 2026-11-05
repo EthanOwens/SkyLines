@@ -14,6 +14,7 @@ type NoteRow = {
   content: string | null;
   canvas_data: string | null;
   order_index: number;
+  color: string | null;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -33,6 +34,7 @@ function rowToNote(row: NoteRow): Note {
     canvasData:
       row.canvas_data !== null ? (JSON.parse(row.canvas_data) as object | null) : null,
     order: row.order_index,
+    color: row.color ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     dirty: row.dirty === 1,
@@ -117,6 +119,7 @@ export type RemoteNoteData = {
   content: object | null;
   canvasData: object | null;
   order: number;
+  color: string | null;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
@@ -131,8 +134,8 @@ export async function upsertNoteFromRemote(
   const db = await getDb();
   await db.execute(
     `INSERT INTO ${TABLE}
-       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, color, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      ON CONFLICT(id) DO UPDATE SET
        title = excluded.title,
        type = excluded.type,
@@ -142,6 +145,7 @@ export async function upsertNoteFromRemote(
        content = excluded.content,
        canvas_data = excluded.canvas_data,
        order_index = excluded.order_index,
+       color = excluded.color,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        deleted_at = excluded.deleted_at,
@@ -157,6 +161,7 @@ export async function upsertNoteFromRemote(
       remote.content === null ? null : JSON.stringify(remote.content),
       remote.canvasData === null ? null : JSON.stringify(remote.canvasData),
       remote.order,
+      remote.color,
       remote.createdAt,
       remote.updatedAt,
       remote.deletedAt,
@@ -179,6 +184,8 @@ export async function createNote(
   folderId: string | null = null,
   title = "Untitled",
   order = 0,
+  color: string | null = null,
+  firstPageColor: string | null = null,
 ): Promise<string> {
   const db = await getDb();
   const id = crypto.randomUUID();
@@ -188,13 +195,13 @@ export async function createNote(
   await db.execute(
     `BEGIN;
      INSERT INTO ${TABLE}
-       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $8, $8, NULL, 1, NULL);
+       (id, title, type, folder_id, notebook_id, user_id, content, canvas_data, order_index, color, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, $10, $8, $8, NULL, 1, NULL);
      INSERT INTO pages
-       (id, note_id, title, user_id, content, canvas_data, order_index, created_at, updated_at, deleted_at, dirty, synced_at)
-     VALUES ($9, $1, 'Untitled', $6, NULL, NULL, 0, $8, $8, NULL, 1, NULL);
+       (id, note_id, title, user_id, content, canvas_data, order_index, color, created_at, updated_at, deleted_at, dirty, synced_at)
+     VALUES ($9, $1, 'Untitled', $6, NULL, NULL, 0, $11, $8, $8, NULL, 1, NULL);
      COMMIT;`,
-    [id, title, type, folderId, notebookId, userId, order, now, pageId],
+    [id, title, type, folderId, notebookId, userId, order, now, pageId, color, firstPageColor],
   );
 
   notifyDataChange("local");
@@ -204,7 +211,7 @@ export async function createNote(
 export async function updateNote(
   noteId: string,
   updates: Partial<
-    Pick<Note, "title" | "content" | "canvasData" | "folderId" | "order" | "notebookId">
+    Pick<Note, "title" | "content" | "canvasData" | "folderId" | "order" | "notebookId" | "color">
   >,
 ): Promise<void> {
   const db = await getDb();
@@ -237,6 +244,10 @@ export async function updateNote(
   if (updates.notebookId !== undefined) {
     setClauses.push(`notebook_id = $${i++}`);
     params.push(updates.notebookId);
+  }
+  if (updates.color !== undefined) {
+    setClauses.push(`color = $${i++}`);
+    params.push(updates.color);
   }
 
   setClauses.push(`updated_at = $${i++}`);
