@@ -146,7 +146,7 @@ Test steps:
 
 ### T5 The theme has an 8-color note palette
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes. The CSS variables and editor fields are observable in the DOM and computed styles.
 
@@ -276,3 +276,4 @@ Test steps:
 - [x] T2 Sticky notes (and every collection) push independently
 - [x] T3 Pull applies parents before children and survives orphans
 - [x] T4 Notes and pages can store a color
+- [x] T5 The theme has an 8-color note palette

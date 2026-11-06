@@ -113,6 +113,14 @@ const THEME_VARIABLE_INFO = {
     name: "Sidebar border",
     description: "Edges and dividers in the sidebars",
   },
+  "note-1": { name: "Color 1", description: "Note color 1 of 8, used to color-code notes and pages" },
+  "note-2": { name: "Color 2", description: "Note color 2 of 8, used to color-code notes and pages" },
+  "note-3": { name: "Color 3", description: "Note color 3 of 8, used to color-code notes and pages" },
+  "note-4": { name: "Color 4", description: "Note color 4 of 8, used to color-code notes and pages" },
+  "note-5": { name: "Color 5", description: "Note color 5 of 8, used to color-code notes and pages" },
+  "note-6": { name: "Color 6", description: "Note color 6 of 8, used to color-code notes and pages" },
+  "note-7": { name: "Color 7", description: "Note color 7 of 8, used to color-code notes and pages" },
+  "note-8": { name: "Color 8", description: "Note color 8 of 8, used to color-code notes and pages" },
 } satisfies Partial<Record<ThemeVariableKey, { name: string; description: string }>>;
 
 type EditableThemeVariableKey = keyof typeof THEME_VARIABLE_INFO;
@@ -134,6 +142,7 @@ const THEME_VARIABLE_GROUPS: { label: string; keys: EditableThemeVariableKey[] }
       "sidebar-border",
     ],
   },
+  { label: "Note colors", keys: ["note-1", "note-2", "note-3", "note-4", "note-5", "note-6", "note-7", "note-8"] },
 ];
 
 interface ThemeEditorProps {
@@ -624,7 +633,11 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                       <CollapsiblePanel>
                         <div className="flex flex-col divide-y divide-border">
                           {group.keys.map((key) => {
-                            const value = draftVariables[key] ?? editingTheme.variables[key];
+                            // Older themes lack the note colors; show the light defaults.
+                            const value =
+                              draftVariables[key] ??
+                              editingTheme.variables[key] ??
+                              LIGHT_THEME.variables[key];
                             const { name, description } = THEME_VARIABLE_INFO[key];
 
                             if (key === "radius") {

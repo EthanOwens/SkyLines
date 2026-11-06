@@ -38,6 +38,14 @@ export const LIGHT_THEME: Theme = {
     "sidebar-accent-foreground": "oklch(0.205 0 0)",
     "sidebar-border": "oklch(0.922 0 0)",
     "sidebar-ring": "oklch(0.708 0 0)",
+    "note-1": "oklch(0.66 0.16 25)",
+    "note-2": "oklch(0.66 0.16 65)",
+    "note-3": "oklch(0.66 0.16 105)",
+    "note-4": "oklch(0.66 0.16 150)",
+    "note-5": "oklch(0.66 0.16 195)",
+    "note-6": "oklch(0.66 0.16 245)",
+    "note-7": "oklch(0.66 0.16 295)",
+    "note-8": "oklch(0.66 0.16 345)",
   },
 };
 
@@ -73,6 +81,14 @@ export const DARK_THEME: Theme = {
     "sidebar-accent-foreground": "oklch(0.985 0 0)",
     "sidebar-border": "oklch(1 0 0 / 10%)",
     "sidebar-ring": "oklch(0.556 0 0)",
+    "note-1": "oklch(0.74 0.14 25)",
+    "note-2": "oklch(0.74 0.14 65)",
+    "note-3": "oklch(0.74 0.14 105)",
+    "note-4": "oklch(0.74 0.14 150)",
+    "note-5": "oklch(0.74 0.14 195)",
+    "note-6": "oklch(0.74 0.14 245)",
+    "note-7": "oklch(0.74 0.14 295)",
+    "note-8": "oklch(0.74 0.14 345)",
   },
 };
 

@@ -28,7 +28,15 @@ export type ThemeVariableKey =
   | "sidebar-accent"
   | "sidebar-accent-foreground"
   | "sidebar-border"
-  | "sidebar-ring";
+  | "sidebar-ring"
+  | "note-1"
+  | "note-2"
+  | "note-3"
+  | "note-4"
+  | "note-5"
+  | "note-6"
+  | "note-7"
+  | "note-8";
 
 // Keep in sync with the union above; used to validate user theme files at
 // runtime.
@@ -60,6 +68,14 @@ export const THEME_VARIABLE_KEYS: readonly ThemeVariableKey[] = [
   "sidebar-accent-foreground",
   "sidebar-border",
   "sidebar-ring",
+  "note-1",
+  "note-2",
+  "note-3",
+  "note-4",
+  "note-5",
+  "note-6",
+  "note-7",
+  "note-8",
 ];
 
 const THEME_VARIABLE_KEY_SET: ReadonlySet<string> = new Set(THEME_VARIABLE_KEYS);
