@@ -35,8 +35,8 @@ Add a Settings dialog (opened from the account menu) with synced preferences, an
   - Bookend and highlight are independent; both, one or neither may be on.
 - **Where colors show**: note rows and page rows in the sidebar only. Folders, notebooks, reference chips/picker and sticky notes are not colored.
 - **Color model** (user's choice): a note or page stores a palette slot, one of `note-1` … `note-8`, or NULL for none. Slots resolve through the theme variables `--note-1` … `--note-8`, so a theme change recolors items. Existing notes and pages stay NULL (no retroactive coloring).
-- **Palette**: 8 slots, new `ThemeVariableKey`s `note-1`…`note-8`, with default values in `globals.css` for light and dark, mirrored in `LIGHT_THEME`/`DARK_THEME`, and editable in `ThemeEditor`. Chosen to be distinguishable hues at similar lightness in oklch.
-- **Auto assignment** (user's choice): when "Automatic color coding" is on, a new note or page takes the slot after the most recently created sibling that has a color, wrapping from 8 to 1; with no colored sibling it takes `note-1`. Siblings of a note are the non-deleted notes of the same notebook; siblings of a page are the non-deleted pages of the same note. A page's color is independent of its note's.
+- **Palette**: a theme has a note palette of 1 to 24 colors (default 8). `ThemeVariableKey`s `note-1`…`note-24` hold the resolved colors; `globals.css` and `LIGHT_THEME`/`DARK_THEME` define the default 8 (light and dark). A palette is edited with the generator in `ThemeEditor` (T5a), which stores its settings with the theme. The palette size is the number of colors the active theme defines.
+- **Auto assignment** (user's choice): when "Automatic color coding" is on, a new note or page takes the slot after the most recently created sibling that has a color, wrapping from the last palette color to 1; with no colored sibling it takes `note-1`. Siblings of a note are the non-deleted notes of the same notebook; siblings of a page are the non-deleted pages of the same note. A page's color is independent of its note's.
 - **Auto off** (user's choice): new items get NULL; items that already have a color keep it and still render per the display toggles. Colors can always be changed or cleared by hand.
 - **Manual change**: a "Color" submenu in the note and page row menus (both the `···` dropdown and the right-click menu, via the shared `menuItems()`): eight swatches plus "None".
 - **Duplicates** (copy/paste of a note or page) keep the original's color. A duplicated note's first page keeps the color of its source page.
@@ -165,6 +165,46 @@ Test steps:
 2. Open the account menu → Theme → Edit themes. A "Note colors" group with eight fields shows. Don't save anything; close the dialog and discard changes.
 3. Switch the theme between System/Light/Dark if available without changing saved themes, and check the variables stay non-empty. Restore the original selection.
 
+### T5a The theme editor has a note palette generator
+
+Status: todo
+Depends on: T5
+Tester: yes. The editor controls and the resulting CSS variables are observable in the DOM.
+
+Replace the eight plain "Note colors" fields that T5 added to `ThemeEditor` with a palette generator, and let a palette have 1 to 24 colors. The approved design (from the mockups in the planning chat) is:
+
+- **Swatch strip** at the top: one box per color, filling the full width. Clicking a box opens a popover with a color wheel (hue by angle, saturation by radius, at full brightness), an inline editable hex box and a Copy button. Choosing a color there overrides that one color (marked with a small dot on the box). Dragging that color's hue line, or "Reset to hue" in the popover, removes the override.
+- **Hue bar** directly below, the same width as the strip, showing the hue spectrum with one thin line per color. Dragging a line changes only that color's hue (0 to 360).
+- **Global bar** directly below that, much smaller (about 14px high), same width: a thin gradient rail between the first and last color's hues, a column at each end (start and end, thin and slightly thicker than the hue lines, filled with that end's color) and a circle in the middle filled with the middle hue's color. Dragging an end column changes that end's hue and respaces all colors evenly between start and end. Dragging the circle moves all hues together, clamped to 0 to 360.
+- **Colors** control: a small number input with up/down arrows, 1 to 24. Changing it respaces the colors evenly between the current start and end and drops overrides on removed colors.
+- **Start and end readout** on the same line: a color chip and "start #hex" / "end #hex", where the hex is a small inline editable field (looks like text, dotted underline on hover). Typing a valid hex moves that end to the hex's hue (oklch hue) and respaces; the displayed text is normalized on blur.
+- **Lightness and Chroma**: each a slider followed by a small inline editable number (Lightness 0.30 to 0.95, Chroma 0 to 0.40, step 0.01, up/down arrow keys nudge). These two are global for the palette.
+- **Reset** button (small, right of the Colors line): restores 8 colors, hues 25 to 340, lightness 0.66, chroma 0.16, no overrides.
+- Generated colors are `oklch(L C H)`; a hand-picked override is a fixed hex and ignores lightness and chroma.
+
+Theme data: the theme stores the resolved colors as `note-1`…`note-N` (extend `ThemeVariableKey`/`THEME_VARIABLE_KEYS` to `note-24`; `isTheme()` must still accept missing keys) plus the generator settings (count, per-color hues, lightness, chroma, overrides) so reopening the editor restores the generator exactly. A theme with colors but no stored settings opens with the colors as overrides on a default generator. `globals.css` and `LIGHT_THEME`/`DARK_THEME` keep the default 8; keys beyond the theme's count are left unset. Live editing updates the CSS variables as the other fields do; no change is saved until the user saves the theme.
+
+Add to `lib/colors/noteColors.ts`: `getNotePaletteSize()` (the number of consecutive non-empty `--note-N` variables on the document root, starting from 1; at least 1 is not assumed, 0 means no palette) and widen `isNoteColorSlot`/`NOTE_COLOR_SLOTS` handling so any `note-N` with N from 1 to 24 is a valid stored slot. A slot above the palette size resolves to no color. Update T5's group in `ThemeEditor` (remove the eight plain fields) and `LIGHT_THEME`/`DARK_THEME` only as needed.
+
+Files: `components/theme/ThemeEditor.tsx` (and new components under `components/theme/` for the generator and popover), `lib/themes/types.ts`, `lib/themes/apply.ts` (if needed), `lib/colors/noteColors.ts`, `app/globals.css` (only if needed)
+
+Acceptance:
+- The theme editor shows the generator in place of the eight plain fields, with the controls above.
+- Editing any control changes the matching `--note-N` variables live; reducing or raising the count adds or removes variables.
+- Dragging a hue line changes only that color; dragging an end column respaces between the ends; dragging the circle shifts all.
+- Typing a hex in start or end moves that end's hue; overriding one color through the wheel or hex box changes only that color.
+- Reset restores the defaults. Saving and reopening a theme restores the generator settings, overrides and count.
+- Themes without generator settings and themes without `note-*` keys still load and apply.
+- `getNotePaletteSize()` returns the palette's color count, and slots above it resolve to no color.
+- All verification commands pass.
+
+Test steps:
+1. Open the account menu, Theme, Edit themes. The generator shows with 8 colors, start `#e3645e` and end `#d066b1` (approximately), Lightness 0.66 and Chroma 0.16. Don't save anything; discard changes at the end.
+2. Set Colors to 5 and then 12. `--note-1`…`--note-5` then `--note-1`…`--note-12` are non-empty on `document.documentElement`, and `getNotePaletteSize()` matches.
+3. Click a swatch, type a hex such as `#3366cc`: only that color changes and shows the override dot; "Reset to hue" removes it.
+4. Edit the start hex: the colors respace between the new start and the end. Press Reset: the defaults return.
+5. Manual: dragging the hue lines, the end columns and the center circle, and how the bars line up with the strip, can't be simulated reliably; check by hand.
+
 ### T6 Synced user settings store
 
 Status: todo
@@ -220,10 +260,10 @@ Test steps:
 ### T8 New notes and pages get a color automatically
 
 Status: todo
-Depends on: T4, T5, T6
+Depends on: T4, T5a, T6
 Tester: yes. The new rows' `color` values are readable from SQLite or a DOM attribute.
 
-Add a shared helper in `lib/colors/noteColors.ts` (or a sibling `lib/colors/autoColor.ts`): given the settings and the siblings' colors (ordered by creation), it returns the slot for a new item per Decisions (next after the most recent colored sibling, wrapping 8 → 1, `note-1` when none, null when automatic coloring is off). Add a function that reads the current settings and the right siblings from SQLite (non-deleted notes of the notebook for a note; non-deleted pages of the note for a page), and use it at every creation site:
+Add a shared helper in `lib/colors/noteColors.ts` (or a sibling `lib/colors/autoColor.ts`): given the settings and the siblings' colors (ordered by creation), it returns the slot for a new item per Decisions (next after the most recent colored sibling, wrapping from the last palette color to `note-1`, `note-1` when none, null when automatic coloring is off), using `getNotePaletteSize()` from T5a. Add a function that reads the current settings and the right siblings from SQLite (non-deleted notes of the notebook for a note; non-deleted pages of the note for a page), and use it at every creation site:
 - Notes: `hooks/useCreateNote.ts` and `components/sidebar/FolderItem.tsx`. A new note's first page also gets a color (the page rule, computed against an empty page list, so `note-1` when automatic coloring is on).
 - Pages: `components/sidebar/PageSidebar.tsx` and `components/canvas/CanvasEditor.tsx` (~L202).
 - Duplicates in `lib/clipboard/sidebarClipboard.ts`: `duplicateNote` and `duplicatePage` copy the source's color instead (ignoring the auto setting), the duplicated note's first page keeping its source page's color.
@@ -231,7 +271,7 @@ Add a shared helper in `lib/colors/noteColors.ts` (or a sibling `lib/colors/auto
 Files: `lib/colors/noteColors.ts` (or new `lib/colors/autoColor.ts`), `hooks/useCreateNote.ts`, `components/sidebar/FolderItem.tsx`, `components/sidebar/PageSidebar.tsx`, `components/canvas/CanvasEditor.tsx`, `lib/clipboard/sidebarClipboard.ts`
 
 Acceptance:
-- With automatic coloring on, creating notes in a notebook yields consecutive slots `note-1`, `note-2`, … wrapping after `note-8`; the same holds for pages within a note.
+- With automatic coloring on, creating notes in a notebook yields consecutive slots `note-1`, `note-2`, … wrapping after the last palette color (`note-8` with the default palette); the same holds for pages within a note.
 - With it off, new notes and pages get no color.
 - Duplicating a note or page keeps the source's color in both modes.
 - Existing notes and pages are not recolored. All verification commands pass.
@@ -245,12 +285,12 @@ Test steps:
 ### T9 Color shows on rows and can be changed by hand
 
 Status: todo
-Depends on: T4, T5, T7
+Depends on: T4, T5a, T7
 Tester: yes. Row attributes and computed styles are observable; "looks right" is left to the user.
 
 In `NoteItem.tsx` and `PageItem.tsx`, render a note's or page's color according to the settings: if it has a valid slot and "Color bookend" is on, show a narrow bar on the row's left edge (the row needs `relative`; keep the indent and layout unchanged); if "Color highlight" is on, show a faded tint (for example `color-mix(in oklab, var(--note-N) 18%, transparent)`) over the whole row. Layer the tint with a pseudo-element or background-image so the active (`bg-sidebar-accent`) and hover states still show. Both on, one on or neither all work, and a row with no color or an invalid stored slot looks as it does today. Put `data-note-color="<slot>"` on the row when it has a color so the tester can read it, and give the bar and tint elements stable `data-` hooks.
 
-Add a "Color" submenu to `menuItems()` in each (so it appears in both the `···` dropdown and the right-click menu): eight swatches (each using the slot's variable) plus "None", marking the current one, calling `updateNote`/`updatePage` with the slot or null. Choosing a color works regardless of the automatic setting.
+Add a "Color" submenu to `menuItems()` in each (so it appears in both the `···` dropdown and the right-click menu): one swatch per palette color (each using the slot's variable) plus "None", marking the current one, calling `updateNote`/`updatePage` with the slot or null. Choosing a color works regardless of the automatic setting.
 
 Files: `components/sidebar/NoteItem.tsx`, `components/sidebar/PageItem.tsx`, possibly a shared `components/sidebar/ColorMenu.tsx`
 
