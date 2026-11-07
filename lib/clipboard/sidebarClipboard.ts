@@ -36,7 +36,17 @@ async function duplicateNote(
   folderId: string | null,
   order: number,
 ): Promise<string> {
-  const id = await createNote(userId, note.type, notebookId, folderId, note.title, order);
+  const [firstPage] = await getPages(note.id, userId);
+  const id = await createNote(
+    userId,
+    note.type,
+    notebookId,
+    folderId,
+    note.title,
+    order,
+    note.color,
+    firstPage?.color ?? null,
+  );
   if (note.content !== null || note.canvasData !== null) {
     await updateNote(id, { content: note.content, canvasData: note.canvasData });
   }
@@ -201,7 +211,7 @@ async function duplicatePage(
   noteId: string,
   order: number,
 ): Promise<string> {
-  const id = await createPage(noteId, page.userId, page.title, order);
+  const id = await createPage(noteId, page.userId, page.title, order, page.color);
   if (page.content !== null || page.canvasData !== null) {
     await updatePage(id, { content: page.content, canvasData: page.canvasData });
   }

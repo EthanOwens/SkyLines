@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createNote } from "@/lib/db/notes";
 import { getOrCreateDefaultNotebookId } from "@/lib/db/notebooks";
+import { autoColorForNewNote } from "@/lib/colors/autoColor";
 import { nextOrderValue } from "@/lib/dnd/sidebar";
 import { useAppStore } from "@/stores/appStore";
 
@@ -25,6 +26,7 @@ export function useCreateNote(uid: string) {
       const siblingNoteOrders = notes
         .filter((n) => n.folderId === (selectedFolderId ?? null) && n.notebookId === notebookId)
         .map((n) => n.order);
+      const auto = await autoColorForNewNote(uid, notebookId);
       const id = await createNote(
         uid,
         "canvas",
@@ -32,6 +34,8 @@ export function useCreateNote(uid: string) {
         selectedFolderId ?? undefined,
         undefined,
         nextOrderValue(siblingNoteOrders),
+        auto.color,
+        auto.firstPageColor,
       );
       router.push(`/canvas?id=${id}`);
     } finally {

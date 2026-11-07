@@ -15,6 +15,7 @@ import {
   Copy,
   Clipboard,
 } from "lucide-react";
+import { autoColorForNewNote } from "@/lib/colors/autoColor";
 import { createNote, updateNote } from "@/lib/db/notes";
 import { createFolder, updateFolder, deleteFolder } from "@/lib/db/folders";
 import {
@@ -148,6 +149,7 @@ export function FolderItem({
 
   async function addNote() {
     // New notes inherit the folder's notebook.
+    const auto = await autoColorForNewNote(userId, folder.notebookId as string);
     const id = await createNote(
       userId,
       "canvas",
@@ -155,6 +157,8 @@ export function FolderItem({
       folder.id,
       "Untitled",
       nextOrderValue(childNotes.map((n) => n.order)),
+      auto.color,
+      auto.firstPageColor,
     );
     setOpen(true);
     router.push(`/canvas?id=${id}`);

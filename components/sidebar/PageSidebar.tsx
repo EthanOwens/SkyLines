@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { DragEvent } from "react";
 import { ChevronLeft, ChevronRight, Clipboard, Plus } from "lucide-react";
+import { autoColorForNewPage } from "@/lib/colors/autoColor";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { isSidebarDragEvent, nextOrderValue, readSidebarDragPayload } from "@/lib/dnd/sidebar";
 import { pastePageClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
@@ -62,11 +63,13 @@ export function PageSidebar({ note }: Props) {
     if (creating) return;
     setCreating(true);
     try {
+      const color = await autoColorForNewPage(note.userId, note.id);
       const newId = await createPage(
         note.id,
         note.userId,
         "Untitled",
         nextOrderValue(pages.map((p) => p.order)),
+        color,
       );
       await refresh(newId);
     } finally {

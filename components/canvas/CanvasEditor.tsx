@@ -31,6 +31,7 @@ import {
   saveImageBytes,
   stripAssetPrefix,
 } from "@/lib/images/localImages";
+import { autoColorForNewPage } from "@/lib/colors/autoColor";
 import { createPage, getPages, updatePage } from "@/lib/db/pages";
 import { revealImage } from "@/lib/tiptap/imageId";
 import { useAppStore } from "@/stores/appStore";
@@ -199,7 +200,8 @@ export function CanvasEditor({ note }: Props) {
         let creation = inFlightDefaultPageCreation.get(note.id);
         if (!creation) {
           creation = (async () => {
-            const newPageId = await createPage(note.id, note.userId, "Untitled", 0);
+            const color = await autoColorForNewPage(note.userId, note.id);
+            const newPageId = await createPage(note.id, note.userId, "Untitled", 0, color);
             if (note.canvasData) {
               await updatePage(newPageId, { canvasData: note.canvasData });
             }

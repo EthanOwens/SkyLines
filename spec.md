@@ -259,7 +259,7 @@ Test steps:
 
 ### T8 New notes and pages get a color automatically
 
-Status: todo
+Status: done
 Depends on: T4, T5a, T6
 Tester: yes. The new rows' `color` values are readable from SQLite or a DOM attribute.
 
@@ -320,3 +320,4 @@ Test steps:
 - [x] T5a The theme editor has a note palette generator
 - [x] T6 Synced user settings store
 - [x] T7 Settings dialog with an Aesthetics section
+- [x] T8 New notes and pages get a color automatically
