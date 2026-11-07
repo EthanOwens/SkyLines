@@ -15,6 +15,7 @@ import {
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
 import { useAppStore } from "@/stores/appStore";
+import { ColorMenu, RowColorMarks, useRowColor } from "@/components/sidebar/ColorMenu";
 import {
   isSidebarDragEvent,
   readSidebarDragPayload,
@@ -50,6 +51,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
   const inputRef = useRef<HTMLInputElement>(null);
   const setClipboard = useAppStore((s) => s.setClipboard);
   const { actionsRef, contextActionsRef, closeMenus } = useMenuCloser();
+  const rowColor = useRowColor(note.color);
 
   // Every note opens in the canvas editor, which migrates old Tiptap-only notes
   // on open.
@@ -132,6 +134,12 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
         <DropdownMenuItem onClick={startRename}>
           <Pencil className="mr-2 h-4 w-4" /> Rename
         </DropdownMenuItem>
+        <ColorMenu
+          color={note.color}
+          onChange={async (color) => {
+            await updateNote(note.id, { color });
+          }}
+        />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleCut}>
           <Scissors className="mr-2 h-4 w-4" /> Cut
@@ -162,7 +170,8 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              className={`group flex items-center gap-1.5 rounded-md py-0.5 pr-1 cursor-pointer transition-colors ${
+              data-note-color={rowColor.slot ?? undefined}
+              className={`group relative flex items-center gap-1.5 rounded-md py-0.5 pr-1 cursor-pointer transition-colors ${
                 isActive
                   ? "bg-sidebar-accent text-sidebar-foreground"
                   : "hover:bg-sidebar-accent"
@@ -173,6 +182,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
                 if (!renaming) router.push(href);
               }}
             >
+              <RowColorMarks {...rowColor} />
               {note.type === "canvas" ? (
                 <LayoutDashboard className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               ) : (

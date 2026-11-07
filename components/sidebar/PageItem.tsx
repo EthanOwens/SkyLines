@@ -14,6 +14,7 @@ import {
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { CopyReferenceItem, useMenuCloser } from "@/components/references/CopyReferenceItem";
 import { useAppStore } from "@/stores/appStore";
+import { ColorMenu, RowColorMarks, useRowColor } from "@/components/sidebar/ColorMenu";
 import {
   isSidebarDragEvent,
   readSidebarDragPayload,
@@ -46,6 +47,7 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
   const inputRef = useRef<HTMLInputElement>(null);
   const setClipboard = useAppStore((s) => s.setClipboard);
   const { actionsRef, contextActionsRef, closeMenus } = useMenuCloser();
+  const rowColor = useRowColor(page.color);
 
   // Picks up renames made elsewhere (such as the canvas title). Doesn't depend
   // on renaming, so it can't overwrite an edit in progress.
@@ -125,6 +127,13 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
         <DropdownMenuItem onClick={startRename}>
           <Pencil className="mr-2 h-4 w-4" /> Rename
         </DropdownMenuItem>
+        <ColorMenu
+          color={page.color}
+          onChange={async (color) => {
+            await updatePage(page.id, { color });
+            onChanged();
+          }}
+        />
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleCut}>
           <Scissors className="mr-2 h-4 w-4" /> Cut
@@ -155,11 +164,13 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              className={`group flex items-center gap-1.5 rounded-md py-1 pl-3 pr-1 cursor-pointer transition-colors ${
+              data-note-color={rowColor.slot ?? undefined}
+              className={`group relative flex items-center gap-1.5 rounded-md py-1 pl-3 pr-1 cursor-pointer transition-colors ${
                 isActive ? "bg-sidebar-accent text-sidebar-foreground" : "hover:bg-sidebar-accent"
               }`}
               onClick={() => !renaming && onSelect()}
             >
+              <RowColorMarks {...rowColor} />
               <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 
               {renaming ? (

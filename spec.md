@@ -284,7 +284,7 @@ Test steps:
 
 ### T9 Color shows on rows and can be changed by hand
 
-Status: todo
+Status: done
 Depends on: T4, T5a, T7
 Tester: yes. Row attributes and computed styles are observable; "looks right" is left to the user.
 
@@ -321,3 +321,4 @@ Test steps:
 - [x] T6 Synced user settings store
 - [x] T7 Settings dialog with an Aesthetics section
 - [x] T8 New notes and pages get a color automatically
+- [x] T9 Color shows on rows and can be changed by hand
