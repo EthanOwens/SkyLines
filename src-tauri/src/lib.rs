@@ -527,6 +527,24 @@ pub fn run() {
             ",
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
+        // One row per user; no row means defaults. updated_at is NULL until the
+        // first write.
+        tauri_plugin_sql::Migration {
+            version: 10,
+            description: "create user_settings table",
+            sql: "
+                CREATE TABLE user_settings (
+                  user_id         TEXT PRIMARY KEY,
+                  auto_color      INTEGER NOT NULL DEFAULT 1,
+                  color_bookend   INTEGER NOT NULL DEFAULT 1,
+                  color_highlight INTEGER NOT NULL DEFAULT 0,
+                  updated_at      INTEGER,
+                  dirty           INTEGER NOT NULL DEFAULT 0,
+                  synced_at       INTEGER
+                );
+            ",
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
     ];
 
     let mut builder = tauri::Builder::default();

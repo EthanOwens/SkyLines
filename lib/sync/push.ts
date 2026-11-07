@@ -5,7 +5,11 @@ import { getDirtyNotes, markNoteSynced } from "@/lib/db/notes";
 import { getDirtyNotebooks, markNotebookSynced } from "@/lib/db/notebooks";
 import { getDirtyPages, markPageSynced } from "@/lib/db/pages";
 import { getDirtyStickyNotes, markStickyNoteSynced } from "@/lib/db/stickyNotes";
-import type { Folder, Note, Notebook, Page, StickyNote, SyncFailure } from "@/types";
+import {
+  getDirtyUserSettings,
+  markUserSettingsSynced,
+} from "@/lib/db/userSettings";
+import type { Folder, Note, Notebook, Page, StickyNote, SyncFailure, UserSettings } from "@/types";
 
 // Local -> Firestore push. Documents keep the reference app's field shape.
 // updatedAt is the client's edit time in milliseconds (not serverTimestamp()),
@@ -17,6 +21,7 @@ const NOTES_COLLECTION = "notes";
 const NOTEBOOKS_COLLECTION = "notebooks";
 const PAGES_COLLECTION = "pages";
 const STICKY_NOTES_COLLECTION = "stickyNotes";
+const USER_SETTINGS_COLLECTION = "userSettings";
 
 function folderToFirestoreDoc(folder: Folder, updatedAt: number) {
   return {
@@ -92,6 +97,16 @@ function stickyNoteToFirestoreDoc(sticky: StickyNote, updatedAt: number) {
   };
 }
 
+function userSettingsToFirestoreDoc(settings: UserSettings, updatedAt: number) {
+  return {
+    userId: settings.userId,
+    autoColor: settings.autoColor,
+    colorBookend: settings.colorBookend,
+    colorHighlight: settings.colorHighlight,
+    updatedAt,
+  };
+}
+
 // Firestore rejects documents over 1 MiB; leave headroom for field names.
 const MAX_DOC_JSON_LENGTH = 1_000_000;
 
@@ -154,6 +169,12 @@ export async function pushDirtyStickyNotes(userId: string): Promise<SyncFailure[
   return pushRows("stickyNotes", STICKY_NOTES_COLLECTION, await getDirtyStickyNotes(userId), stickyNoteToFirestoreDoc, (s) => s.title, markStickyNoteSynced);
 }
 
+// The doc id is the user id.
+export async function pushDirtyUserSettings(userId: string): Promise<SyncFailure[]> {
+  const rows = (await getDirtyUserSettings(userId)).map((s) => ({ ...s, id: s.userId }));
+  return pushRows("userSettings", USER_SETTINGS_COLLECTION, rows, userSettingsToFirestoreDoc, () => "Settings", markUserSettingsSynced);
+}
+
 /** One push pass; scheduling and debouncing live in lib/sync/engine.ts. */
 export async function pushDirtyRows(userId: string): Promise<SyncFailure[]> {
   const failures: SyncFailure[] = [];
@@ -163,6 +184,7 @@ export async function pushDirtyRows(userId: string): Promise<SyncFailure[]> {
     ["notebooks", () => pushDirtyNotebooks(userId)],
     ["pages", () => pushDirtyPages(userId)],
     ["stickyNotes", () => pushDirtyStickyNotes(userId)],
+    ["userSettings", () => pushDirtyUserSettings(userId)],
   ];
   let firstError: unknown;
   let hasError = false;

@@ -7,6 +7,7 @@ import { useSyncEngine } from "@/hooks/useSyncEngine";
 import { useNotes } from "@/hooks/useNotes";
 import { useFolders } from "@/hooks/useFolders";
 import { useNotebooks } from "@/hooks/useNotebooks";
+import { useLoadUserSettings } from "@/hooks/useUserSettings";
 import { getLastOpen, setLastOpen } from "@/lib/lastOpen";
 import { getNoteById } from "@/lib/db/notes";
 import { listenForReferenceFollows } from "@/lib/references/navigate";
@@ -77,6 +78,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useNotes(syncUserId);
   useFolders(syncUserId);
   useNotebooks(syncUserId);
+  useLoadUserSettings(syncUserId);
 
   const shouldRedirect = !loading && !user && !publicRoute;
 

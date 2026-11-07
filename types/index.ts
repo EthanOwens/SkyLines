@@ -99,8 +99,19 @@ export interface StickyNote {
 
 export type SyncStatus = "saved" | "syncing" | "offline" | "error";
 
+export interface UserSettings {
+  userId: string;
+  autoColor: boolean;
+  colorBookend: boolean;
+  colorHighlight: boolean;
+  // 0 and not dirty when no row exists yet.
+  updatedAt: number;
+  dirty: boolean;
+  syncedAt: number | null;
+}
+
 export interface SyncFailure {
-  table: "folders" | "notes" | "notebooks" | "pages" | "stickyNotes";
+  table: "folders" | "notes" | "notebooks" | "pages" | "stickyNotes" | "userSettings";
   id: string;
   name: string;
   reason: "too-big" | "rejected";

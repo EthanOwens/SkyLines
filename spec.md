@@ -207,7 +207,7 @@ Test steps:
 
 ### T6 Synced user settings store
 
-Status: todo
+Status: done
 Depends on: T4
 Tester: no. There is no UI until T7; T7's tester covers the store end to end.
 
@@ -318,3 +318,4 @@ Test steps:
 - [x] T4 Notes and pages can store a color
 - [x] T5 The theme has an 8-color note palette
 - [x] T5a The theme editor has a note palette generator
+- [x] T6 Synced user settings store

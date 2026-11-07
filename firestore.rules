@@ -10,9 +10,9 @@ service cloud.firestore {
     }
 
     match /{collection}/{id} {
-      allow read, delete: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes']) && ownsExisting();
-      allow create: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes']) && ownsIncoming();
-      allow update: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes']) && ownsExisting() && ownsIncoming();
+      allow read, delete: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes', 'userSettings']) && ownsExisting();
+      allow create: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes', 'userSettings']) && ownsIncoming();
+      allow update: if (collection in ['folders', 'notes', 'notebooks', 'pages', 'stickyNotes', 'userSettings']) && ownsExisting() && ownsIncoming();
     }
   }
 }

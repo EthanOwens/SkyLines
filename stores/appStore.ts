@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Editor } from "@tiptap/react";
 import type { Editor as TldrawEditor, TLShapeId } from "@tldraw/tldraw";
-import type { Folder, Note, Notebook, Page, SyncFailure, SyncStatus } from "@/types";
+import type { Folder, Note, Notebook, Page, SyncFailure, SyncStatus, UserSettings } from "@/types";
 import type { Theme } from "@/lib/themes/types";
 import { BUILTIN_THEMES } from "@/lib/themes/builtin";
 import type { ClipboardEntry } from "@/lib/clipboard/sidebarClipboard";
@@ -72,8 +72,13 @@ interface AppState {
   selectedPageId: string | null;
   pagesLoading: boolean;
 
+  // The signed-in user's synced settings; null until loaded (and after an
+  // account switch), so one account's values are never shown for another.
+  userSettings: UserSettings | null;
+
   // Back to the initial data and navigation slices when the signed-in account changes.
   resetForUser: () => void;
+  setUserSettings: (settings: UserSettings | null) => void;
   setFolders: (folders: Folder[]) => void;
   setNotes: (notes: Note[]) => void;
   setNotebooks: (notebooks: Notebook[]) => void;
@@ -132,9 +137,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   pages: [],
   selectedPageId: null,
   pagesLoading: true,
+  userSettings: null,
 
+  setUserSettings: (userSettings) => set({ userSettings }),
   resetForUser: () =>
     set({
+      userSettings: null,
       folders: [],
       notes: [],
       notebooks: [],

@@ -26,7 +26,12 @@ import {
   type RemoteStickyNoteData,
 } from "@/lib/db/stickyNotes";
 import { recordSyncConflict } from "@/lib/db/syncConflicts";
-import type { Folder, Note, Notebook, Page, StickyNote } from "@/types";
+import {
+  getUserSettingsRow,
+  upsertUserSettingsFromRemote,
+  type RemoteUserSettingsData,
+} from "@/lib/db/userSettings";
+import type { Folder, Note, Notebook, Page, StickyNote, UserSettings } from "@/types";
 
 // Firestore -> local pull. onSnapshot + docChanges() so each callback only
 // handles the incremental diff, upserted into SQLite with an updatedAt
@@ -37,6 +42,7 @@ const NOTES_COLLECTION = "notes";
 const NOTEBOOKS_COLLECTION = "notebooks";
 const PAGES_COLLECTION = "pages";
 const STICKY_NOTES_COLLECTION = "stickyNotes";
+const USER_SETTINGS_COLLECTION = "userSettings";
 
 /** Just the sync fields, so decidePull is shared by every table. */
 type LocalSyncState = {
@@ -167,6 +173,16 @@ function toRemoteStickyNoteData(id: string, data: DocumentData): RemoteStickyNot
   };
 }
 
+function toRemoteUserSettingsData(userId: string, data: DocumentData): RemoteUserSettingsData {
+  return {
+    userId,
+    autoColor: (data.autoColor as boolean) ?? true,
+    colorBookend: (data.colorBookend as boolean) ?? true,
+    colorHighlight: (data.colorHighlight as boolean) ?? false,
+    updatedAt: data.updatedAt as number,
+  };
+}
+
 /**
  * "removed" changes are skipped. The doc's old data is still attached, and
  * applying it would resurrect a hard-deleted row. Firestore deletes only come
@@ -287,6 +303,31 @@ async function applyStickyNoteChange(change: DocumentChange<DocumentData>): Prom
   );
 }
 
+/** Same as applyFolderChange, for the user's settings (doc id = user id). */
+async function applyUserSettingsChange(change: DocumentChange<DocumentData>): Promise<void> {
+  if (change.type === "removed") {
+    return;
+  }
+
+  const data = change.doc.data();
+  if (!data) return;
+
+  const remote = toRemoteUserSettingsData(change.doc.id, data);
+  const local = await getUserSettingsRow(remote.userId);
+  const decision = decidePull(
+    local && { updatedAt: local.updatedAt, dirty: local.dirty, syncedAt: local.syncedAt },
+    remote.updatedAt,
+  );
+
+  await applyDecision<UserSettings, RemoteUserSettingsData>(
+    decision,
+    "userSettings",
+    local,
+    remote,
+    (r, dirty, syncedAt) => upsertUserSettingsFromRemote(r, dirty, syncedAt),
+  );
+}
+
 /**
  * conflict-local-wins never upserts: the local row already holds the winning
  * content and stays dirty for the next push; only the losing remote copy is
@@ -294,7 +335,7 @@ async function applyStickyNoteChange(change: DocumentChange<DocumentData>): Prom
  */
 async function applyDecision<TLocal, TRemote>(
   decision: PullDecision,
-  tableName: "folders" | "notes" | "notebooks" | "pages" | "stickyNotes",
+  tableName: "folders" | "notes" | "notebooks" | "pages" | "stickyNotes" | "userSettings",
   local: TLocal | null,
   remote: TRemote,
   upsert: (remote: TRemote, dirty: boolean, syncedAt: number | null) => Promise<void>,
@@ -596,6 +637,22 @@ export function subscribeStickyNotePull(
   });
 }
 
+/** Same as `subscribeFolderPull`, for the `userSettings` collection. */
+export function subscribeUserSettingsPull(
+  userId: string,
+  ctx: PullContext,
+  hooks?: PullHooks,
+): Unsubscribe {
+  return subscribeCollection({
+    name: "userSettings",
+    collectionName: USER_SETTINGS_COLLECTION,
+    userId,
+    ctx,
+    hooks,
+    apply: applyUserSettingsChange,
+  });
+}
+
 /** Starts every pull listener and returns one combined unsubscribe. */
 export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
   const ctx = createPullContext();
@@ -604,6 +661,7 @@ export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
   const unsubscribeNotebooks = subscribeNotebookPull(userId, ctx, hooks);
   const unsubscribePages = subscribePagePull(userId, ctx, hooks);
   const unsubscribeStickyNotes = subscribeStickyNotePull(userId, ctx, hooks);
+  const unsubscribeUserSettings = subscribeUserSettingsPull(userId, ctx, hooks);
   return () => {
     ctx.cancelled = true;
     ctx.pending.length = 0;
@@ -615,5 +673,6 @@ export function startPullSync(userId: string, hooks?: PullHooks): Unsubscribe {
     unsubscribeNotebooks();
     unsubscribePages();
     unsubscribeStickyNotes();
+    unsubscribeUserSettings();
   };
 }
