@@ -233,7 +233,7 @@ Test steps:
 
 ### T7 Settings dialog with an Aesthetics section
 
-Status: todo
+Status: done
 Depends on: T6
 Tester: yes. The dialog, toggles and their persistence are observable in the DOM.
 
@@ -319,3 +319,4 @@ Test steps:
 - [x] T5 The theme has an 8-color note palette
 - [x] T5a The theme editor has a note palette generator
 - [x] T6 Synced user settings store
+- [x] T7 Settings dialog with an Aesthetics section

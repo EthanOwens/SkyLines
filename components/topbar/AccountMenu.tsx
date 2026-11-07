@@ -25,7 +25,8 @@ import { applyTheme, clearThemeOverrides } from "@/lib/themes/apply";
 import { setSelectedThemeId as persistSelectedThemeId } from "@/lib/themes/selection";
 import { getSystemTheme, watchSystemThemeChanges } from "@/lib/themes/system";
 import { ThemeEditor } from "@/components/theme/ThemeEditor";
-import { LogOut, Palette, Cloud, CloudOff, Loader2, CheckCircle2, Bug, Check, FolderOpen } from "lucide-react";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
+import { LogOut, Settings, Palette, Cloud, CloudOff, Loader2, CheckCircle2, Bug, Check, FolderOpen } from "lucide-react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { appLogDir } from "@tauri-apps/api/path";
 import { copyBugReport } from "@/lib/bugReport";
@@ -58,6 +59,7 @@ export function AccountMenu() {
   const selectedThemeId = useAppStore((s) => s.selectedThemeId);
   const setSelectedThemeId = useAppStore((s) => s.setSelectedThemeId);
   const [themeEditorOpen, setThemeEditorOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [reportStatus, setReportStatus] = useState<"idle" | "copied" | "failed">("idle");
 
   // Follows OS light/dark changes while "System" is selected; the cleanup
@@ -198,6 +200,10 @@ export function AccountMenu() {
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+            <Settings className="mr-2 h-4 w-4" />
+            Settings
+          </DropdownMenuItem>
           <DropdownMenuItem closeOnClick={false} onClick={() => void handleCopyBugReport()}>
             {reportStatus === "copied" ? (
               <Check className="mr-2 h-4 w-4" />
@@ -225,6 +231,7 @@ export function AccountMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
       <ThemeEditor open={themeEditorOpen} onOpenChange={setThemeEditorOpen} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </>
   );
 }
