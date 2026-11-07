@@ -167,7 +167,7 @@ Test steps:
 
 ### T5a The theme editor has a note palette generator
 
-Status: todo
+Status: done
 Depends on: T5
 Tester: yes. The editor controls and the resulting CSS variables are observable in the DOM.
 
@@ -317,3 +317,4 @@ Test steps:
 - [x] T3 Pull applies parents before children and survives orphans
 - [x] T4 Notes and pages can store a color
 - [x] T5 The theme has an 8-color note palette
+- [x] T5a The theme editor has a note palette generator

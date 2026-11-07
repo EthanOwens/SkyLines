@@ -1,6 +1,14 @@
 // The variables from globals.css's :root/.dark blocks (without the leading --).
 // A theme may override any subset.
 
+export const MAX_NOTE_PALETTE_SIZE = 24;
+
+type NoteIndex =
+  | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12
+  | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24;
+
+export type NoteVariableKey = `note-${NoteIndex}`;
+
 export type ThemeVariableKey =
   | "background"
   | "foreground"
@@ -29,14 +37,7 @@ export type ThemeVariableKey =
   | "sidebar-accent-foreground"
   | "sidebar-border"
   | "sidebar-ring"
-  | "note-1"
-  | "note-2"
-  | "note-3"
-  | "note-4"
-  | "note-5"
-  | "note-6"
-  | "note-7"
-  | "note-8";
+  | NoteVariableKey;
 
 // Keep in sync with the union above; used to validate user theme files at
 // runtime.
@@ -68,22 +69,30 @@ export const THEME_VARIABLE_KEYS: readonly ThemeVariableKey[] = [
   "sidebar-accent-foreground",
   "sidebar-border",
   "sidebar-ring",
-  "note-1",
-  "note-2",
-  "note-3",
-  "note-4",
-  "note-5",
-  "note-6",
-  "note-7",
-  "note-8",
+  ...(Array.from(
+    { length: MAX_NOTE_PALETTE_SIZE },
+    (_, i) => `note-${i + 1}`,
+  ) as NoteVariableKey[]),
 ];
 
 const THEME_VARIABLE_KEY_SET: ReadonlySet<string> = new Set(THEME_VARIABLE_KEYS);
+
+/** Note palette generator state, stored with the theme so the editor can restore it. */
+export interface NotePaletteSettings {
+  count: number;
+  /** One hue (0 to 360) per color. */
+  hues: number[];
+  lightness: number;
+  chroma: number;
+  /** Fixed hex per color, or null to use the generated color. */
+  overrides: (string | null)[];
+}
 
 export interface Theme {
   id: string;
   name: string;
   variables: Partial<Record<ThemeVariableKey, string>>;
+  notePalette?: NotePaletteSettings;
 }
 
 /**
@@ -104,6 +113,14 @@ export function isTheme(value: unknown): value is Theme {
   for (const [key, val] of Object.entries(variables)) {
     if (!THEME_VARIABLE_KEY_SET.has(key)) return false;
     if (typeof val !== "string") return false;
+  }
+
+  // Contents are sanitized when read, so a bad palette can't reject the theme.
+  if (
+    v.notePalette !== undefined &&
+    (!v.notePalette || typeof v.notePalette !== "object" || Array.isArray(v.notePalette))
+  ) {
+    return false;
   }
 
   return true;

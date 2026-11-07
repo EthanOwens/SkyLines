@@ -30,10 +30,24 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "@/components/ui/collapsible";
 import { useAppStore } from "@/stores/appStore";
 import { BUILTIN_THEMES, LIGHT_THEME } from "@/lib/themes/builtin";
-import { applyTheme } from "@/lib/themes/apply";
+import { applyNoteVariables, applyTheme } from "@/lib/themes/apply";
+import { getSystemTheme } from "@/lib/themes/system";
+import {
+  defaultPalette,
+  paletteForTheme,
+  paletteVariables,
+} from "@/lib/colors/notePalette";
 import { deleteThemeFile, ensureThemesDir, loadThemes, saveTheme } from "@/lib/themes/loader";
-import { THEME_VARIABLE_KEYS, type Theme, type ThemeVariableKey } from "@/lib/themes/types";
+import {
+  MAX_NOTE_PALETTE_SIZE,
+  THEME_VARIABLE_KEYS,
+  type NotePaletteSettings,
+  type NoteVariableKey,
+  type Theme,
+  type ThemeVariableKey,
+} from "@/lib/themes/types";
 import { SettingInfo, ThemeColorField, settingRowHighlightHandlers } from "./ThemeColorField";
+import { NotePaletteGenerator } from "./NotePaletteGenerator";
 import { ThemePreview } from "./ThemePreview";
 
 // Duplicated from AccountMenu rather than imported: AccountMenu imports this
@@ -54,6 +68,7 @@ type PendingAction =
 interface UndoSnapshot {
   editingThemeId: string | null;
   draftVariables: Partial<Record<ThemeVariableKey, string>>;
+  draftPalette: NotePaletteSettings;
   unsavedNewTheme: Theme | null;
   availableThemes: Theme[];
   restoreFile?: Theme;
@@ -113,19 +128,13 @@ const THEME_VARIABLE_INFO = {
     name: "Sidebar border",
     description: "Edges and dividers in the sidebars",
   },
-  "note-1": { name: "Color 1", description: "Note color 1 of 8, used to color-code notes and pages" },
-  "note-2": { name: "Color 2", description: "Note color 2 of 8, used to color-code notes and pages" },
-  "note-3": { name: "Color 3", description: "Note color 3 of 8, used to color-code notes and pages" },
-  "note-4": { name: "Color 4", description: "Note color 4 of 8, used to color-code notes and pages" },
-  "note-5": { name: "Color 5", description: "Note color 5 of 8, used to color-code notes and pages" },
-  "note-6": { name: "Color 6", description: "Note color 6 of 8, used to color-code notes and pages" },
-  "note-7": { name: "Color 7", description: "Note color 7 of 8, used to color-code notes and pages" },
-  "note-8": { name: "Color 8", description: "Note color 8 of 8, used to color-code notes and pages" },
 } satisfies Partial<Record<ThemeVariableKey, { name: string; description: string }>>;
 
 type EditableThemeVariableKey = keyof typeof THEME_VARIABLE_INFO;
 
 // Only keys the mini preview renders, in render order.
+const NOTE_COLORS_LABEL = "Note colors";
+
 const THEME_VARIABLE_GROUPS: { label: string; keys: EditableThemeVariableKey[] }[] = [
   { label: "Page", keys: ["background", "foreground"] },
   { label: "Cards & text boxes", keys: ["card", "card-foreground"] },
@@ -142,7 +151,6 @@ const THEME_VARIABLE_GROUPS: { label: string; keys: EditableThemeVariableKey[] }
       "sidebar-border",
     ],
   },
-  { label: "Note colors", keys: ["note-1", "note-2", "note-3", "note-4", "note-5", "note-6", "note-7", "note-8"] },
 ];
 
 interface ThemeEditorProps {
@@ -170,12 +178,17 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   // directly, which would make an unsaved theme selectable app-wide.
   const [unsavedNewTheme, setUnsavedNewTheme] = useState<Theme | null>(null);
 
+  // Generator settings for the note palette; kept in step with the note-*
+  // entries of draftVariables.
+  const [draftPalette, setDraftPalette] = useState<NotePaletteSettings>(defaultPalette);
+
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
   // In-memory copy for "Copy/Paste theme values" (not the OS clipboard).
   const [copiedVariables, setCopiedVariables] = useState<Partial<
     Record<ThemeVariableKey, string>
   > | null>(null);
+  const [copiedPalette, setCopiedPalette] = useState<NotePaletteSettings | undefined>(undefined);
 
   // Undo stack for this dialog session; a ref so pushing doesn't re-render.
   // Cleared on close and unrelated to tldraw's and Tiptap's own undo.
@@ -208,6 +221,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   function loadThemeForEditing(theme: Theme | undefined) {
     setEditingThemeId(theme?.id ?? null);
     setDraftVariables(theme ? { ...theme.variables } : {});
+    setDraftPalette(theme ? paletteForTheme(theme) : defaultPalette());
     // A different theme's now being edited - don't let a same-key edit on
     // it coalesce with a same-key edit on whatever was loaded before.
     lastEditedKeyRef.current = null;
@@ -221,6 +235,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     setUnsavedNewTheme(null);
     setPendingAction(null);
     setCopiedVariables(null);
+    setCopiedPalette(undefined);
     setHoveredKey(null);
     undoHistoryRef.current = [];
 
@@ -234,6 +249,25 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     // Only re-seed when the dialog transitions open, not on every store
     // update while it's already open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Mirrors the draft's note colors onto the document root while the dialog is
+  // open, so the app shows the palette being edited; closing restores the
+  // active theme's.
+  useEffect(() => {
+    if (!open) return;
+    applyNoteVariables(draftVariables);
+  }, [open, draftVariables]);
+
+  useEffect(() => {
+    if (!open) return;
+    return () => {
+      const { selectedThemeId: id, availableThemes: themes } = useAppStore.getState();
+      const active =
+        (id && id !== SYSTEM_THEME_VALUE ? themes.find((t) => t.id === id) : undefined) ??
+        getSystemTheme();
+      applyNoteVariables(active.variables);
+    };
   }, [open]);
 
   // Ctrl+Z / Cmd+Z, only while the dialog is open. handleUndo only touches a
@@ -293,6 +327,23 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     setDraftVariables((prev) => ({ ...prev, [key]: value }));
   }
 
+  // Regenerates the note-* draft variables from the new settings. Coalesces a
+  // run of palette edits into one undo step.
+  function handlePaletteChange(next: NotePaletteSettings) {
+    if (lastEditedKeyRef.current !== "note-1") {
+      pushUndoSnapshot();
+      lastEditedKeyRef.current = "note-1";
+    }
+    setDraftPalette(next);
+    setDraftVariables((prev) => {
+      const out = { ...prev };
+      for (let i = 1; i <= MAX_NOTE_PALETTE_SIZE; i++) {
+        delete out[`note-${i}` as NoteVariableKey];
+      }
+      return { ...out, ...paletteVariables(next) };
+    });
+  }
+
   // Call right before any undoable change.
   function pushUndoSnapshot(restoreFile?: Theme) {
     // A delete/paste is pushing its own snapshot right now - any run of
@@ -302,6 +353,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     undoHistoryRef.current.push({
       editingThemeId,
       draftVariables: { ...draftVariables },
+      draftPalette,
       unsavedNewTheme,
       availableThemes: [...availableThemes],
       restoreFile,
@@ -336,6 +388,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
 
     setEditingThemeId(snapshot.editingThemeId);
     setDraftVariables(snapshot.draftVariables);
+    setDraftPalette(snapshot.draftPalette);
     setUnsavedNewTheme(snapshot.unsavedNewTheme);
     setAvailableThemes(snapshot.availableThemes);
   }
@@ -346,8 +399,10 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   function isDraftDirty(): boolean {
     if (!editingTheme) return false;
     if (unsavedNewTheme && unsavedNewTheme.id === editingTheme.id) return true;
-    return THEME_VARIABLE_KEYS.some(
-      (key) => (draftVariables[key] ?? undefined) !== (editingTheme.variables[key] ?? undefined),
+    return (
+      THEME_VARIABLE_KEYS.some(
+        (key) => (draftVariables[key] ?? undefined) !== (editingTheme.variables[key] ?? undefined),
+      ) || JSON.stringify(draftPalette) !== JSON.stringify(paletteForTheme(editingTheme))
     );
   }
 
@@ -362,16 +417,21 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
 
     const isBuiltin = BUILTIN_THEMES.some((b) => b.id === editingTheme.id);
 
+    // Settings only make sense next to the colors they generated.
+    const notePalette = draftVariables["note-1"] ? { notePalette: draftPalette } : {};
+
     const themeToSave: Theme = isBuiltin
       ? {
           id: crypto.randomUUID(),
           name: `${editingTheme.name} (Copy)`,
           variables: { ...draftVariables },
+          ...notePalette,
         }
       : {
           id: editingTheme.id,
           name: editingTheme.name,
           variables: { ...draftVariables },
+          ...notePalette,
         };
 
     await saveTheme(themeToSave);
@@ -439,6 +499,7 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
   // Not undoable, since it changes no theme data.
   function handleCopyTheme(theme: Theme) {
     setCopiedVariables({ ...theme.variables });
+    setCopiedPalette(theme.notePalette);
   }
 
   // Loads the theme with the pasted values as its draft, so the usual dirty
@@ -448,6 +509,14 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
     pushUndoSnapshot();
     setEditingThemeId(theme.id);
     setDraftVariables({ ...copiedVariables });
+    setDraftPalette(
+      paletteForTheme({
+        id: theme.id,
+        name: theme.name,
+        variables: copiedVariables,
+        notePalette: copiedPalette,
+      }),
+    );
   }
 
   // Goes through requestLoadTheme so pasting can't silently discard a dirty
@@ -633,7 +702,6 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                       <CollapsiblePanel>
                         <div className="flex flex-col divide-y divide-border">
                           {group.keys.map((key) => {
-                            // Older themes lack the note colors; show the light defaults.
                             const value =
                               draftVariables[key] ??
                               editingTheme.variables[key] ??
@@ -703,6 +771,20 @@ export function ThemeEditor({ open, onOpenChange }: ThemeEditorProps) {
                       </CollapsiblePanel>
                     </Collapsible>
                   ))}
+                  <Collapsible
+                    open={expandedGroups[NOTE_COLORS_LABEL] ?? true}
+                    onOpenChange={(next) =>
+                      setExpandedGroups((prev) => ({ ...prev, [NOTE_COLORS_LABEL]: next }))
+                    }
+                    className="flex flex-col"
+                  >
+                    <CollapsibleTrigger className="px-0.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {NOTE_COLORS_LABEL}
+                    </CollapsibleTrigger>
+                    <CollapsiblePanel>
+                      <NotePaletteGenerator settings={draftPalette} onChange={handlePaletteChange} />
+                    </CollapsiblePanel>
+                  </Collapsible>
                 </div>
               ) : (
                 <div className="text-xs text-muted-foreground">No theme selected</div>
