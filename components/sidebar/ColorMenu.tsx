@@ -67,7 +67,13 @@ export function useRowColor(color: string | null) {
   };
 }
 
-export function RowColorMarks({ slot, bookend, highlight }: ReturnType<typeof useRowColor>) {
+/** `indent` is the bar's left offset in px, so it follows the row's nesting. */
+export function RowColorMarks({
+  slot,
+  bookend,
+  highlight,
+  indent = 0,
+}: ReturnType<typeof useRowColor> & { indent?: number }) {
   if (!slot) return null;
   const v = noteColorVar(slot);
   return (
@@ -84,8 +90,8 @@ export function RowColorMarks({ slot, bookend, highlight }: ReturnType<typeof us
         <span
           data-note-color-bar
           aria-hidden
-          className="pointer-events-none absolute inset-y-0.5 left-0 w-1 rounded-full"
-          style={{ backgroundColor: v }}
+          className="pointer-events-none absolute inset-y-0.5 w-1 rounded-full"
+          style={{ backgroundColor: v, left: indent }}
         />
       )}
     </>

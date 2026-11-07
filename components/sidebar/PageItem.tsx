@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import type { DragEvent } from "react";
-import { FileText, Pencil, Trash2, Scissors, Copy } from "lucide-react";
+import { Pencil, Trash2, Scissors, Copy } from "lucide-react";
 import { updatePage, deletePage } from "@/lib/db/pages";
 import {
   DropdownMenu,
@@ -171,7 +171,6 @@ export function PageItem({ page, isActive, siblingPageIds, onSelect, onChanged }
               onClick={() => !renaming && onSelect()}
             >
               <RowColorMarks {...rowColor} />
-              <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 
               {renaming ? (
                 <input

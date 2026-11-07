@@ -23,11 +23,22 @@ export function nextAutoColor(
   return "note-1";
 }
 
-async function siblingColors(table: "notes" | "pages", column: string, parentId: string) {
+async function pageSiblingColors(noteId: string) {
   const db = await getDb();
   const rows = await db.select<{ color: string | null }[]>(
-    `SELECT color FROM ${table} WHERE ${column} = $1 AND deleted_at IS NULL ORDER BY created_at ASC`,
-    [parentId],
+    "SELECT color FROM pages WHERE note_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC",
+    [noteId],
+  );
+  return rows.map((r) => r.color);
+}
+
+// Each folder (or the notebook root, folderId null) is its own space. `IS`
+// matches NULL folder ids, which `=` would not.
+async function noteSiblingColors(notebookId: string, folderId: string | null) {
+  const db = await getDb();
+  const rows = await db.select<{ color: string | null }[]>(
+    "SELECT color FROM notes WHERE notebook_id = $1 AND folder_id IS $2 AND deleted_at IS NULL ORDER BY created_at ASC",
+    [notebookId, folderId],
   );
   return rows.map((r) => r.color);
 }
@@ -35,10 +46,11 @@ async function siblingColors(table: "notes" | "pages", column: string, parentId:
 export async function autoColorForNewNote(
   userId: string,
   notebookId: string,
+  folderId: string | null,
 ): Promise<{ color: NoteColorSlot | null; firstPageColor: NoteColorSlot | null }> {
   const { autoColor } = await getUserSettings(userId);
   return {
-    color: nextAutoColor(autoColor, await siblingColors("notes", "notebook_id", notebookId)),
+    color: nextAutoColor(autoColor, await noteSiblingColors(notebookId, folderId)),
     firstPageColor: nextAutoColor(autoColor, []),
   };
 }
@@ -48,5 +60,5 @@ export async function autoColorForNewPage(
   noteId: string,
 ): Promise<NoteColorSlot | null> {
   const { autoColor } = await getUserSettings(userId);
-  return nextAutoColor(autoColor, await siblingColors("pages", "note_id", noteId));
+  return nextAutoColor(autoColor, await pageSiblingColors(noteId));
 }

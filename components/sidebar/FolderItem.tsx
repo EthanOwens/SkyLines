@@ -149,7 +149,7 @@ export function FolderItem({
 
   async function addNote() {
     // New notes inherit the folder's notebook.
-    const auto = await autoColorForNewNote(userId, folder.notebookId as string);
+    const auto = await autoColorForNewNote(userId, folder.notebookId as string, folder.id);
     const id = await createNote(
       userId,
       "canvas",

@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import type { DragEvent } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { FileText, LayoutDashboard, Pencil, Trash2, Scissors, Copy } from "lucide-react";
+import { Pencil, Trash2, Scissors, Copy } from "lucide-react";
 import { updateNote, deleteNote } from "@/lib/db/notes";
 import {
   DropdownMenu,
@@ -57,7 +57,8 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
   // on open.
   const href = `/canvas?id=${note.id}`;
   const isActive = pathname === href;
-  const paddingLeft = depth * 12 + 20;
+  const barLeft = depth * 12 + 8;
+  const paddingLeft = barLeft + 8;
 
   function startRename() {
     setRenaming(true);
@@ -182,12 +183,7 @@ export function NoteItem({ note, depth, siblingNoteIds, onDragOverRow }: Props) 
                 if (!renaming) router.push(href);
               }}
             >
-              <RowColorMarks {...rowColor} />
-              {note.type === "canvas" ? (
-                <LayoutDashboard className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              )}
+              <RowColorMarks {...rowColor} indent={barLeft} />
 
               {renaming ? (
                 <input

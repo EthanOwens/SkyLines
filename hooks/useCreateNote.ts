@@ -26,7 +26,7 @@ export function useCreateNote(uid: string) {
       const siblingNoteOrders = notes
         .filter((n) => n.folderId === (selectedFolderId ?? null) && n.notebookId === notebookId)
         .map((n) => n.order);
-      const auto = await autoColorForNewNote(uid, notebookId);
+      const auto = await autoColorForNewNote(uid, notebookId, selectedFolderId ?? null);
       const id = await createNote(
         uid,
         "canvas",
