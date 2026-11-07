@@ -7,6 +7,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthContext } from "@/components/AuthProvider";
 import { getNoteById } from "@/lib/db/notes";
+import { subscribeDataChange } from "@/lib/db/events";
 import { recordNoteOpened } from "@/lib/lastOpen";
 import { resolveNoteNotebookId } from "@/lib/notebookSync";
 import { CanvasEditor } from "@/components/canvas/CanvasEditor";
@@ -68,6 +69,25 @@ function CanvasPageInner() {
       cancelled = true;
     };
   }, [id, uid, router, setSelectedNotebook, visitNote]);
+
+  // Covers every deletion path (row menu, folder/notebook delete, sync pull).
+  useEffect(() => {
+    if (!id || !uid) return;
+    let cancelled = false;
+    const unsubscribe = subscribeDataChange(() => {
+      void getNoteById(id, uid)
+        .then((found) => {
+          if (cancelled || found) return;
+          setNote(null);
+          router.replace("/");
+        })
+        .catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [id, uid, router]);
 
   if (!id) {
     return (
