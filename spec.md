@@ -1,324 +1,286 @@
-# Color-coded notes, synced settings and bug fixes
+# Multi-device sync consistency, sidebar resizing and canvas tables
 
-Source: planning.md, 2026-11-05
+Source: planning.md, 2026-11-07
 
 ## Goal
 
-Add a Settings dialog (opened from the account menu) with synced preferences, and use it to drive color-coding of notes and pages in the sidebar: each new note or page gets a palette color, shown as a left bookend, a faded highlight or both. The palette is part of the theme. Alongside, fix three bugs: relaunching a tray-hidden app does nothing, sticky notes never sync, and pages can fail to restore on a fresh database.
+Make the app consistent when it is used on more than one computer: an open page shows edits from another device, a stale computer catches up before it acts on old data, deleted-elsewhere notes disappear, and losing versions of a conflict can be viewed and restored. Alongside, add resizable sidebars, replace the empty File ribbon tab with an Insert tab, and add spreadsheet-style tables to the canvas.
 
 ## Context
 
-- **Shape of the app.** Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`. SQL migrations in `src-tauri/src/lib.rs` are checksummed and never edited. The latest is version 8 (`sticky_notes.favorite`); add new versions after it.
-- **Terminology.** The code says "note" (`Note`, type `"note" | "canvas"`) and "page" (`Page`). The planning file's "notesheet" means a note. Every note has at least one page, created with it in `createNote`.
-- **Sidebar rows.** `components/sidebar/NoteItem.tsx` and `PageItem.tsx` render one row each: a `div` with `group flex items-center gap-1.5 rounded-md ...`, background `bg-sidebar-accent` when active and `hover:bg-sidebar-accent` on hover (Tailwind classes, so an inline background would hide them). `menuItems()` in each is shared by the `···` dropdown and the right-click menu. `NoteItem` is also rendered by `FolderItem.tsx` and `FolderTree.tsx`. `PageItem` is rendered by `PageSidebar.tsx`.
-- **Data layer.** `lib/db/notes.ts` and `lib/db/pages.ts` hold `rowToNote`/`rowToPage`, `createNote`/`createPage`, `updateNote`/`updatePage` (set `updated_at` and `dirty = 1`) and `upsertNoteFromRemote`/`upsertPageFromRemote`. The upserts use positional `$n` params in the column list, the VALUES list and `ON CONFLICT DO UPDATE SET`: all must change together, or pull silently breaks. `createNote` inserts the note and its first page with hardcoded column lists in one BEGIN/COMMIT string. Types are in `types/index.ts`; `StickyNote.topBarColor` is the precedent for a nullable color string.
-- **Creation call sites.** Notes: `hooks/useCreateNote.ts`, `components/sidebar/FolderItem.tsx` (~L151), `lib/clipboard/sidebarClipboard.ts` (`duplicateNote`). Pages: `components/canvas/CanvasEditor.tsx` (~L202), `components/sidebar/PageSidebar.tsx` (~L65), `lib/clipboard/sidebarClipboard.ts` (`duplicatePage`).
-- **Sync.** `lib/sync/push.ts` (`noteToFirestoreDoc`, `pageToFirestoreDoc`, `pushRows`, `pushDirtyRows`) and `lib/sync/pull.ts` (`toRemoteNoteData`, `toRemotePageData`, five independent `onSnapshot` listeners with one promise queue each, `applyDecision`, `startPullSync`). `lib/sync/engine.ts` runs push with backoff. Writes use `setDoc(..., {merge: true})`; last write wins by `updatedAt`.
-- **Firestore rules** (`firestore.rules`) have no per-field validation. A generic `match /{collection}/{id}` checks that the collection is in an allowed list and that `userId` equals the signed-in uid. A new collection needs adding to that list, and the user deploys rules manually. Agents never deploy.
-- **Themes.** Tailwind v4 CSS variables in `app/globals.css` (`@theme inline` maps `--color-*` to `--*`; `:root` and `.dark` define values). `lib/themes/types.ts` defines `ThemeVariableKey`/`THEME_VARIABLE_KEYS` (27 keys; `isTheme()` rejects unknown keys). `lib/themes/builtin.ts` has `LIGHT_THEME` and `DARK_THEME`, which must stay identical to the `globals.css` blocks. `lib/themes/apply.ts` sets inline styles on `<html>`. The editor is `components/theme/ThemeEditor.tsx` with `ThemeColorField.tsx`. User theme files simply lack new keys and fall through to `globals.css`.
-- **Account menu.** `components/topbar/AccountMenu.tsx` is a `DropdownMenu` (email, sync status, Theme submenu with "Edit themes...", "Copy bug report", "Open logs folder", "Sign out", version). It owns dialog state beside the menu, as `ThemeEditor` does (`themeEditorOpen`). It is mounted by `TopBar` and, on the notebook picker, by `AppLayout`.
-- **Existing preferences** are per-device localStorage modules in `lib/` (`quickAccessPrefs.ts`, `lastOpen.ts`, `themes/selection.ts`). The new settings are different: they sync.
-- **No sync tests exist** in the root project; the only test file is `functions/src/resetCode.test.ts`. Sync tasks are verified by type checks, builds and reading, plus the tester where something is observable.
+- **Shape of the app.** Tauri v2 around a Next.js static export. Verification and testing follow `CLAUDE.md`. SQL migrations in `src-tauri/src/lib.rs` are checksummed and never edited; the latest is version 8 plus any added since (check before adding one). Notes are `type: "note" | "canvas"`; every note has pages; all notes open on `/canvas` (`app/note/page.tsx` just redirects).
+- **Sync.** `lib/sync/pull.ts` (Firestore `onSnapshot` into SQLite, `decidePull` last-write-wins on `updatedAt`, dirty/conflict handling, `createGate` ordering: notebooks, folders, notes, pages), `lib/sync/push.ts`, `lib/sync/engine.ts` (status `saved | syncing | offline | error`, `startSyncEngine`), `hooks/useSyncEngine.ts` (mirrors status into `stores/appStore.ts`). `lib/db/events.ts` `notifyDataChange("local" | "remote")` is how React learns of SQLite writes; `useNotes`-style hooks refetch on it with a request-id guard.
+- **Open canvas page.** `app/canvas/page.tsx` renders `PageSidebar` (`components/sidebar/PageSidebar.tsx`) and `components/canvas/CanvasEditor.tsx`. The page list lives in the store (`pages`), loaded once and only refreshed by the user's own actions. `<Tldraw key={selectedPage.id}>` remounts per page and `handleMount` loads `page.canvasData` once. Autosave is an `editor.store.listen({source: "user", scope: "document"})` handler, debounced 800 ms, that calls `updatePage` (always sets `updated_at = now`, `dirty = 1`); a pending save is flushed on unmount. `RichTextShape` writes `lastEditedAt` on every Tiptap update.
+- **Backups.** `lib/db/syncConflicts.ts` stores the losing version of a conflict as a JSON blob in `sync_conflicts` (`table_name, row_id, losing_data, created_at`). `getSyncConflicts(table, row)` exists but has no callers and there is no restore code. For `conflict-remote-wins` the blob is the local row (has `dirty`, `syncedAt`); for `conflict-local-wins` it is the remote data (no such fields).
+- **Settings dialog.** `components/settings/SettingsDialog.tsx` has a left sidebar with tabs Appearance and History (History always listed; shows "There is nothing to restore." when empty). History uses `hooks/useDeletedNotes.ts`, `getDeletedNotes`/`restoreNote` in `lib/db/notes.ts`, and `emptyNoteHistory` in `lib/sync/cleanup.ts`, which deletes Firestore docs immediately.
+- **Layout.** `components/shell/AppLayout.tsx` places `components/sidebar/Sidebar.tsx` (`w-60`, collapsed rail `w-12`, `border-r`) then the main column with `components/ribbon/Ribbon.tsx`. `PageSidebar` (`w-52`, collapsed `w-10`, local `useState` for collapsed, no right border) is rendered by `app/canvas/page.tsx` next to the editor. No resize or panel library is installed. The window is 1200x800 with no min width. Per-device UI prefs live in small `lib/*.ts` localStorage helpers (`lib/quickAccessPrefs.ts`, `lib/lastOpen.ts`): key prefix `skylines:`, try/catch, validated parse, read after mount (static export hydration). `userSettings` is synced and wrong for per-device widths.
+- **Ribbon.** `Ribbon.tsx` hard-codes `type RibbonTab = "file" | "format" | "draw"`, default `"file"`, fixed `h-24`, one-row bodies using `FormatBtn` (tooltip plus ghost icon button), `Separator` and lucide icons (the `Table` icon is available). The File tab renders only "No actions available." Format already holds "Insert image" (file input calling `activeEditor.chain().setImage`) and "Insert link" (`requestLinkDialog`). A `useEffect` returns the canvas tool to `"rich-text"` when the effective tab is not Draw. Store: `activeCanvasEditor` (tldraw `Editor`) and `activeEditor` (Tiptap, only while a text box is edited).
+- **Custom shapes.** `components/canvas/RichTextShape.tsx` is the pattern: `BaseBoxShapeUtil` with `static type`, `static props` (tldraw validators), `static migrations` (a new prop on an existing shape needs a migration or the validator rejects stored records), `component()`, `indicator()`, module augmentation of `TLGlobalShapePropsMap`. Utils are registered in the module-level `shapeUtils` array in `CanvasEditor.tsx`. While editing it uses `useIsEditing`, `pointerEvents: "all"` plus `onPointerDownCapture={stopEventPropagation}`, and `pointerEvents: "none"` otherwise. Canvas data is the tldraw snapshot stored in `pages.canvas_data`; a snapshot that fails validation on `loadSnapshot` silently starts blank and the next autosave overwrites it, so props and migrations must be exact. `RichTextTool` (click to edit, auto-return to rich-text) is specific to `rich-text`.
+- **Undo.** TopBar undoes in the Tiptap editor when `activeEditor` is set, else the canvas. A table must not set `activeEditor`.
 
 ## Decisions
 
-- **Settings UI**: a dialog opened from a new "Settings" item in the account menu (above "Copy bug report"), not a route. It works on the picker and with a notebook open, needs no `AppLayout` changes and avoids the `/` last-note restore bounce. The existing Theme submenu and "Edit themes..." stay where they are.
-- **Settings sync** (user's choice): settings sync across devices. One row per user.
-  - SQLite table `user_settings` (migration), keyed by `user_id`, with columns for the three settings, `updated_at`, `dirty` and `synced_at`.
-  - Firestore collection `userSettings`, doc id = uid, with a `userId` field for the rules.
-  - Whole-row last-write-wins by `updated_at`, like other collections.
-  - `firestore.rules` gets `userSettings` in its allowed list; the user must deploy it. Until then settings still work locally and the push error is logged.
-- **Settings contents** (this round): an "Aesthetics" section only, with three toggles:
-  - "Automatic color coding", default on.
-  - "Color bookend", default on.
-  - "Color highlight", default off.
-  - Bookend and highlight are independent; both, one or neither may be on.
-- **Where colors show**: note rows and page rows in the sidebar only. Folders, notebooks, reference chips/picker and sticky notes are not colored.
-- **Color model** (user's choice): a note or page stores a palette slot, one of `note-1` … `note-8`, or NULL for none. Slots resolve through the theme variables `--note-1` … `--note-8`, so a theme change recolors items. Existing notes and pages stay NULL (no retroactive coloring).
-- **Palette**: a theme has a note palette of 1 to 24 colors (default 8). `ThemeVariableKey`s `note-1`…`note-24` hold the resolved colors; `globals.css` and `LIGHT_THEME`/`DARK_THEME` define the default 8 (light and dark). A palette is edited with the generator in `ThemeEditor` (T5a), which stores its settings with the theme. The palette size is the number of colors the active theme defines.
-- **Auto assignment** (user's choice): when "Automatic color coding" is on, a new note or page takes the slot after the most recently created sibling that has a color, wrapping from the last palette color to 1; with no colored sibling it takes `note-1`. Siblings of a note are the non-deleted notes of the same notebook; siblings of a page are the non-deleted pages of the same note. A page's color is independent of its note's.
-- **Auto off** (user's choice): new items get NULL; items that already have a color keep it and still render per the display toggles. Colors can always be changed or cleared by hand.
-- **Manual change**: a "Color" submenu in the note and page row menus (both the `···` dropdown and the right-click menu, via the shared `menuItems()`): eight swatches plus "None".
-- **Duplicates** (copy/paste of a note or page) keep the original's color. A duplicated note's first page keeps the color of its source page.
-- **Display rules**: bookend is a narrow bar on the row's left edge; highlight is a faded tint over the whole row. The tint must not hide the active or hover state. Rows with no color render as today.
-- **Sticky-note sync fix**: the repo's rules and push mapping have no mismatch and `stickyNotes` has been in the rules since the first commit, so the likely cause is deployed rules or an earlier collection throwing. The code fix is to isolate each collection's push so one thrown error doesn't starve the others, and to record the error code where it reaches the log file. Confirming and deploying rules is the user's manual step.
-- **Pull ordering fix**: use a combination of (a) parents-first ordering across collections (notebooks, then folders, then notes, then pages), (b) a per-change try/catch so one failure doesn't drop the rest of a batch, (c) in-memory deferral and retry of changes that fail with an FK error, and (d) parents-first sorting of folders within a snapshot. FKs stay enforced.
-- **Relaunch fix**: the single-instance callback calls `show_main_window(app)`.
+- **Live sync of the open page:** apply a remote edit automatically when the page is idle (row clean, newer than what the editor loaded or saved, no pending local save, nothing being edited); otherwise show a "newer version available" banner with a Reload button. Never overwrite in-progress typing.
+- **Catching up:** show an indicator and make the canvas read-only only while online and only until the first server snapshot settles, with a timeout (8 s) so starting offline never blocks. The default-page creation for a note with no pages waits for the same signal.
+- **Backups screen:** a third Settings tab, "Backups", always listed (shows "There are no backups." when empty). Notes and pages only. Shows the last 30 days, and rows older than that are deleted when the tab loads.
+- **Reconcile:** notes and pages only. Soft-delete locally (so the note appears in History) rather than hard-delete, mark the row not dirty so no push happens, never touch dirty rows.
+- **Sidebar widths:** per-device, in a localStorage helper, not synced. Collapse still wins over the stored width. Double-click the handle to reset to the default width.
+- **Tables:** a new custom tldraw shape `table`, hand-written, no new dependency. Core spreadsheet scope: typing in cells, arrow/Tab/Enter navigation, range selection, add/remove rows and columns, resizing, copy/paste to and from Excel (tab-separated text), formulas.
+- **Insert tab:** holds Table, Insert image and Insert link (the last two move out of Format). Insert is the default tab; File is removed.
+- **Ribbon tabs on non-canvas routes:** every note opens on `/canvas`, so Insert needs no route gating. Keep the existing Draw fallback logic, defaulting to Insert.
 
 ## Out of scope
 
-- Syncing the theme selection or the Theme submenu, or moving them into Settings.
-- Coloring folders, notebooks, references or sticky notes.
-- Retroactively coloring existing notes and pages.
-- A free-form hex color per note or page.
-- Deploying Firestore rules or Cloud Functions, and checking the Firebase console. Those are manual steps for the user.
-- Cross-window live propagation of theme or settings changes to open sticky or image-editor windows.
+- Version counters or transactional push; `serverTimestamp()` for `updatedAt`.
+- A periodic whole-database snapshot.
+- Backups for folders, notebooks, sticky notes or settings; hard-delete reconcile for folders and notebooks.
+- Merging two edits of the same page (conflicts stay last-write-wins with a backup).
+- Tables in sticky notes or the legacy text editor; searching text inside table cells; charts, multiple sheets, cell styling, merged cells, absolute references (`$A$1`).
+- Moving the bug-report or sync-failure UI.
 
 ## Tasks
 
-### T1 Relaunching the app shows the hidden window
+### T1 Adding a page can't fail silently or use stale order
 
-Status: done
+Status: todo
 Depends on: none
-Tester: no. A second launch and the tray are outside the tester's reach.
+Tester: no, the failure needs a second device's changes to reproduce; the code changes are checked by reading
 
-In `src-tauri/src/lib.rs` (~L527) the `tauri_plugin_single_instance::init` callback is empty. Make it call `show_main_window(app)` (defined at ~L180, `#[cfg(desktop)]`, already used by the tray and the global shortcut). The closure is already inside the `#[cfg(desktop)]` block, so no extra gating is needed.
+`handleAddPage` in `components/sidebar/PageSidebar.tsx` is `try/finally` with no `catch`, so any failure in `autoColorForNewPage` or `createPage` is an unhandled rejection and `refresh()` never runs. It also computes the new order from the store's `pages`, which can be stale after a remote pull. Add a `catch` that logs with a `[PageSidebar]` prefix and shows no crash, and compute the order from a fresh `getPages` read. Do the same fresh read in the other place that calls `nextOrderValue` for pages (page paste/drop in the same file and `lib/clipboard/sidebarClipboard.ts`) only if it uses the store list.
 
-Files: `src-tauri/src/lib.rs`
+Files: `components/sidebar/PageSidebar.tsx`, `lib/clipboard/sidebarClipboard.ts` (expected, not exhaustive)
 
 Acceptance:
-- The single-instance callback calls `show_main_window` with the app handle and no longer has an empty body.
-- `(cd src-tauri && cargo check)` passes.
+- `handleAddPage` has a `catch` that logs the error and does not rethrow; the sidebar refreshes in `finally`.
+- The new page's order is derived from a `getPages` call made inside the handler, not from the store list.
+- `npx tsc --noEmit` passes.
 
-Test steps (manual):
-1. Run the app, close the window so it hides to the tray, then launch SkyLines again from the Start menu or desktop. The existing window reappears and no second instance stays running.
+Test steps:
+1. Manual: with the same note open on two devices, change the note's pages on device A, then add a page on device B. The page is added at the end, nothing crashes, and any error appears in the console log.
 
-### T2 Sticky notes (and every collection) push independently
+### T2 Opening a page without editing never changes it
 
-Status: done
+Status: todo
 Depends on: none
-Tester: no. Reproducing needs a failing Firestore, which the tester can't create safely.
+Tester: yes, observable by reading the page row's `updated_at` before and after
 
-In `lib/sync/push.ts`, `pushDirtyRows` pushes folders, notes, notebooks, pages and stickyNotes sequentially, and `pushRows` rethrows any error that isn't `invalid-argument`, aborting the whole pass. Change it so each collection's push runs in its own try/catch: a thrown error in one collection is recorded and the remaining collections still push. After all collections have run, the pass still reports failure (so `lib/sync/engine.ts` schedules its backoff retry), and the first error is rethrown or returned. Make sure the Firestore error `code` and message are written somewhere that reaches the Tauri log file, not only the webview console: find how other frontend code gets into the log file (the `tauri-plugin-log` usage or console attach) and follow it; add that to the `engine.ts` push-failure log at ~L213. Add one line to the README's Firebase section: if sticky notes stay dirty with a `permission-denied` error, publish `firestore.rules` (`npx firebase-tools deploy --only firestore:rules --project <project id>`), a manual step.
+Autosave in `CanvasEditor.tsx` writes on every user-sourced document change and on unmount, with no comparison, so a stale snapshot can later win over another device's edit. Keep a ref with the serialized snapshot last loaded or saved (set right after `loadSnapshot` in `handleMount` and after every successful `updatePage`). Before the debounced save and before the unmount flush, serialize `editor.getSnapshot()` and skip `updatePage` when it equals the ref. Do not change the existing migration saves (they already only run when something changed).
 
-Files: `lib/sync/push.ts`, `lib/sync/engine.ts`, `README.md`
+Files: `components/canvas/CanvasEditor.tsx`
 
 Acceptance:
-- An error thrown while pushing one collection does not prevent later collections from being pushed in the same pass.
-- A pass where any collection threw still ends in the engine's error/backoff path, and the error code and message are logged through a path that reaches the log file.
-- `invalid-argument` and `too-big` handling is unchanged.
-- The README mentions publishing `firestore.rules` for a `permission-denied` on sticky notes. No code runs a deploy.
+- Opening a page and navigating away or switching pages without editing leaves `pages.updated_at` and `dirty` unchanged.
+- A real edit (typing in a text box, moving a shape) still saves within about a second and sets `dirty = 1`.
+- A pending edit is still flushed when leaving the page.
+- `npx tsc --noEmit` and `npm run build` pass.
 
-Test steps (manual):
-1. With deployed rules lacking `stickyNotes` (or a deliberately failing collection), edit a note and a sticky note. The note syncs; the sticky push error code appears in the logs folder.
-2. After publishing `firestore.rules`, the dirty sticky notes sync on the next pass.
+Test steps:
+1. Signed in as the test account, create a note, open it, type a few words, wait 2 seconds. Read its page row's `updated_at` (for example through the SQL plugin from `webview_execute_js`).
+2. Switch to another note and back without touching the canvas. Read `updated_at` again: it is unchanged.
+3. Type one more character, wait 2 seconds: `updated_at` is larger and the text is saved.
+4. Delete the note you created.
 
-### T3 Pull applies parents before children and survives orphans
+### T3 An open page shows edits from other devices
 
-Status: done
+Status: todo
 Depends on: T2
-Tester: no. Reproducing needs a fresh database and a race, which can't be set up safely in the shared test account.
+Tester: yes, remote edits can be simulated by writing the page row with `origin "remote"`-style update or by a second app window; the tester says which it used
 
-In `lib/sync/pull.ts`, fix the FK failures ("FOREIGN KEY constraint failed" when a page arrives before its note, a note before its folder or notebook, a child folder before its parent):
-- **Gate.** Each collection's apply waits for its parents' first snapshot to finish applying: notebooks, then folders, then notes, then pages. Sticky notes are independent. A per-collection "ready" promise resolved after the first snapshot's queue drains is enough; make sure a listener restart resets the gates and that a listener that errors still releases them.
-- **Per-change isolation.** In each `subscribeXPull`, wrap each change in its own try/catch so one failing change doesn't drop the rest of the batch. Non-FK errors still go to the existing `console.error` and `onApplyError` path.
-- **Deferral.** A change that fails with an FK error is held in an in-memory pending list and retried after the next successful apply in any parent collection and after the batch drains. Retries are bounded so a permanently orphaned doc (parent never arrives) cannot loop; it stays pending until the listener restarts and is not reported as an error.
-- **Folders.** Within one snapshot, apply folders parents-first (sort by `parentId` depth, or defer on FK as above).
+Today nothing refetches pages: the store's `pages` and the live editor go stale when a remote pull changes them. In `app/canvas/page.tsx` or `CanvasEditor.tsx`, subscribe with `subscribeDataChange`, debounce, and refetch the current note's pages with a request-id guard (as `useNotes` does). Update the store `pages` (sidebar list, titles, order; if the selected page was deleted remotely, select the first remaining page). For the selected page, apply the remote content to the live editor only when all hold: the refetched row is not dirty, its `updatedAt` is greater than the last value the editor loaded or saved (track in a ref beside T2's snapshot ref), no autosave is pending, `editor.getEditingShapeId()` is null and no Tiptap editor has focus. Apply with `editor.loadSnapshot` and make sure that does not trigger autosave or `updatePage`, and update the T2 ref. When the conditions don't hold, show a banner above the canvas, "A newer version of this page is available", with a Reload button that loads it (and a dismiss). Re-evaluate when the editing state ends so a deferred update can apply. The title input resyncs from the refetched row when it is not focused.
 
-Keep the change small and local to `pull.ts`; don't disable foreign keys.
-
-Files: `lib/sync/pull.ts` (and `lib/sync/engine.ts` only if the listener-restart hook needs it)
+Files: `app/canvas/page.tsx`, `components/canvas/CanvasEditor.tsx`, `components/sidebar/PageSidebar.tsx`, `stores/appStore.ts` (expected, not exhaustive)
 
 Acceptance:
-- Pages, notes and folders arriving ahead of their parents are applied once the parent is applied, with no "FOREIGN KEY constraint failed" error surfacing and no restart needed.
-- A failure on one change in a snapshot does not stop the remaining changes in that snapshot from being applied.
-- Retries are bounded, and a restart of the pull listeners resets the gate and pending state.
-- Existing behaviour for dirty local rows (`decidePull` returns skip) is unchanged.
-
-Test steps (manual):
-1. On a fresh database (new local profile or deleted app data) signed in to an account with notes and pages, launch the app. All notebooks, notes and pages appear on the first launch and the log has no FK errors.
-
-### T4 Notes and pages can store a color
-
-Status: done
-Depends on: T3
-Tester: no. There is no UI yet; T8 and T9 exercise it end to end.
-
-Add a nullable `color` (palette slot string, NULL = none) to notes and pages, through the whole data path:
-- **Migration.** In `src-tauri/src/lib.rs` add the next version (9) with `ALTER TABLE notes ADD COLUMN color TEXT` and `ALTER TABLE pages ADD COLUMN color TEXT`, following the v5/v8 style. Don't edit existing migrations.
-- **Types and rows.** Add `color: string | null` to `Note` and `Page` in `types/index.ts` and to `NoteRow`/`PageRow` and `rowToNote`/`rowToPage`.
-- **Writes.** Add `color` to `updateNote` and `updatePage`'s accepted fields. Extend `createNote` and `createPage` with an optional color parameter (default null); `createNote`'s optional color applies to the note, and an optional first-page color parameter (default null) applies to its first page. Keep the BEGIN/COMMIT string and its numbered params consistent.
-- **Remote.** Add `color` to `RemoteNoteData`/`RemotePageData` and to `upsertNoteFromRemote`/`upsertPageFromRemote`: the column list, VALUES count, `ON CONFLICT DO UPDATE SET` and params array together.
-- **Sync.** Add `color` to `noteToFirestoreDoc` and `pageToFirestoreDoc` in `push.ts`, and `color: (data.color as string | null) ?? null` to `toRemoteNoteData` and `toRemotePageData` in `pull.ts`.
-- **Conflict snapshots.** Check `lib/sync/cleanup.ts` and `lib/db/syncConflicts.ts` and make sure a color column doesn't break them.
-- **Slot type.** Add a shared module `lib/colors/noteColors.ts` exporting `NOTE_COLOR_SLOTS` (`note-1`…`note-8`), an `isNoteColorSlot` guard and `noteColorVar(slot)` returning `var(--note-N)`. A stored value that isn't a valid slot is treated as no color by readers.
-
-Files: `src-tauri/src/lib.rs`, `types/index.ts`, `lib/db/notes.ts`, `lib/db/pages.ts`, `lib/sync/push.ts`, `lib/sync/pull.ts`, `lib/sync/cleanup.ts`, `lib/db/syncConflicts.ts`, new `lib/colors/noteColors.ts`
-
-Acceptance:
-- Migration 9 exists, adds both columns, and no existing migration changed.
-- `Note.color` and `Page.color` round-trip through create, update, push and pull; an old remote doc without the field reads as null.
-- Every upsert's column list, VALUES count, SET clause and params agree.
-- All verification commands pass.
+- With a page open and idle, a remote change to that page's canvas appears without leaving the page, within about two seconds of the pull.
+- While a text box is being edited or a local save is pending, a remote change does not alter the canvas; the banner appears and Reload applies it.
+- Applying a remote snapshot never writes `updated_at` or sets `dirty` on the page.
+- Pages added or deleted remotely appear in or leave the page sidebar without a manual action.
+- Switching pages and reopening notes still works; `npx tsc --noEmit` and `npm run build` pass.
 
 Test steps:
-1. After the app reloads (the new migration runs), existing notes and pages open and sync normally; `webview_execute_js` against the SQL plugin shows a `color` column on both tables, all NULL.
+1. Create a note with text "alpha" in a text box; leave it open and idle.
+2. Change the page's stored canvas data to a version with "beta" through the SQL plugin as a remote write (clean row, newer `updated_at`, then notify as remote), or edit it from a second window. The open canvas shows "beta" without navigation.
+3. Click into the text box to start editing, repeat the remote change: the canvas keeps what you typed, the banner appears, Reload shows the remote text.
+4. Confirm the page row's `dirty` is 0 after the idle apply.
+5. Delete the note you created.
 
-### T5 The theme has an 8-color note palette
+### T4 Catching-up state after launch
 
-Status: done
+Status: todo
 Depends on: none
-Tester: yes. The CSS variables and editor fields are observable in the DOM and computed styles.
+Tester: no, needs a real second device's data and network conditions; the logic is checked by reading and by the build
 
-Add `note-1`…`note-8` to `ThemeVariableKey` and `THEME_VARIABLE_KEYS` in `lib/themes/types.ts`, define light and dark default values in `app/globals.css` (`:root` and `.dark`, as `--note-N`) and mirror them in `LIGHT_THEME` and `DARK_THEME` in `lib/themes/builtin.ts`, which must stay identical to the CSS. Use eight distinguishable oklch hues of similar lightness, readable as a thin bar and as a faded tint over `--sidebar` in both modes. Expose the eight values in `ThemeEditor` as a "Note colors" group using `ThemeColorField`, and in `ThemePreview` if it fits without redesign. Existing user theme files lacking the keys must still load (`isTheme()` accepts missing keys) and fall through to the CSS defaults.
+The pull's first snapshot isn't distinguished from a cache-only or partial one and nothing exposes it, so a stale device acts on old data and `CanvasEditor` can create a duplicate default page for a note whose pages haven't arrived. In `lib/sync/pull.ts` record when the first snapshot of notebooks, folders, notes and pages has been applied and came from the server (`snapshot.metadata.fromCache === false`); expose an initial-sync state (`pending | settled`) from `lib/sync/engine.ts` with a subscribe function and mirror it into the store in `hooks/useSyncEngine.ts`, resetting it on sign-out or restart. It settles after all four first snapshots, or on a listener error, or after 8 seconds, or immediately while offline. While `pending` and online: the account-menu label in `components/topbar/AccountMenu.tsx` reads "Catching up..." and the canvas is read-only (`editor.updateInstanceState({ isReadonly: true })`, restored on settle and on unmount). `CanvasEditor`'s "note has no pages, create a default page" step waits for `settled` first and re-reads `getPages` before creating.
 
-Files: `lib/themes/types.ts`, `lib/themes/builtin.ts`, `app/globals.css`, `components/theme/ThemeEditor.tsx` (and `ThemePreview.tsx` if used)
-
-Acceptance:
-- `getComputedStyle(document.documentElement).getPropertyValue("--note-1")` through `--note-8` are non-empty in both light and dark.
-- `LIGHT_THEME`/`DARK_THEME` and the `globals.css` blocks agree for the new keys.
-- The theme editor shows eight editable note-color fields, and editing one changes the variable live.
-- An existing saved user theme without these keys still loads and applies.
-
-Test steps:
-1. Read `--note-1`…`--note-8` from `document.documentElement` in the main window. All are non-empty.
-2. Open the account menu → Theme → Edit themes. A "Note colors" group with eight fields shows. Don't save anything; close the dialog and discard changes.
-3. Switch the theme between System/Light/Dark if available without changing saved themes, and check the variables stay non-empty. Restore the original selection.
-
-### T5a The theme editor has a note palette generator
-
-Status: done
-Depends on: T5
-Tester: yes. The editor controls and the resulting CSS variables are observable in the DOM.
-
-Replace the eight plain "Note colors" fields that T5 added to `ThemeEditor` with a palette generator, and let a palette have 1 to 24 colors. The approved design (from the mockups in the planning chat) is:
-
-- **Swatch strip** at the top: one box per color, filling the full width. Clicking a box opens a popover with a color wheel (hue by angle, saturation by radius, at full brightness), an inline editable hex box and a Copy button. Choosing a color there overrides that one color (marked with a small dot on the box). Dragging that color's hue line, or "Reset to hue" in the popover, removes the override.
-- **Hue bar** directly below, the same width as the strip, showing the hue spectrum with one thin line per color. Dragging a line changes only that color's hue (0 to 360).
-- **Global bar** directly below that, much smaller (about 14px high), same width: a thin gradient rail between the first and last color's hues, a column at each end (start and end, thin and slightly thicker than the hue lines, filled with that end's color) and a circle in the middle filled with the middle hue's color. Dragging an end column changes that end's hue and respaces all colors evenly between start and end. Dragging the circle moves all hues together, clamped to 0 to 360.
-- **Colors** control: a small number input with up/down arrows, 1 to 24. Changing it respaces the colors evenly between the current start and end and drops overrides on removed colors.
-- **Start and end readout** on the same line: a color chip and "start #hex" / "end #hex", where the hex is a small inline editable field (looks like text, dotted underline on hover). Typing a valid hex moves that end to the hex's hue (oklch hue) and respaces; the displayed text is normalized on blur.
-- **Lightness and Chroma**: each a slider followed by a small inline editable number (Lightness 0.30 to 0.95, Chroma 0 to 0.40, step 0.01, up/down arrow keys nudge). These two are global for the palette.
-- **Reset** button (small, right of the Colors line): restores 8 colors, hues 25 to 340, lightness 0.66, chroma 0.16, no overrides.
-- Generated colors are `oklch(L C H)`; a hand-picked override is a fixed hex and ignores lightness and chroma.
-
-Theme data: the theme stores the resolved colors as `note-1`…`note-N` (extend `ThemeVariableKey`/`THEME_VARIABLE_KEYS` to `note-24`; `isTheme()` must still accept missing keys) plus the generator settings (count, per-color hues, lightness, chroma, overrides) so reopening the editor restores the generator exactly. A theme with colors but no stored settings opens with the colors as overrides on a default generator. `globals.css` and `LIGHT_THEME`/`DARK_THEME` keep the default 8; keys beyond the theme's count are left unset. Live editing updates the CSS variables as the other fields do; no change is saved until the user saves the theme.
-
-Add to `lib/colors/noteColors.ts`: `getNotePaletteSize()` (the number of consecutive non-empty `--note-N` variables on the document root, starting from 1; at least 1 is not assumed, 0 means no palette) and widen `isNoteColorSlot`/`NOTE_COLOR_SLOTS` handling so any `note-N` with N from 1 to 24 is a valid stored slot. A slot above the palette size resolves to no color. Update T5's group in `ThemeEditor` (remove the eight plain fields) and `LIGHT_THEME`/`DARK_THEME` only as needed.
-
-Files: `components/theme/ThemeEditor.tsx` (and new components under `components/theme/` for the generator and popover), `lib/themes/types.ts`, `lib/themes/apply.ts` (if needed), `lib/colors/noteColors.ts`, `app/globals.css` (only if needed)
+Files: `lib/sync/pull.ts`, `lib/sync/engine.ts`, `hooks/useSyncEngine.ts`, `stores/appStore.ts`, `components/topbar/AccountMenu.tsx`, `components/canvas/CanvasEditor.tsx`
 
 Acceptance:
-- The theme editor shows the generator in place of the eight plain fields, with the controls above.
-- Editing any control changes the matching `--note-N` variables live; reducing or raising the count adds or removes variables.
-- Dragging a hue line changes only that color; dragging an end column respaces between the ends; dragging the circle shifts all.
-- Typing a hex in start or end moves that end's hue; overriding one color through the wheel or hex box changes only that color.
-- Reset restores the defaults. Saving and reopening a theme restores the generator settings, overrides and count.
-- Themes without generator settings and themes without `note-*` keys still load and apply.
-- `getNotePaletteSize()` returns the palette's color count, and slots above it resolve to no color.
-- All verification commands pass.
+- The store exposes an initial-sync state that is `pending` after `startSyncEngine` and `settled` after the four first server snapshots, a listener error, 8 seconds, or when offline.
+- The canvas is never left read-only after `settled`, after unmount, or when the app starts offline.
+- The default page is not created for a note while `pending`; after `settled` it is created only if `getPages` is still empty.
+- `npx tsc --noEmit`, `npm run build` pass.
 
 Test steps:
-1. Open the account menu, Theme, Edit themes. The generator shows with 8 colors, start `#e3645e` and end `#d066b1` (approximately), Lightness 0.66 and Chroma 0.16. Don't save anything; discard changes at the end.
-2. Set Colors to 5 and then 12. `--note-1`…`--note-5` then `--note-1`…`--note-12` are non-empty on `document.documentElement`, and `getNotePaletteSize()` matches.
-3. Click a swatch, type a hex such as `#3366cc`: only that color changes and shows the override dot; "Reset to hue" removes it.
-4. Edit the start hex: the colors respace between the new start and the end. Press Reset: the defaults return.
-5. Manual: dragging the hue lines, the end columns and the center circle, and how the bars line up with the strip, can't be simulated reliably; check by hand.
+1. Manual: sign in on a second computer that has stale data and launch. The account menu briefly shows "Catching up...", then "Synced"; the canvas accepts edits afterwards.
+2. Manual: launch with the network off. The app is editable immediately and shows "Offline".
 
-### T6 Synced user settings store
+### T5 Backups tab to view and restore losing versions
 
-Status: done
+Status: todo
+Depends on: none
+Tester: yes, conflicts can be seeded by inserting rows into `sync_conflicts` for a note the tester created
+
+Add a "Backups" tab to `SettingsDialog.tsx`, always listed after History. In `lib/db/syncConflicts.ts` add a function listing conflicts for `notes` and `pages` from the last 30 days newest first, keeping only those whose parsed `losing_data.userId` matches the signed-in user, and a function deleting rows older than 30 days (call it when the tab loads). Add a hook beside `useDeletedNotes` that loads and refreshes them. Each row shows the item's title (or "Untitled"), "Note" or "Page", and when the conflict was recorded, with a Restore button. Restore: if the target row is missing or deleted, show "The original no longer exists" and do nothing; otherwise first record the current version of the target as a new backup (so a mistaken restore can be undone), then apply the losing version as an ordinary edit through `updateNote` (title, content, canvasData) or `updatePage` (title, canvasData), which sets a fresh `updatedAt` and `dirty`. The two stored shapes differ (local row vs remote data); read only the fields both have. The tab shows "There are no backups." when empty. Use a bordered, scrolling box like History.
+
+Files: `components/settings/SettingsDialog.tsx`, `lib/db/syncConflicts.ts`, `hooks/useSyncConflicts.ts` (new)
+
+Acceptance:
+- The Settings sidebar lists Appearance, History and Backups; Backups always appears.
+- With no conflicts the tab says "There are no backups."
+- A seeded conflict row for the user's note appears with its title and a Restore button; rows for other users or older than 30 days do not.
+- Restore applies the old title/content, creates a new backup of what it replaced, sets the target dirty with a newer `updated_at`, and the list refreshes.
+- `npx tsc --noEmit` and `npm run build` pass.
+
+Test steps:
+1. Create a note titled "Backup test", edit it. Insert a `sync_conflicts` row for that note with `losing_data` holding an older title "Old title" and the note's user id.
+2. Open Settings, Backups: a row for "Old title" appears. Click Restore: the note's title becomes "Old title" and a second row appears holding "Backup test".
+3. Delete the seeded rows and the note.
+
+### T6 Notes deleted on another device don't linger as zombies
+
+Status: todo
 Depends on: T4
-Tester: no. There is no UI until T7; T7's tester covers the store end to end.
+Tester: no, it needs a Firestore document removed from outside the app
 
-Build the settings data path so a single per-user row syncs:
-- **Migration.** Next version (10) in `src-tauri/src/lib.rs` creating `user_settings` (`user_id TEXT PRIMARY KEY`, `auto_color INTEGER NOT NULL DEFAULT 1`, `color_bookend INTEGER NOT NULL DEFAULT 1`, `color_highlight INTEGER NOT NULL DEFAULT 0`, `updated_at INTEGER`, `dirty INTEGER NOT NULL DEFAULT 0`, `synced_at INTEGER`), following the timestamp conventions of the other tables. No row exists until the user first changes something or one is pulled; readers use the defaults.
-- **DB layer.** New `lib/db/userSettings.ts`: `getUserSettings(userId)` (returns defaults when no row), `updateUserSettings(userId, partial)` (upserts, bumps `updated_at`, sets `dirty = 1`), `getDirtyUserSettings`, `markUserSettingsSynced` and `upsertUserSettingsFromRemote` (consistent column lists), plus the `UserSettings` type in `types/index.ts`.
-- **Sync.** Push: add a `userSettings` collection to `push.ts`, doc id = `userId`, fields the three settings plus `userId`, `updatedAt`. Pull: a sixth listener in `pull.ts` for `userSettings` (independent of the parent gate) filtered by `userId == uid` like the others, applying through `decidePull` and `upsertUserSettingsFromRemote`. Follow how an existing simple collection (stickyNotes) is wired, including error isolation from T2/T3. Check `lib/sync/cleanup.ts` for anything that should include the new table.
-- **Rules.** Add `userSettings` to the allowed collections in `firestore.rules`. The user must publish it; note this in the README Firebase section.
-- **Store/hook.** A zustand slice or a `hooks/useUserSettings.ts` that loads the signed-in user's settings, exposes them and a setter that writes through `updateUserSettings` and triggers a push (as other data hooks do via `useSyncEngine`), and updates when a pull applies a change. It resets when the user changes (follow `resetForUser()` in `stores/appStore.ts`) so one account never shows another's settings.
+"Empty history" removes the Firestore doc immediately and pull ignores "removed" events, so a device that never pulled the deletion keeps the note forever. After the initial sync has settled from a server snapshot (T4), compare the id sets: for `notes` and `pages`, any local row for this user with `deleted_at IS NULL`, `dirty = 0` and `synced_at` not null whose id is absent from the server's first snapshot is soft-deleted locally (`deleted_at = now`, `dirty = 0`, so nothing is pushed and the note shows in History; its pages with it). Run once per engine start. Guardrails: do nothing if the snapshot was from cache, if the server returned no documents for the collection while local clean rows exist, if any first-snapshot apply errored, or if it would affect more than 5 rows and more than half of the user's clean local rows in that collection; log the skip with a `[sync/reconcile]` prefix. Never touch dirty rows or rows with `synced_at` null.
 
-Files: `src-tauri/src/lib.rs`, `types/index.ts`, new `lib/db/userSettings.ts`, `lib/sync/push.ts`, `lib/sync/pull.ts`, `lib/sync/engine.ts`/`hooks/useSyncEngine.ts` (as needed), `stores/appStore.ts` or new `hooks/useUserSettings.ts`, `firestore.rules`, `README.md`
+Files: `lib/sync/pull.ts` or a new `lib/sync/reconcile.ts`, `lib/db/notes.ts`, `lib/db/pages.ts` (expected, not exhaustive)
 
 Acceptance:
-- Migration 10 exists and no existing migration changed.
-- With no row, readers get defaults: auto on, bookend on, highlight off.
-- Updating a setting stores it locally, marks it dirty and pushes it to `userSettings/{uid}`; a remote change updates the local row and the in-memory settings.
-- Settings never leak between accounts after switching users.
-- `firestore.rules` allows `userSettings` under the same `userId` check as other collections.
-- All verification commands pass.
+- A clean, synced local note missing from the server's first snapshot becomes soft-deleted and appears in History; a dirty or never-synced note does not.
+- No reconcile happens when the first snapshot is from cache, empty with local data present, or after an apply error; each logs why.
+- No Firestore write happens during reconcile.
+- `npx tsc --noEmit`, `npm run build` pass.
 
 Test steps:
-1. After reload, `webview_execute_js` confirms the `user_settings` table exists and the settings hook returns the defaults for `dev@skylines.local`.
+1. Manual: on computer A and B, sync a note. On B, quit the app. On A delete the note and use Empty history. Relaunch B: the note is gone from the sidebar and appears under History.
 
-### T7 Settings dialog with an Aesthetics section
+### T7 Resizable sidebars
 
-Status: done
-Depends on: T6
-Tester: yes. The dialog, toggles and their persistence are observable in the DOM.
+Status: todo
+Depends on: none
+Tester: yes, the drag can be simulated with pointer events on the handle; native window drag is not involved
 
-Add a "Settings" item to `components/topbar/AccountMenu.tsx`, above "Copy bug report", that opens a new `components/settings/SettingsDialog.tsx` (use `components/ui/dialog.tsx`; hold the open state in `AccountMenu` beside the menu, as `themeEditorOpen` does). The dialog has an "Aesthetics" section with three switches bound to the settings from T6:
-- "Automatic color coding" (new notes and pages get a color automatically).
-- "Color bookend" (a bar on the left of the note or page name).
-- "Color highlight" (a faded tint over the whole name card).
+Add a vertical drag handle on the right edge of the note sidebar and of the page sidebar. Create a reusable resize handle component (pointer events with `setPointerCapture` on the handle, listeners cleaned up on `pointerup`, `pointercancel`, `lostpointercapture` and window blur; `col-resize` cursor and no text selection while dragging; never HTML5 draggable). Widths clamp to note sidebar 180 to 480 and page sidebar 140 to 360, and also so the main column keeps at least 400 px given the other sidebar. Store them in a new `lib/sidebarWidths.ts` following `lib/quickAccessPrefs.ts` (key `skylines:sidebarWidths`, validated parse, read after mount to avoid a hydration mismatch, written on drag end). Replace the fixed `w-60` and `w-52` with the stored widths only when expanded; collapsed rails keep `w-12` and `w-10` and expanding restores the stored width. Double-clicking a handle resets that sidebar to its default. The page sidebar needs its own right border so its handle is visible. Ensure long names still truncate (`min-w-0`) and the sidebar drag-and-drop targets still work.
 
-Use the existing UI components for toggles (add a switch component only if none exists, following `components/ui/` conventions). Short helper text under each switch. Works on the notebook picker and with a notebook open.
-
-Files: `components/topbar/AccountMenu.tsx`, new `components/settings/SettingsDialog.tsx`, `components/ui/switch.tsx` (only if missing)
+Files: `components/sidebar/Sidebar.tsx`, `components/sidebar/PageSidebar.tsx`, `components/sidebar/ResizeHandle.tsx` (new), `lib/sidebarWidths.ts` (new)
 
 Acceptance:
-- The account menu has a "Settings" item that opens the dialog on the picker and inside a notebook.
-- The dialog shows an "Aesthetics" heading and the three switches with defaults on, on, off for an account with no stored settings.
-- Toggling a switch updates the store immediately and survives closing and reopening the dialog and reloading the window.
-- No existing account-menu item changed.
+- Dragging either handle changes that sidebar's width live, within the clamps, and the width is the same after a reload.
+- Double-click resets to 240 px (note) or 208 px (page).
+- Collapsing and expanding keeps the stored width; the collapsed rails do not change.
+- Sidebar items can still be dragged and dropped; the ribbon and canvas fill the remaining space.
+- `npx tsc --noEmit` and `npm run build` pass.
 
 Test steps:
-1. Signed in as `dev@skylines.local`. Open the account menu and click "Settings". The dialog opens with "Aesthetics" and three switches: automatic on, bookend on, highlight off (if the account already has other values, note them and restore them at the end).
-2. Turn "Color highlight" on and "Color bookend" off. Close and reopen the dialog: the switches keep those values. Reload the window and reopen: still the same.
-3. Restore the original values of all three switches and close the dialog.
+1. Open a canvas note. Dispatch pointerdown, pointermove, pointerup on the note sidebar handle moving 100 px right; the sidebar's computed width grows by about 100 px. Drag far past the limits: it stops at 480 (and never squeezes the main area below 400).
+2. Reload (`location.reload()`), re-enter the note: the widths persist.
+3. Double-click each handle: widths return to 240 and 208.
+4. Collapse and expand each sidebar: expanded width is the stored one.
+5. Manual: judge that the handles feel right with a mouse.
 
-### T8 New notes and pages get a color automatically
+### T8 Insert ribbon tab replaces File
 
-Status: done
-Depends on: T4, T5a, T6
-Tester: yes. The new rows' `color` values are readable from SQLite or a DOM attribute.
+Status: todo
+Depends on: none
+Tester: yes, tab contents and state are DOM-observable
 
-Add a shared helper in `lib/colors/noteColors.ts` (or a sibling `lib/colors/autoColor.ts`): given the settings and the siblings' colors (ordered by creation), it returns the slot for a new item per Decisions (next after the most recent colored sibling, wrapping from the last palette color to `note-1`, `note-1` when none, null when automatic coloring is off), using `getNotePaletteSize()` from T5a. Add a function that reads the current settings and the right siblings from SQLite (non-deleted notes of the notebook for a note; non-deleted pages of the note for a page), and use it at every creation site:
-- Notes: `hooks/useCreateNote.ts` and `components/sidebar/FolderItem.tsx`. A new note's first page also gets a color (the page rule, computed against an empty page list, so `note-1` when automatic coloring is on).
-- Pages: `components/sidebar/PageSidebar.tsx` and `components/canvas/CanvasEditor.tsx` (~L202).
-- Duplicates in `lib/clipboard/sidebarClipboard.ts`: `duplicateNote` and `duplicatePage` copy the source's color instead (ignoring the auto setting), the duplicated note's first page keeping its source page's color.
+In `components/ribbon/Ribbon.tsx` remove the `file` tab and its "No actions available." body, add `insert` to `RibbonTab`, make it the first tab and the default, and update the fallback logic (a selected Draw tab off the canvas falls back to Insert). The Insert body is one row built from the existing `FormatBtn` and `Separator`: "Insert image" and "Insert link" (move the existing buttons and their handlers out of the Format tab unchanged, so Format is formatting only) and a "Table" button (lucide `Table` icon) whose handler is a placeholder until T9 wires it (disabled with a tooltip "Open a canvas page" when `activeCanvasEditor` is null). Keep the Sticky notes button and the `useEffect` that returns the tool to rich-text when the tab is not Draw.
 
-Files: `lib/colors/noteColors.ts` (or new `lib/colors/autoColor.ts`), `hooks/useCreateNote.ts`, `components/sidebar/FolderItem.tsx`, `components/sidebar/PageSidebar.tsx`, `components/canvas/CanvasEditor.tsx`, `lib/clipboard/sidebarClipboard.ts`
+Files: `components/ribbon/Ribbon.tsx`
 
 Acceptance:
-- With automatic coloring on, creating notes in a notebook yields consecutive slots `note-1`, `note-2`, … wrapping after the last palette color (`note-8` with the default palette); the same holds for pages within a note.
-- With it off, new notes and pages get no color.
-- Duplicating a note or page keeps the source's color in both modes.
-- Existing notes and pages are not recolored. All verification commands pass.
+- The ribbon tabs read Insert, Format, Draw (Draw only on the canvas route); there is no File tab.
+- Insert is selected on first render and holds Insert image, Insert link and Table; the Format tab no longer has the image and link buttons.
+- Insert image and Insert link behave as before.
+- `npx tsc --noEmit` and `npm run build` pass.
 
 Test steps:
-1. Signed in as `dev@skylines.local` with "Automatic color coding" on. Create a new note (sidebar "New note"). Read its row from SQLite via `webview_execute_js`: its `color` is the slot after the notebook's most recent colored note, or `note-1` if none, and its first page has a color.
-2. Add two pages with the page "+" button. Their colors are consecutive slots.
-3. Turn automatic coloring off in Settings and create another note and page. Both have NULL color.
-4. Delete the notes you created and restore the setting.
+1. Open a canvas note. The first tab is Insert and is selected; there is no File tab.
+2. Click Format: no image or link buttons. Click Insert: image, link and Table buttons show.
+3. Click a text box, then Insert link: the link dialog opens as before.
 
-### T9 Color shows on rows and can be changed by hand
+### T9 Insert a table onto the canvas
 
-Status: done
-Depends on: T4, T5a, T7
-Tester: yes. Row attributes and computed styles are observable; "looks right" is left to the user.
+Status: todo
+Depends on: T8
+Tester: yes, shape creation and cell contents are observable through the editor and DOM
 
-In `NoteItem.tsx` and `PageItem.tsx`, render a note's or page's color according to the settings: if it has a valid slot and "Color bookend" is on, show a narrow bar on the row's left edge (the row needs `relative`; keep the indent and layout unchanged); if "Color highlight" is on, show a faded tint (for example `color-mix(in oklab, var(--note-N) 18%, transparent)`) over the whole row. Layer the tint with a pseudo-element or background-image so the active (`bg-sidebar-accent`) and hover states still show. Both on, one on or neither all work, and a row with no color or an invalid stored slot looks as it does today. Put `data-note-color="<slot>"` on the row when it has a color so the tester can read it, and give the bar and tint elements stable `data-` hooks.
+Add `components/canvas/TableShape.tsx` modeled on `RichTextShape.tsx`: a `TableShapeUtil extends BaseBoxShapeUtil` with `static type = "table"`, props `w`, `h`, `colWidths: number[]`, `rowHeights: number[]` and `cells: Record<string, string>` (keys like `"A1"`, values the typed text including a leading `=` for formulas), validators from tldraw's `T`, a versioned migration sequence (even if empty, to match the pattern), module augmentation of `TLGlobalShapePropsMap`, `canEdit() { true }`, an `indicator()`, and a default of 4 columns by 5 rows (column widths 100, row heights 28) with a header row of column letters and row numbers drawn as non-editable gutters. Register it in `shapeUtils` in `CanvasEditor.tsx`. The component renders a grid inside `HTMLContainer`; double-click or typing on a selected cell edits it with a plain input, Enter commits and moves down, Tab commits and moves right, Escape cancels, and commits go through `editor.updateShape` (so tldraw history undoes them, and `activeEditor` is never set). The shape follows the same pointer-events gate as rich-text (cells interactive only when editing the shape; otherwise tldraw selects and drags the whole shape) with capture-phase stopping of pointer and key events so typing, Delete and arrows don't trigger tldraw shortcuts. Wire the Insert tab's Table button to create the shape at the viewport center, select it and set it as the editing shape. Check `RichTextTool`'s `PointingShape.onPointerUp`, which calls `setEditingShape` for any editable shape, behaves for a table, and that the Draw tab effect doesn't interfere. Handle a table in `lib/references/resolve.ts` labeling and any other `type === "rich-text"` checks only to the extent they would throw on a `table` shape.
 
-Add a "Color" submenu to `menuItems()` in each (so it appears in both the `···` dropdown and the right-click menu): one swatch per palette color (each using the slot's variable) plus "None", marking the current one, calling `updateNote`/`updatePage` with the slot or null. Choosing a color works regardless of the automatic setting.
-
-Files: `components/sidebar/NoteItem.tsx`, `components/sidebar/PageItem.tsx`, possibly a shared `components/sidebar/ColorMenu.tsx`
+Files: `components/canvas/TableShape.tsx` (new), `components/canvas/CanvasEditor.tsx`, `components/ribbon/Ribbon.tsx`, `lib/references/resolve.ts`
 
 Acceptance:
-- With bookend on, a colored row has a left-edge bar whose color is the slot's CSS variable; with highlight on it has a tint; with both on it has both; with both off it has neither.
-- The active and hover backgrounds are still visible on colored rows.
-- Rows without a color are unchanged.
-- The "Color" submenu is in both the dropdown and right-click menus of notes and pages; choosing a swatch sets the row's `data-note-color` and persists it (and marks it dirty for sync); "None" clears it.
-- All verification commands pass.
+- Insert, Table creates a 4x5 table in the middle of the visible canvas and selects it.
+- Cells can be edited with Enter, Tab and Escape behaving as described; the values survive saving, switching pages and reloading the app.
+- A stored table record loads without a validation error (the canvas does not blank); undo reverts a cell edit.
+- Typing in a cell does not move the shape or trigger tldraw shortcuts.
+- `npx tsc --noEmit` and `npm run build` pass.
 
 Test steps:
-1. Signed in as `dev@skylines.local`; note the Settings toggle values and restore them at the end. Create a note with automatic coloring on. Its sidebar row has `data-note-color` and, with bookend on, a bar element.
-2. In Settings turn highlight on: the same row also has the tint element; turn bookend off: the bar is gone; turn both off: neither shows.
-3. Use the row's `···` → Color to pick a different swatch: `data-note-color` changes. Pick "None": the attribute is gone.
-4. Repeat 3 on a page row in the page sidebar.
-5. Delete the notes you created and restore the settings.
-6. Manual: judge that the bar and tint look right in light and dark, and with the row active and hovered.
+1. Open a canvas note, click Insert, Table: a table appears with column letters and row numbers.
+2. Double-click cell A1, type "hello", press Enter, then Tab in B1 and type "x", Enter. A1 reads "hello" and B1 "x".
+3. Switch to another page and back, then `location.reload()` and re-enter: the values are still there.
+4. Press undo: the last cell edit is reverted.
+5. Delete the note you created.
+
+### T10 Table rows, columns, resizing, selection and clipboard
+
+Status: todo
+Depends on: T9
+Tester: yes, grid state and sizes are observable; clipboard events can be dispatched as in CLAUDE.md
+
+Extend the table: selecting a cell highlights it and arrow keys move the selection; shift-click or shift-arrow selects a rectangular range; a right-click context menu on a cell (or small buttons in the gutters) offers Insert row above/below, Insert column left/right, Delete row, Delete column (at least one row and column always remain), Clear cells; deleting or inserting rows and columns remaps `cells` keys, `colWidths` and `rowHeights` and keeps the shape's `w` and `h` in step. Drag the border of a column letter or row number gutter to resize that column or row (pointer capture, minimum 40 px wide and 20 px tall) and update `w`/`h`. Copy (Ctrl/Cmd+C) of a selection puts tab-separated text with newline-separated rows on the clipboard, cut clears it, and paste fills from the selected cell (growing the grid if the pasted block overhangs); pasting tab-separated text copied from Excel works. Delete clears the selected range. Handle the paste event on the table's DOM with the clipboard data, like the ProseMirror paste note in `CLAUDE.md`.
+
+Files: `components/canvas/TableShape.tsx`
+
+Acceptance:
+- Arrow keys and shift-extension select single cells and rectangles; Delete clears them.
+- Each row/column operation produces the expected grid, keeps the contents of the remaining cells in the right place, and never deletes the last row or column.
+- Resizing a column or row by dragging its gutter border changes `colWidths`/`rowHeights`, respects the minimums and persists.
+- Copy produces TSV; pasting two rows of tab-separated text into B2 fills B2:C3 and grows the grid when needed.
+- `npx tsc --noEmit` and `npm run build` pass.
+
+Test steps:
+1. Insert a table; type 1, 2, 3 down column A. Select A1:A3 with shift-click; dispatch a copy event and read the clipboard data: "1\n2\n3".
+2. Use the context menu: Insert column right of A; the old column B contents move to C. Delete the new column: back to the original.
+3. Dispatch a paste event with "a\tb\nc\td" on B2: B2=a, C2=b, B3=c, C3=d.
+4. Drag the gutter border between A and B 60 px right: column A is 160 wide (stored `colWidths[0]`).
+5. Delete the note you created.
+
+### T11 Table formulas
+
+Status: todo
+Depends on: T10
+Tester: yes, computed text is observable in the DOM
+
+Add a pure-TypeScript formula engine in `lib/tables/formula.ts`: a cell whose stored text starts with `=` is evaluated for display, with the raw text shown while editing. Support numbers, `+ - * /`, parentheses, unary minus, cell references (`A1`), ranges (`A1:B3`) and the functions SUM, AVERAGE, MIN, MAX, COUNT; references resolve recursively with cycle detection. Blank cells count as 0 in arithmetic and are skipped in ranges, text cells are 0 (and skipped in ranges). Errors display as `#ERROR!` (syntax), `#REF!` (outside the grid), `#DIV/0!`, `#CYCLE!`. Evaluate at render only and never store results. When rows or columns are inserted or deleted (T10), rewrite references in stored formulas so they keep pointing at the same cells (a reference to a deleted row or column becomes `#REF!`). Numeric results display without trailing noise (round to 10 decimal places). Add a small unit-style check of the engine that can run in the build (a script under `scripts/` invoked with `node`, or a test run by the functions suite if easier) and report its result.
+
+Files: `lib/tables/formula.ts` (new), `components/canvas/TableShape.tsx`
+
+Acceptance:
+- `=1+2*3` shows 7; `=SUM(A1:A3)` with 1, 2, 3 above shows 6; `=AVERAGE(A1:A3)` 2; MIN, MAX and COUNT work.
+- `=A1/0` shows `#DIV/0!`; a self-referencing cell shows `#CYCLE!`; `=A99` beyond the grid shows `#REF!`; `=1+` shows `#ERROR!`.
+- Editing a referenced cell updates dependents; the stored cell text is the formula, not the result.
+- Inserting a row above row 1 changes `=A1` to `=A2` in the shifted cell.
+- `npx tsc --noEmit` and `npm run build` pass.
+
+Test steps:
+1. Insert a table; enter 1, 2, 3 in A1:A3 and `=SUM(A1:A3)` in A4: A4 shows 6. Change A2 to 5: A4 shows 9.
+2. Enter `=A1/0` in B1: `#DIV/0!`. Enter `=B2` in B2: `#CYCLE!`.
+3. Insert a row above row 1: the sum cell is now in A5 and still shows 9.
+4. Delete the note you created.
 
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
-- [x] T1 Relaunching the app shows the hidden window
-- [x] T2 Sticky notes (and every collection) push independently
-- [x] T3 Pull applies parents before children and survives orphans
-- [x] T4 Notes and pages can store a color
-- [x] T5 The theme has an 8-color note palette
-- [x] T5a The theme editor has a note palette generator
-- [x] T6 Synced user settings store
-- [x] T7 Settings dialog with an Aesthetics section
-- [x] T8 New notes and pages get a color automatically
-- [x] T9 Color shows on rows and can be changed by hand

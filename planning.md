@@ -1,15 +1,29 @@
 Things to update:
-- Create a Settings menu, accessible through the account drop down
-- Add the ability to color code notes and pages. 
-  - In the settings page there should be an option to turn the automatic color grading off. By default it should be on. This should exist in an "aesthetics" subsection
-    - There should be another option for how the color coding is displayed. Both are toggles. you can have both, 1 or neither on at the same time. By default it will just be the option 1 turned on.
-      - Option 1 - bookend. There is just the column bookend to the left of the name
-      - Option 2 - Highlight. A faded highlight of it's color over the whole name card
-  - Whenever a new notesheet or page is made it should be given a color. The color should exist as the possible options listed above. There should be a default for the colors selection colors which can be changed as a part of the theme.
+- Add the ability to resize the note and pages sidebars
+- Add the ability to add in a table to the canvas
+  - Remove the File tab at the top ribbon (the one with File, format, draw). And add in Insert (this is where things like adding in a table will go)
+  - Ideally I'd like these tables to have the same functionality of excel spreadsheet tables
 
 
 
 Bugs to fix:
-- Relaunching the app while it's hidden in the tray does nothing. The single-instance callback in src-tauri/src/lib.rs is empty; it should call show_main_window(app) so launching from the Start menu/desktop brings the window back.
-- Sticky notes never sync to Firestore. One account has 6 sticky notes still dirty since mid-September while its notes and pages synced fine. Push runs sticky notes last and aborts on the first non-"invalid-argument" error. Likely cause: the deployed Firestore rules predate stickyNotes (check the Firebase console against firestore.rules).
-- Pages can fail to restore on a fresh database ("FOREIGN KEY constraint failed" in lib/sync/pull.ts). Each collection has its own pull listener, so a page can arrive before its note exists, and the error skips the rest of that batch. Restarting fixes it. Pull should apply parents (notebooks, folders, notes) before pages, or retry pages whose note is missing.
+- Syncing while using the app on 2 devices at once is buggy
+  - It doesn't show the changes in real time (ideally real time, but with a delay is fine too)
+  - It can crash the app (it crashed when I tried to make a new page in a note that I had updated on my laptop)
+
+Sync consistency (stale local copies on a second device):
+- Add a "catching up" state on startup/resume
+  - Show an indicator until the first server snapshot has settled (reuse the pull's first-snapshot signal)
+  - Only lock editing while online, and only for a few seconds with a timeout; never block when starting offline (the server snapshot never arrives)
+- Add a conflicts and backups screen (like the History tab)
+  - Losing versions are already saved in `sync_conflicts`; let me view and restore them
+  - Restoring counts as an ordinary edit with a fresh updatedAt
+  - A periodic whole-database snapshot is lower priority (images could make it large)
+- Audit what marks a note or page dirty on open
+  - The CanvasEditor migrations already only save when they changed something
+  - Check the general autosave listeners skip no-op saves; compare against the last saved version when saving, not a deep compare on every change
+- Reconcile rows that were hard-deleted elsewhere (zombies on stale devices)
+  - Needed because "Empty history" deletes the Firestore doc immediately, and pull ignores "removed" events
+  - Riskiest item, so guardrails: only run after a complete first snapshot from the server (not cache); never when the snapshot is empty but local data isn't; soft-delete the local row (so it shows in History) instead of hard-deleting; never touch dirty rows
+- Later, only if the above don't settle it: version counters with a transactional push instead of device-clock last-write-wins
+  - Not worth doing: serverTimestamp() for updatedAt (an offline edit would be stamped at upload time and beat a genuinely later edit)
