@@ -224,7 +224,9 @@ export async function updatePage(
     params.push(updates.color);
   }
 
-  setClauses.push(`updated_at = $${i++}`);
+  // Never below the stored value: a pulled row can carry a faster device's
+  // clock, and an edit stamped earlier would lose last-write-wins everywhere.
+  setClauses.push(`updated_at = MAX($${i++}, updated_at + 1)`);
   params.push(now);
   setClauses.push(`dirty = 1`);
 

@@ -163,6 +163,29 @@ function formatLongLastEdited(ms: number) {
   return `${longDateFormatter.format(d)} ${longTimeFormatter.format(d)}`;
 }
 
+// Key-order-independent form of a snapshot's document. The camera and other
+// session state differ per device and must not count as a change.
+function stableDocument(snapshot: unknown): string {
+  const doc = (snapshot as { document?: unknown } | null)?.document;
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.keys(o)
+          .sort()
+          .map((k) => [k, walk(o[k])]),
+      );
+    }
+    return v;
+  };
+  return JSON.stringify(walk(doc ?? null));
+}
+
+function sameDocument(a: unknown, b: unknown): boolean {
+  return stableDocument(a) === stableDocument(b);
+}
+
 export function CanvasEditor({ note }: Props) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Lets a pending debounced save flush on unmount (the component is keyed by
@@ -352,7 +375,8 @@ export function CanvasEditor({ note }: Props) {
       if (!remote || remote.id !== currentPageIdRef.current) return;
       // Dirty rows are this device's own writes.
       if (remote.dirty || remote.updatedAt <= lastUpdatedAtRef.current) return;
-      if (JSON.stringify(remote.canvasData) === lastSnapshotRef.current) {
+      const liveEditor = editorRef.current;
+      if (liveEditor && sameDocument(remote.canvasData, liveEditor.getSnapshot())) {
         lastUpdatedAtRef.current = remote.updatedAt;
         return;
       }
