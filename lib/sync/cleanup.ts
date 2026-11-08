@@ -1,9 +1,9 @@
 import { deleteDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getOldTombstoneFolders, hardDeleteFolder } from "@/lib/db/folders";
-import { getOldTombstoneNotes, hardDeleteNote } from "@/lib/db/notes";
+import { getDeletedNotes, getOldTombstoneNotes, hardDeleteNote } from "@/lib/db/notes";
 import { getOldTombstoneNotebooks, hardDeleteNotebook } from "@/lib/db/notebooks";
-import { getOldTombstonePages, hardDeletePage } from "@/lib/db/pages";
+import { getDeletedPagesOfNote, getOldTombstonePages, hardDeletePage } from "@/lib/db/pages";
 import type { Folder, Note, Notebook, Page } from "@/types";
 
 // Tombstone cleanup: hard-deletes rows soft-deleted longer than maxAgeMs, in
@@ -87,6 +87,38 @@ async function hardDeleteTombstone(
   // Case 2 (dirty && syncedAt === null) falls through to local-only delete.
 
   await hardDeleteLocal(row.id);
+}
+
+/** The window in which a deleted note can still be restored. */
+export const HISTORY_RETENTION_MS = DEFAULT_MAX_AGE_MS;
+
+/**
+ * Permanently deletes every note in the History tab, with its pages. Returns
+ * how many notes were skipped because their delete hasn't been pushed yet
+ * (see hardDeleteTombstone); they stay in the history until a later try.
+ */
+export async function emptyNoteHistory(userId: string): Promise<number> {
+  const notes = await getDeletedNotes(userId, 0);
+
+  // Notes run concurrently (the slow part is one Firestore round trip per
+  // doc); within a note, pages go before the note itself (FK order).
+  const results = await Promise.all(
+    notes.map(async (note) => {
+      try {
+        const pages = await getDeletedPagesOfNote(note.id);
+        await Promise.all(
+          pages.map((page) => hardDeleteTombstone(PAGES_COLLECTION, page, hardDeletePage)),
+        );
+        const pagesLeft = pages.some((page) => page.dirty && page.syncedAt !== null);
+        if (pagesLeft || (note.dirty && note.syncedAt !== null)) return false;
+        await hardDeleteTombstone(NOTES_COLLECTION, note, hardDeleteNote);
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+  );
+  return results.filter((ok) => !ok).length;
 }
 
 /**

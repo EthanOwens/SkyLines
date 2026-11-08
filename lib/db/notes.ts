@@ -280,3 +280,42 @@ export async function deleteNote(noteId: string): Promise<void> {
   );
   notifyDataChange("local");
 }
+
+/**
+ * Soft-deleted notes for the History tab, newest deletion first. Notes whose
+ * notebook was deleted are left out: restoring them would put them in a
+ * notebook nobody can see.
+ */
+export async function getDeletedNotes(userId: string, sinceMs: number): Promise<Note[]> {
+  const db = await getDb();
+  const rows = await db.select<NoteRow[]>(
+    `SELECT * FROM ${TABLE}
+     WHERE user_id = $1 AND deleted_at IS NOT NULL AND deleted_at >= $2
+       AND (notebook_id IS NULL OR notebook_id IN (SELECT id FROM notebooks WHERE deleted_at IS NULL))
+     ORDER BY deleted_at DESC`,
+    [userId, sinceMs],
+  );
+  return rows.map(rowToNote);
+}
+
+/**
+ * Undoes deleteNote. Pages come back only if they were deleted together with
+ * the note (same deleted_at); an earlier-deleted page stays deleted. A note
+ * whose folder was deleted too returns to the notebook root.
+ */
+export async function restoreNote(noteId: string): Promise<void> {
+  const db = await getDb();
+  const now = Date.now();
+
+  await db.execute(
+    `BEGIN;
+     UPDATE pages SET deleted_at = NULL, updated_at = $1, dirty = 1
+       WHERE note_id = $2 AND deleted_at = (SELECT deleted_at FROM ${TABLE} WHERE id = $2);
+     UPDATE ${TABLE} SET deleted_at = NULL, updated_at = $1, dirty = 1,
+       folder_id = CASE WHEN folder_id IN (SELECT id FROM folders WHERE deleted_at IS NOT NULL) THEN NULL ELSE folder_id END
+       WHERE id = $2;
+     COMMIT;`,
+    [now, noteId],
+  );
+  notifyDataChange("local");
+}

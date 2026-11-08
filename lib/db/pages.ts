@@ -252,3 +252,13 @@ export async function deletePage(pageId: string): Promise<void> {
   );
   notifyDataChange("local");
 }
+
+/** Every soft-deleted page of a note, for emptying the history. */
+export async function getDeletedPagesOfNote(noteId: string): Promise<Page[]> {
+  const db = await getDb();
+  const rows = await db.select<PageRow[]>(
+    `SELECT * FROM ${TABLE} WHERE note_id = $1 AND deleted_at IS NOT NULL`,
+    [noteId],
+  );
+  return rows.map(rowToPage);
+}
