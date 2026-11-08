@@ -60,7 +60,7 @@ Test steps:
 
 ### T2 Opening a page without editing never changes it
 
-Status: todo
+Status: done
 Depends on: none
 Tester: yes, observable by reading the page row's `updated_at` before and after
 
@@ -285,3 +285,4 @@ Test steps:
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Adding a page can't fail silently or use stale order
+- [x] T2 Opening a page without editing never changes it

@@ -167,6 +167,8 @@ export function CanvasEditor({ note }: Props) {
   // Lets a pending debounced save flush on unmount (the component is keyed by
   // note id).
   const pendingSaveRef = useRef(false);
+  // Serialized snapshot last loaded or saved; saves that match it are skipped.
+  const lastSnapshotRef = useRef<string | null>(null);
   const setActiveCanvasEditor = useAppStore((s) => s.setActiveCanvasEditor);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -345,8 +347,27 @@ export function CanvasEditor({ note }: Props) {
           props: { w: 480, h: 320, content: note.content as object },
         });
         const snapshot = editor.getSnapshot();
+        lastSnapshotRef.current = JSON.stringify(snapshot);
         void updatePage(page.id, { canvasData: snapshot as unknown as object });
       }
+      lastSnapshotRef.current = JSON.stringify(editor.getSnapshot());
+
+      // Persists only when the document differs from what was last loaded or
+      // saved.
+      const saveIfChanged = () => {
+        const snapshot = editor.getSnapshot();
+        const serialized = JSON.stringify(snapshot);
+        if (serialized === lastSnapshotRef.current) return;
+        lastSnapshotRef.current = serialized;
+        void updatePage(page.id, { canvasData: snapshot as unknown as object }).then(() => {
+          // updatePage only writes the DB; refresh the in-memory pages so the
+          // header's updatedAt stays current.
+          const freshPages = useAppStore.getState().pages;
+          setPages(
+            freshPages.map((p) => (p.id === page.id ? { ...p, updatedAt: Date.now() } : p)),
+          );
+        });
+      };
 
       // Text boxes that aren't being edited have no editor to convert old
       // data: pictures, so do it here.
@@ -369,7 +390,9 @@ export function CanvasEditor({ note }: Props) {
           changed = true;
         }
         if (changed) {
-          await updatePage(page.id, { canvasData: editor.getSnapshot() as unknown as object });
+          const snapshot = editor.getSnapshot();
+          lastSnapshotRef.current = JSON.stringify(snapshot);
+          await updatePage(page.id, { canvasData: snapshot as unknown as object });
         }
       })().catch((e) => console.error("[images] could not convert old pictures", e));
 
@@ -395,17 +418,7 @@ export function CanvasEditor({ note }: Props) {
           if (saveTimer.current) clearTimeout(saveTimer.current);
           pendingSaveRef.current = true;
           saveTimer.current = setTimeout(() => {
-            const snapshot = editor.getSnapshot();
-            void updatePage(page.id, { canvasData: snapshot as unknown as object }).then(() => {
-              // updatePage only writes the DB; refresh the in-memory pages so
-              // the header's updatedAt stays current.
-              const freshPages = useAppStore.getState().pages;
-              setPages(
-                freshPages.map((p) =>
-                  p.id === page.id ? { ...p, updatedAt: Date.now() } : p,
-                ),
-              );
-            });
+            saveIfChanged();
             pendingSaveRef.current = false;
           }, 800);
         },
@@ -422,15 +435,7 @@ export function CanvasEditor({ note }: Props) {
         // Flush a pending save so leaving mid-debounce doesn't drop the edit.
         if (pendingSaveRef.current) {
           pendingSaveRef.current = false;
-          const snapshot = editor.getSnapshot();
-          void updatePage(page.id, { canvasData: snapshot as unknown as object }).then(() => {
-            const freshPages = useAppStore.getState().pages;
-            setPages(
-              freshPages.map((p) =>
-                p.id === page.id ? { ...p, updatedAt: Date.now() } : p,
-              ),
-            );
-          });
+          saveIfChanged();
         }
       };
     },
