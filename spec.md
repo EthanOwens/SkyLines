@@ -82,7 +82,7 @@ Test steps:
 
 ### T3 An open page shows edits from other devices
 
-Status: todo
+Status: done
 Depends on: T2
 Tester: yes, remote edits can be simulated by writing the page row with `origin "remote"`-style update or by a second app window; the tester says which it used
 
@@ -286,3 +286,4 @@ Test steps:
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
 - [x] T1 Adding a page can't fail silently or use stale order
 - [x] T2 Opening a page without editing never changes it
+- [x] T3 An open page shows edits from other devices

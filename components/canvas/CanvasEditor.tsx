@@ -32,10 +32,11 @@ import {
   stripAssetPrefix,
 } from "@/lib/images/localImages";
 import { autoColorForNewPage } from "@/lib/colors/autoColor";
-import { createPage, getPages, updatePage } from "@/lib/db/pages";
+import { createPage, getPageRowById, getPages, updatePage } from "@/lib/db/pages";
+import { subscribeDataChange } from "@/lib/db/events";
 import { revealImage } from "@/lib/tiptap/imageId";
 import { useAppStore } from "@/stores/appStore";
-import type { Note } from "@/types";
+import type { Note, Page as PageType } from "@/types";
 import { RichTextShapeUtil, useCopyShapeReference, type RichTextShape } from "./RichTextShape";
 import {
   RichTextTool,
@@ -169,6 +170,14 @@ export function CanvasEditor({ note }: Props) {
   const pendingSaveRef = useRef(false);
   // Serialized snapshot last loaded or saved; saves that match it are skipped.
   const lastSnapshotRef = useRef<string | null>(null);
+  // updatedAt of the page row the editor last loaded or saved.
+  const lastUpdatedAtRef = useRef(0);
+  const currentPageIdRef = useRef<string | null>(null);
+  // Newest clean remote version waiting to be applied.
+  const remoteCandidateRef = useRef<PageType | null>(null);
+  const tryApplyRemoteRef = useRef<() => void>(() => {});
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const [newerPage, setNewerPage] = useState<PageType | null>(null);
   const setActiveCanvasEditor = useAppStore((s) => s.setActiveCanvasEditor);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -265,8 +274,105 @@ export function CanvasEditor({ note }: Props) {
   const [titleDraft, setTitleDraft] = useState(selectedPage?.title || "Untitled");
 
   useEffect(() => {
+    if (document.activeElement === titleInputRef.current) return;
     setTitleDraft(selectedPage?.title || "Untitled");
   }, [selectedPage?.id, selectedPage?.title]);
+
+  // Loads only the document, so the camera and tool stay put. Marked remote so
+  // autosave doesn't treat it as a user edit.
+  function applyRemotePage(editor: Editor, remote: PageType) {
+    const snapshot = remote.canvasData as TLEditorSnapshot | null;
+    if (snapshot?.document) {
+      try {
+        editor.store.mergeRemoteChanges(() => editor.loadSnapshot({ document: snapshot.document }));
+      } catch (e) {
+        console.error("[CanvasEditor] Could not apply remote page", e);
+        return;
+      }
+    }
+    lastSnapshotRef.current = JSON.stringify(editor.getSnapshot());
+    lastUpdatedAtRef.current = remote.updatedAt;
+  }
+
+  tryApplyRemoteRef.current = () => {
+    const remote = remoteCandidateRef.current;
+    const editor = editorRef.current;
+    if (!remote || !editor || remote.id !== currentPageIdRef.current) return;
+    const idle =
+      !pendingSaveRef.current &&
+      editor.getEditingShapeId() === null &&
+      !useAppStore.getState().activeEditor?.isFocused;
+    if (idle) {
+      remoteCandidateRef.current = null;
+      setNewerPage(null);
+      applyRemotePage(editor, remote);
+    } else {
+      setNewerPage(remote);
+    }
+  };
+
+  function reloadNewerPage() {
+    const editor = editorRef.current;
+    const remote = remoteCandidateRef.current;
+    if (!editor || !remote) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    pendingSaveRef.current = false;
+    editor.setEditingShape(null);
+    remoteCandidateRef.current = null;
+    setNewerPage(null);
+    applyRemotePage(editor, remote);
+  }
+
+  // Remote pulls change the note's pages: refetch the list and compare the open
+  // page with what the editor holds.
+  useEffect(() => {
+    let cancelled = false;
+    let requestId = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const refetch = async () => {
+      const myRequestId = ++requestId;
+      const fresh = await getPages(note.id, note.userId);
+      if (cancelled || myRequestId !== requestId || fresh.length === 0) return;
+      const state = useAppStore.getState();
+      if (state.pagesLoading) return;
+
+      const key = (list: PageType[]) =>
+        list
+          .map((p) => `${p.id}|${p.title}|${p.order}|${p.color}|${p.updatedAt}|${p.dirty}`)
+          .join("\n");
+      if (key(fresh) !== key(state.pages)) setPages(fresh);
+
+      const selectedId = state.selectedPageId;
+      if (selectedId && !fresh.some((p) => p.id === selectedId)) {
+        setSelectedPageId(fresh[0].id);
+        return;
+      }
+      const remote = fresh.find((p) => p.id === selectedId);
+      if (!remote || remote.id !== currentPageIdRef.current) return;
+      // Dirty rows are this device's own writes.
+      if (remote.dirty || remote.updatedAt <= lastUpdatedAtRef.current) return;
+      if (JSON.stringify(remote.canvasData) === lastSnapshotRef.current) {
+        lastUpdatedAtRef.current = remote.updatedAt;
+        return;
+      }
+      remoteCandidateRef.current = remote;
+      tryApplyRemoteRef.current();
+    };
+
+    const unsubscribe = subscribeDataChange((origin) => {
+      if (origin !== "remote") return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        refetch().catch((e) => console.error("[CanvasEditor] Could not refresh pages", e));
+      }, 300);
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [note.id, note.userId, setPages, setSelectedPageId]);
 
   async function commitTitle() {
     if (!selectedPage) return;
@@ -351,6 +457,10 @@ export function CanvasEditor({ note }: Props) {
         void updatePage(page.id, { canvasData: snapshot as unknown as object });
       }
       lastSnapshotRef.current = JSON.stringify(editor.getSnapshot());
+      lastUpdatedAtRef.current = page.updatedAt;
+      currentPageIdRef.current = page.id;
+      remoteCandidateRef.current = null;
+      setNewerPage(null);
 
       // Persists only when the document differs from what was last loaded or
       // saved.
@@ -359,14 +469,16 @@ export function CanvasEditor({ note }: Props) {
         const serialized = JSON.stringify(snapshot);
         if (serialized === lastSnapshotRef.current) return;
         lastSnapshotRef.current = serialized;
-        void updatePage(page.id, { canvasData: snapshot as unknown as object }).then(() => {
-          // updatePage only writes the DB; refresh the in-memory pages so the
-          // header's updatedAt stays current.
-          const freshPages = useAppStore.getState().pages;
-          setPages(
-            freshPages.map((p) => (p.id === page.id ? { ...p, updatedAt: Date.now() } : p)),
-          );
-        });
+        void updatePage(page.id, { canvasData: snapshot as unknown as object })
+          .then(() => getPageRowById(page.id, page.userId))
+          .then((row) => {
+            // updatePage only writes the DB; refresh the in-memory pages so the
+            // header's updatedAt stays current.
+            const updatedAt = row?.updatedAt ?? Date.now();
+            if (editorRef.current === editor) lastUpdatedAtRef.current = updatedAt;
+            const freshPages = useAppStore.getState().pages;
+            setPages(freshPages.map((p) => (p.id === page.id ? { ...p, updatedAt } : p)));
+          });
       };
 
       // Text boxes that aren't being edited have no editor to convert old
@@ -420,14 +532,27 @@ export function CanvasEditor({ note }: Props) {
           saveTimer.current = setTimeout(() => {
             saveIfChanged();
             pendingSaveRef.current = false;
+            tryApplyRemoteRef.current();
           }, 800);
         },
         { source: "user", scope: "document" },
       );
 
+      // A deferred remote edit applies once editing ends.
+      const stopEditingWatcher = react("canvas: retry deferred remote edit", () => {
+        editor.getEditingShapeId();
+        tryApplyRemoteRef.current();
+      });
+      const stopStoreWatcher = useAppStore.subscribe((state, prev) => {
+        if (state.activeEditor !== prev.activeEditor) tryApplyRemoteRef.current();
+      });
+
       return () => {
         setActiveCanvasEditor(null);
         if (editorRef.current === editor) editorRef.current = null;
+        currentPageIdRef.current = null;
+        stopEditingWatcher();
+        stopStoreWatcher();
         if (saveTimer.current) clearTimeout(saveTimer.current);
         unlisten();
         stopConfinementWatcher();
@@ -454,6 +579,7 @@ export function CanvasEditor({ note }: Props) {
     <div className="canvas-editor-container relative flex h-full w-full flex-1 flex-col">
       <div className="shrink-0 border-b border-border px-4 py-2">
         <input
+          ref={titleInputRef}
           className="w-full bg-transparent text-lg font-semibold text-foreground outline-none"
           value={titleDraft}
           onChange={(e) => setTitleDraft(e.target.value)}
@@ -468,6 +594,28 @@ export function CanvasEditor({ note }: Props) {
           }}
         />
       </div>
+      {newerPage && (
+        <div className="flex shrink-0 items-center gap-3 border-b border-border bg-muted px-4 py-1.5 text-sm text-foreground">
+          <span>A newer version of this page is available</span>
+          <button
+            type="button"
+            className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground"
+            onClick={reloadNewerPage}
+          >
+            Reload
+          </button>
+          <button
+            type="button"
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              remoteCandidateRef.current = null;
+              setNewerPage(null);
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="shrink-0 px-4 py-1 text-xs text-muted-foreground">
         {formatLongLastEdited(selectedPage.updatedAt)}
       </div>
