@@ -42,7 +42,7 @@ Make the app consistent when it is used on more than one computer: an open page 
 
 ### T1 Adding a page can't fail silently or use stale order
 
-Status: todo
+Status: done
 Depends on: none
 Tester: no, the failure needs a second device's changes to reproduce; the code changes are checked by reading
 
@@ -284,3 +284,4 @@ Test steps:
 ## Progress
 
 <!-- /kit:dev-loop adds one line here per finished task, in the same commit as the task. -->
+- [x] T1 Adding a page can't fail silently or use stale order

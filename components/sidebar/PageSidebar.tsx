@@ -62,17 +62,21 @@ export function PageSidebar({ note }: Props) {
   async function handleAddPage() {
     if (creating) return;
     setCreating(true);
+    let newId: string | undefined;
     try {
       const color = await autoColorForNewPage(note.userId, note.id);
-      const newId = await createPage(
+      const current = await getPages(note.id, note.userId);
+      newId = await createPage(
         note.id,
         note.userId,
         "Untitled",
-        nextOrderValue(pages.map((p) => p.order)),
+        nextOrderValue(current.map((p) => p.order)),
         color,
       );
-      await refresh(newId);
+    } catch (err) {
+      console.error("[PageSidebar] Failed to add page", err);
     } finally {
+      await refresh(newId).catch((err) => console.error("[PageSidebar] Failed to refresh pages", err));
       setCreating(false);
     }
   }
@@ -104,7 +108,8 @@ export function PageSidebar({ note }: Props) {
     const payload = readSidebarDragPayload(e);
     if (!payload || payload.type !== "page") return;
     // Dropped below the list: move to the end.
-    await updatePage(payload.id, { order: nextOrderValue(pages.map((p) => p.order)) });
+    const current = await getPages(note.id, note.userId);
+    await updatePage(payload.id, { order: nextOrderValue(current.map((p) => p.order)) });
     await refresh();
   }
 
